@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>syslab</title>
+<style>
+:root{
+  --bg:#f4f6f8; --panel:#fff; --line:#dde3ea; --ink:#151a20; --muted:#5d6874;
+  --accent:#0e5f58; --accent-soft:#dcebe8; --warn:#8e4e1c; --danger:#9c2c20;
+  --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0e1216; --panel:#171d23; --line:#2a343d; --ink:#e5eaef; --muted:#95a1ad;
+    --accent:#4fc7b4; --accent-soft:#12312d; --warn:#de9a62; --danger:#ee8b78;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink); display:flex; height:100vh; overflow:hidden;
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+button{font:inherit; cursor:pointer}
+button:disabled{cursor:default; opacity:.5}
+
+/* ---------- sidebar ---------- */
+aside{
+  width:270px; flex:0 0 270px; background:var(--panel); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; overflow:hidden;
+}
+aside header{padding:16px 16px 12px; border-bottom:1px solid var(--line)}
+.brand{font-weight:650; letter-spacing:-.01em; display:flex; align-items:center; gap:8px}
+.dot{width:8px; height:8px; border-radius:50%; background:var(--muted); flex:0 0 8px}
+.dot.up{background:var(--accent)}
+.dot.down{background:var(--danger)}
+.meta{font:11px/1.5 var(--mono); color:var(--muted); margin-top:5px; word-break:break-all; white-space:pre-line}
+.filehead{
+  padding:12px 16px 6px; font:11px/1 var(--mono); letter-spacing:.09em;
+  text-transform:uppercase; color:var(--muted); display:flex; justify-content:space-between;
+}
+.filehead button{background:none; border:none; color:var(--accent); font:inherit; padding:0}
+#files{flex:1; overflow-y:auto; padding:0 10px 10px}
+.file{
+  display:block; padding:8px 10px; border-radius:6px; text-decoration:none; color:inherit;
+  border:1px solid transparent;
+}
+.file:hover{background:var(--bg); border-color:var(--line)}
+.file b{display:block; font-weight:500; font-size:13.5px; word-break:break-all}
+.file span{font:11px var(--mono); color:var(--muted)}
+.empty{padding:10px; color:var(--muted); font-size:13px}
+aside footer{padding:12px 16px; border-top:1px solid var(--line)}
+.upload{
+  display:block; text-align:center; padding:9px; border:1px dashed var(--line);
+  border-radius:7px; color:var(--muted); font-size:13.5px;
+}
+.upload:hover{border-color:var(--accent); color:var(--accent)}
+.upload.busy{opacity:.6}
+
+/* ---------- chat ---------- */
+main{flex:1; display:flex; flex-direction:column; min-width:0}
+#log{flex:1; overflow-y:auto; padding:26px 24px; display:flex; flex-direction:column; gap:18px}
+.turn{max-width:760px; width:100%; margin:0 auto; display:flex; flex-direction:column; gap:7px}
+.who{font:11px var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted)}
+.bubble{
+  background:var(--panel); border:1px solid var(--line); border-radius:9px;
+  padding:13px 16px; white-space:pre-wrap; overflow-wrap:anywhere;
+}
+.turn.me .bubble{background:var(--accent-soft); border-color:transparent}
+.bubble.error{border-color:var(--danger); color:var(--danger)}
+.hint{color:var(--muted); font-size:13px; text-align:center; max-width:560px; margin:auto}
+.hint code{font:12px var(--mono); background:var(--panel); padding:2px 5px; border-radius:4px}
+
+details.trace{font-size:13px}
+details.trace summary{
+  cursor:pointer; color:var(--muted); font:11px var(--mono); letter-spacing:.05em;
+  text-transform:uppercase; list-style:none;
+}
+details.trace summary::-webkit-details-marker{display:none}
+details.trace summary:hover{color:var(--accent)}
+.step{font:12px/1.6 var(--mono); color:var(--muted); padding:3px 0 0 14px; overflow-wrap:anywhere; white-space:pre-wrap}
+.step.bad{color:var(--danger)}
+
+/* ---------- composer ---------- */
+form{
+  border-top:1px solid var(--line); background:var(--panel); padding:14px 24px 18px;
+}
+.row{max-width:760px; margin:0 auto; display:flex; gap:10px; align-items:flex-end}
+textarea{
+  flex:1; resize:none; font:inherit; color:inherit; background:var(--bg);
+  border:1px solid var(--line); border-radius:8px; padding:11px 13px; max-height:180px;
+}
+textarea:focus{outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent}
+.send{
+  background:var(--accent); color:var(--panel); border:none; border-radius:8px;
+  padding:11px 18px; font-weight:550;
+}
+@media (prefers-color-scheme:dark){.send{color:#0e1216}}
+.foot{max-width:760px; margin:7px auto 0; font:11px var(--mono); color:var(--muted)}
+/* ---------- sign in ---------- */
+#gate{
+  position:fixed; inset:0; z-index:50; background:var(--bg);
+  display:flex; align-items:center; justify-content:center; padding:24px;
+}
+/* An id selector beats the browser's own [hidden]{display:none}, so setting
+   .hidden = true on this element did nothing and the panel never went away.
+   This rule is more specific than the one above, so it wins. */
+#gate[hidden]{display:none}
+.gatebox{
+  background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  padding:28px 26px; width:100%; max-width:400px;
+  box-shadow:0 1px 2px rgba(0,0,0,.05), 0 18px 40px -28px rgba(0,0,0,.4);
+}
+.gatebox h1{font-size:1.15rem; margin:0 0 6px; letter-spacing:-.01em}
+.gatebox p{margin:0 0 18px; color:var(--muted); font-size:13.5px; line-height:1.5}
+.gatebox input{
+  width:100%; font:inherit; color:inherit; background:var(--bg);
+  border:1px solid var(--line); border-radius:8px; padding:11px 13px;
+}
+.gatebox input:focus{outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent}
+.gatebox .send{width:100%; margin-top:12px}
+.gatemsg{margin:12px 0 0; font-size:13px; color:var(--danger); min-height:1.2em}
+.signout{
+  background:none; border:none; color:var(--muted); font:11px var(--mono);
+  letter-spacing:.06em; text-transform:uppercase; padding:0; margin-top:10px;
+}
+.signout:hover{color:var(--danger)}
+
+@media (max-width:760px){
+  aside{display:none}
+  #log{padding:18px 14px}
+  form{padding:12px 14px 16px}
+}
+</style>
+</head>
+<body>
+
+<div id="gate" hidden>
+  <form class="gatebox" id="gateform">
+    <h1>syslab</h1>
+    <p>This assistant can read and write files on the machine it runs on, so it
+       asks for a token before it does anything. Paste the one from your
+       <code>.env</code>. This browser will remember it for thirty days.</p>
+    <input type="password" id="token" placeholder="Access token" autocomplete="current-password" autofocus>
+    <button class="send" type="submit" id="gatesend">Sign in</button>
+    <p class="gatemsg" id="gatemsg"></p>
+  </form>
+</div>
+
+<aside>
+  <header>
+    <div class="brand"><span class="dot" id="dot"></span> syslab</div>
+    <div class="meta" id="status">checking...</div>
+  </header>
+  <div class="filehead">
+    <span>Files</span>
+    <button type="button" id="refresh">refresh</button>
+  </div>
+  <div id="files"><div class="empty">Loading...</div></div>
+  <footer>
+    <label class="upload" id="uploadLabel">
+      Upload a PDF or Excel file
+      <input type="file" id="fileInput" accept=".pdf,.xlsx,.xlsm" hidden>
+    </label>
+    <button type="button" class="signout" id="signout">Sign out</button>
+  </footer>
+</aside>
+
+<main>
+  <div id="log">
+    <p class="hint">
+      Ask about a file in your folder, or upload one first.<br><br>
+      <code>What is the total on invoice.pdf?</code><br>
+      <code>Add a row to sales.xlsx for East, 9300</code>
+    </p>
+  </div>
+
+  <form id="composer">
+    <div class="row">
+      <textarea id="input" rows="1" placeholder="Ask about your files..." autofocus></textarea>
+      <button class="send" id="send" type="submit">Send</button>
+    </div>
+    <div class="foot" id="foot">Enter to send, Shift+Enter for a new line</div>
+  </form>
+</main>
+
+<script>
+// Auth: the token is kept here and sent as a header on every request.
+//
+// The first version relied only on the HttpOnly cookie that /api/login sets.
+// That works locally and failed on a laptop over Tailscale: the login
+// succeeded, the browser did not send the cookie back, /api/health returned
+// 401, and the sign-in panel silently reappeared. Rather than debug one
+// browser's cookie policy for plain HTTP on a .ts.net host, the page now holds
+// the token itself. The cookie is still set and still works; nothing depends
+// on it.
+const TOKEN_KEY = "syslab_token";
+let TOKEN = "";
+try { TOKEN = localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { TOKEN = ""; }
+
+const $ = (id) => document.getElementById(id);
+
+function api(path, options) {
+  const opts = Object.assign({}, options || {});
+  opts.headers = Object.assign({}, opts.headers || {});
+  if (TOKEN) opts.headers["X-Syslab-Token"] = TOKEN;
+  return fetch(path, opts);
+}
+
+// ---------- sign in ----------
+function showGate(message) {
+  $("gate").hidden = false;
+  $("gatemsg").textContent = message || "";
+  $("token").focus();
+}
+
+// Callers pass the parsed body when they already have it: reading a Response
+// twice throws, and cloning one whose body is used throws too.
+function guard(res, data) {
+  if (res.status === 401) {
+    showGate("That token was not accepted. Paste it again.");
+    return true;
+  }
+  if (res.status === 503) {
+    showGate((data && data.detail) || "The server has no APP_TOKEN set.");
+    return true;
+  }
+  return false;
+}
+
+$("gateform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const token = $("token").value.trim();
+  if (!token) return;
+  $("gatesend").disabled = true;
+  $("gatemsg").textContent = "Signing in...";
+  try {
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      $("gatemsg").textContent = data.detail || ("Sign in failed (HTTP " + res.status + ").");
+      return;
+    }
+
+    // Keep the token, then prove it actually works before hiding the panel.
+    // Hiding first is what made a failure look like nothing happening.
+    TOKEN = token;
+    try { localStorage.setItem(TOKEN_KEY, token); } catch (err) { /* private window */ }
+
+    const proof = await api("/api/health");
+    if (!proof.ok) {
+      TOKEN = "";
+      try { localStorage.removeItem(TOKEN_KEY); } catch (err) {}
+      $("gatemsg").textContent =
+        "Signed in, but the next request came back " + proof.status +
+        ". Something between this browser and the server is dropping the session.";
+      return;
+    }
+
+    $("gate").hidden = true;
+    $("token").value = "";
+    $("gatemsg").textContent = "";
+    health();
+    loadFiles();
+  } catch (err) {
+    $("gatemsg").textContent = "Could not reach the server: " + err.message;
+  } finally {
+    $("gatesend").disabled = false;
+  }
+});
+
+$("signout").addEventListener("click", async () => {
+  TOKEN = "";
+  try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+  await fetch("/api/logout", { method: "POST" }).catch(() => {});
+  location.reload();
+});
+
+const log = $("log"), input = $("input"), send = $("send"), foot = $("foot");
+let history = [];
+let busy = false;
+
+// ---------- rendering ----------
+function turn(who, cls) {
+  const wrap = document.createElement("div");
+  wrap.className = "turn" + (cls ? " " + cls : "");
+  const label = document.createElement("div");
+  label.className = "who";
+  label.textContent = who;
+  wrap.appendChild(label);
+  log.appendChild(wrap);
+  return wrap;
+}
+
+function bubble(parent, text, cls) {
+  const el = document.createElement("div");
+  el.className = "bubble" + (cls ? " " + cls : "");
+  el.textContent = text;
+  parent.appendChild(el);
+  return el;
+}
+
+function trace(parent, steps) {
+  if (!steps || !steps.length) return;
+  const d = document.createElement("details");
+  d.className = "trace";
+  const s = document.createElement("summary");
+  const bad = steps.filter((x) => !x.ok).length;
+  s.textContent = steps.length + (steps.length === 1 ? " tool call" : " tool calls")
+    + (bad ? ", " + bad + " failed" : "");
+  d.appendChild(s);
+  for (const step of steps) {
+    const line = document.createElement("div");
+    line.className = "step" + (step.ok ? "" : " bad");
+    let args = "";
+    try { args = JSON.stringify(step.arguments); } catch (e) { args = String(step.arguments); }
+    line.textContent = (step.ok ? "" : "failed  ") + step.tool + "(" + args + ")"
+      + (step.error ? "\n    " + step.error : "");
+    d.appendChild(line);
+  }
+  parent.appendChild(d);
+  if (bad) d.open = true;
+}
+
+function scroll() { log.scrollTop = log.scrollHeight; }
+
+// ---------- asking ----------
+async function ask(text) {
+  const hint = log.querySelector(".hint");
+  if (hint) hint.remove();
+
+  bubble(turn("You", "me"), text);
+  scroll();
+
+  const answerTurn = turn("Assistant");
+  const placeholder = bubble(answerTurn, "Thinking...");
+  scroll();
+
+  busy = true;
+  send.disabled = true;
+  const started = Date.now();
+
+  try {
+    const res = await api("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, history }),
+    });
+    const data = await res.json().catch(() => ({}));
+    placeholder.remove();
+
+    if (guard(res, data)) {
+      bubble(answerTurn, "Your session ended. Sign in and ask again.", "error");
+    } else if (!res.ok) {
+      bubble(answerTurn, data.detail || ("Request failed with status " + res.status), "error");
+    } else {
+      trace(answerTurn, data.steps);
+      bubble(answerTurn, data.answer || "(no answer)");
+      history = data.history || [];
+      if (data.steps && data.steps.some((s) => s.tool.indexOf("write_") === 0)) loadFiles();
+    }
+  } catch (err) {
+    placeholder.remove();
+    bubble(answerTurn, "Could not reach the server: " + err.message, "error");
+  } finally {
+    busy = false;
+    send.disabled = false;
+    foot.textContent = "Answered in " + ((Date.now() - started) / 1000).toFixed(1) + "s";
+    scroll();
+    input.focus();
+  }
+}
+
+$("composer").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text || busy) return;
+  input.value = "";
+  input.style.height = "auto";
+  ask(text);
+});
+
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    $("composer").requestSubmit();
+  }
+});
+input.addEventListener("input", () => {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 180) + "px";
+});
+
+// ---------- files ----------
+// Downloads go through fetch rather than a plain href, because a link cannot
+// carry the token header. The file comes back as a blob and is saved from there.
+async function download(name) {
+  try {
+    const res = await api("/api/files/" + encodeURIComponent(name));
+    if (guard(res)) return;
+    if (!res.ok) {
+      bubble(turn("Download"), "Could not download " + name + " (HTTP " + res.status + ").", "error");
+      scroll();
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch (err) {
+    bubble(turn("Download"), "Download failed: " + err.message, "error");
+    scroll();
+  }
+}
+
+async function loadFiles() {
+  const box = $("files");
+  try {
+    const res = await api("/api/files");
+    if (guard(res)) {
+      box.innerHTML = '<div class="empty">Sign in to see your files.</div>';
+      return;
+    }
+    const data = await res.json();
+    box.innerHTML = "";
+    if (!data.files.length) {
+      box.innerHTML = '<div class="empty">No files yet. Upload one below.</div>';
+      return;
+    }
+    for (const f of data.files) {
+      const a = document.createElement("a");
+      a.className = "file";
+      a.href = "#";
+      a.title = "Download " + f.name;
+      a.innerHTML = "<b></b><span></span>";
+      a.querySelector("b").textContent = f.name;
+      a.querySelector("span").textContent = f.size_kb + " KB   ·   " + f.modified;
+      a.addEventListener("click", (e) => { e.preventDefault(); download(f.name); });
+      box.appendChild(a);
+    }
+  } catch (err) {
+    box.innerHTML = '<div class="empty">Could not list files.</div>';
+  }
+}
+
+$("refresh").addEventListener("click", loadFiles);
+
+$("fileInput").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const label = $("uploadLabel");
+  const original = label.firstChild.textContent;
+  label.classList.add("busy");
+  label.firstChild.textContent = "Uploading " + file.name + "...";
+
+  const body = new FormData();
+  body.append("file", file);
+  try {
+    const res = await api("/api/upload", { method: "POST", body });
+    const data = await res.json().catch(() => ({}));
+    if (guard(res, data)) {
+      bubble(turn("Upload"), "Your session ended. Sign in and upload again.", "error");
+    } else if (!res.ok) {
+      bubble(turn("Upload"), data.detail || "Upload failed.", "error");
+    } else {
+      const note = data.renamed
+        ? "Uploaded as " + data.name + " (a file with that name already existed)."
+        : "Uploaded " + data.name + " (" + data.size_kb + " KB). Ask me about it.";
+      bubble(turn("Upload"), note);
+      const hint = log.querySelector(".hint");
+      if (hint) hint.remove();
+    }
+    scroll();
+    loadFiles();
+  } catch (err) {
+    bubble(turn("Upload"), "Upload failed: " + err.message, "error");
+  } finally {
+    label.classList.remove("busy");
+    label.firstChild.textContent = original;
+    e.target.value = "";
+  }
+});
+
+// ---------- health ----------
+async function health() {
+  try {
+    const res = await api("/api/health");
+    if (res.status === 401 || res.status === 503) {
+      const data = await res.json().catch(() => ({}));
+      $("dot").className = "dot";
+      $("status").textContent = "not signed in";
+      // No token yet is the ordinary first visit, not an error worth shouting.
+      showGate(TOKEN ? "That token was not accepted. Paste it again." :
+                       (res.status === 503 ? (data.detail || "") : ""));
+      return;
+    }
+    const data = await res.json();
+    $("dot").className = "dot up";
+    $("status").textContent = data.model + "\n" + data.data_dir;
+  } catch (err) {
+    $("dot").className = "dot down";
+    $("status").textContent = "server unreachable";
+  }
+}
+
+health();
+loadFiles();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# config and secrets
+.env
+
+# runtime data
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+*.log
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

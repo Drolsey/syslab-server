@@ -1,0 +1,17 @@
+# Phase 02+ : tool functions
+pymupdf==1.24.10
+openpyxl==3.1.5
+reportlab==4.2.5
+
+# Phase 03 needs no new dependency: app/llm.py talks to Ollama's REST
+# API with the standard library.
+
+# Phase 04+ : web app
+fastapi==0.115.4
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+python-dotenv==1.0.1
+
+# dev
+pytest==8.3.3
+httpx==0.27.2   # only used by FastAPI's TestClient
