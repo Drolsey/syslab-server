@@ -208,7 +208,11 @@ def test_the_fingerprint_changes_when_a_file_is_touched():
     before = config.code_fingerprint()
     target = Path(config.__file__).resolve().parent / "tools.py"
     original = target.stat().st_mtime
-    future = original + 100_000  # comfortably newer than every other file
+    # Newer than every other file in the package, not merely newer than itself.
+    # Bumping by a fixed amount silently stopped working once other files were
+    # edited more recently than this one.
+    newest = max(f.stat().st_mtime for f in Path(config.__file__).resolve().parent.glob("*.py"))
+    future = newest + 100_000
     try:
         os.utime(target, (future, future))
         assert config.code_fingerprint() != before

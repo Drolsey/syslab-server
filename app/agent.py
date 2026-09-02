@@ -16,15 +16,37 @@ import inspect
 import json
 from typing import Any, Callable
 
-from app import llm, tools
+from app import db, jobs, llm, tools
 from app.config import MAX_TOOL_STEPS
 
 # --------------------------------------------------------------------------
 # what the model is allowed to call
 # --------------------------------------------------------------------------
 
+def queue_image(prompt: str, filename: str | None = None) -> dict:
+    """Start an image and return immediately. Never wait for it here."""
+    job = jobs.lane.submit("generate_image", {"prompt": prompt, "filename": filename})
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "position_in_queue": jobs.lane.position_of(job.id),
+        "note": "Started. Tell the user the job id and that it is running; do not "
+                "wait for it. They can ask you to check on it.",
+    }
+
+
+def job_status(job_id: str) -> dict:
+    """Look up one job the user asked about."""
+    return jobs.lane.get(job_id).public(jobs.lane.position_of(job_id))
+
+
 REGISTRY: dict[str, Callable[..., dict]] = {
     "list_files": tools.list_files,
+    "queue_image": queue_image,
+    "job_status": job_status,
+    "list_tables": db.list_tables,
+    "describe_table": db.describe_table,
+    "run_sql": db.run_sql,
     "read_pdf": tools.read_pdf,
     "read_excel": tools.read_excel,
     "write_excel": tools.write_excel,
@@ -44,6 +66,97 @@ TOOL_SCHEMAS: list[dict] = [
                 "rather than guessing from the file name."
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "queue_image",
+            "description": (
+                "Start generating an image. Returns a job id straight away and does NOT "
+                "wait for the picture. Tell the user it has started and give them the id. "
+                "Never call this repeatedly hoping for a result."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "What the image should show."},
+                    "filename": {"type": "string", "description": "Optional .png name to save as."},
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "job_status",
+            "description": (
+                "Check on a job the user started earlier, by its id. Use this when they "
+                "ask whether something is ready."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"job_id": {"type": "string"}},
+                "required": ["job_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tables",
+            "description": (
+                "List the tables in the connected customer database, with approximate "
+                "row counts. Call this FIRST for any question about the database. "
+                "Never guess a table name."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "describe_table",
+            "description": (
+                "Column names, types and nullability for one database table. Call this "
+                "before writing a query against a table, so the column names in your SQL "
+                "are real ones. Returns no data rows, only the shape of the table."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table": {"type": "string", "description": "Table name, optionally schema-qualified."},
+                    "schema": {"type": "string", "description": "Optional schema name."},
+                },
+                "required": ["table"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_sql",
+            "description": (
+                "Run one read-only SELECT against the customer database and return the rows. "
+                "The connection cannot modify anything: INSERT, UPDATE, DELETE and DDL are "
+                "refused by the database itself. Prefer aggregates such as count, sum and avg "
+                "over pulling raw rows, and always constrain with WHERE and LIMIT."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {
+                        "type": "string",
+                        "description": "One SELECT statement. No semicolons, no multiple statements.",
+                    },
+                    "max_rows": {
+                        "type": "integer",
+                        "description": "Most rows to return. Default 200, which is also the ceiling.",
+                    },
+                },
+                "required": ["sql"],
+            },
         },
     },
     {
@@ -186,6 +299,15 @@ the tools provided. Rules:
   they mean, listing the candidates by name. Do not pick one and hope. Asking
   costs the user a sentence; guessing wrong costs them a wrong answer or a
   file written in the wrong place.
+- For anything about the customer database: list_tables, then describe_table on
+  the tables you will use, then run_sql. Never write SQL against a table whose
+  columns you have not read. Never invent a column name.
+- Prefer aggregates over raw rows. A question about how many, how much or which
+  is the largest is answered with count, sum or max, not by pulling every row
+  and counting them yourself. Rows you pull are somebody's real records.
+- Image generation takes seconds to minutes, so queue_image returns a job id
+  rather than a picture. Say it has started, give the id, and move on. Do not
+  call it again, and do not pretend to have seen an image you have not.
 - Match the tool to the file type, not to the output you want. A .pdf is read
   with read_pdf even when the answer is going into a spreadsheet. list_files
   tells you which tool each file needs in its read_with field; use it.

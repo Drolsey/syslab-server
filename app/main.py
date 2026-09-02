@@ -24,7 +24,7 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Respon
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from app import agent, config, tools
+from app import agent, config, jobs, tools
 from app.config import (
     APP_HOST,
     APP_PORT,
@@ -58,6 +58,11 @@ CODE_FINGERPRINT = code_fingerprint()
 
 class LoginRequest(BaseModel):
     token: str = Field(min_length=1, max_length=500)
+
+
+class JobRequest(BaseModel):
+    kind: str = Field(min_length=1, max_length=64)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):
@@ -211,6 +216,7 @@ def health() -> dict:
         "model": OLLAMA_MODEL,
         "data_dir": str(DATA_DIR),
         "started_at": datetime.fromtimestamp(STARTED_AT).isoformat(timespec="seconds"),
+        "job_kinds": jobs.lane.kinds,
         "uptime_seconds": round(time.time() - STARTED_AT, 1),
         "code_fingerprint": CODE_FINGERPRINT,
     }
@@ -252,6 +258,46 @@ def download(name: str) -> FileResponse:
     if not path.is_file():
         raise HTTPException(404, f"No file named {name!r}.")
     return FileResponse(path, filename=path.name)
+
+
+# --------------------------------------------------------------------------
+# the job lane
+# --------------------------------------------------------------------------
+#
+# Slow work does not block a request. Submitting returns 202 and an id; the
+# browser polls. This is what stops one person's image generation from making
+# everybody else wait for an answer.
+
+@app.post("/api/jobs", status_code=202, dependencies=[Depends(require_auth)])
+def submit_job(body: JobRequest = Body(...)) -> dict:
+    try:
+        job = jobs.lane.submit(body.kind, body.params)
+    except jobs.JobError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return job.public(jobs.lane.position_of(job.id))
+
+
+@app.get("/api/jobs", dependencies=[Depends(require_auth)])
+def list_jobs() -> dict:
+    return jobs.lane.snapshot()
+
+
+@app.get("/api/jobs/{job_id}", dependencies=[Depends(require_auth)])
+def get_job(job_id: str) -> dict:
+    try:
+        job = jobs.lane.get(job_id)
+    except jobs.JobError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return job.public(jobs.lane.position_of(job_id))
+
+
+@app.delete("/api/jobs/{job_id}", dependencies=[Depends(require_auth)])
+def cancel_job(job_id: str) -> dict:
+    try:
+        return jobs.lane.cancel(job_id).public()
+    except jobs.JobError as exc:
+        code = 404 if "No job with id" in str(exc) else 409
+        raise HTTPException(code, str(exc)) from exc
 
 
 @app.post("/api/chat", dependencies=[Depends(require_auth)])

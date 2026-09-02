@@ -1,0 +1,144 @@
+"""Tests for the SQL guard. No database required.
+
+The guard is the layer that stops a model turning a read-only tool into a
+write tool by being creative. It is worth more tests than it has lines.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app import db
+
+
+# --- things that must be allowed ------------------------------------------
+
+@pytest.mark.parametrize("sql", [
+    "SELECT 1",
+    "select * from patients limit 10",
+    "  SELECT count(*) FROM orders WHERE total > 100  ",
+    "WITH recent AS (SELECT * FROM orders WHERE created_at > now() - interval '7 days') "
+    "SELECT count(*) FROM recent",
+    "SELECT * FROM merchants;",                     # one trailing semicolon is fine
+    "-- how many merchants\nSELECT count(*) FROM merchants",
+    "/* a comment */ SELECT name FROM merchants",
+    "SELECT a.name, b.total FROM merchants a JOIN orders b ON b.merchant_id = a.id",
+])
+def test_ordinary_selects_are_allowed(sql):
+    assert db.check_statement(sql)
+
+
+# --- things that must not be ----------------------------------------------
+
+@pytest.mark.parametrize("sql", [
+    "DELETE FROM patients",
+    "delete from patients where id = 1",
+    "UPDATE merchants SET name = 'x'",
+    "INSERT INTO orders (id) VALUES (1)",
+    "DROP TABLE patients",
+    "TRUNCATE orders",
+    "ALTER TABLE orders ADD COLUMN x int",
+    "CREATE TABLE evil (id int)",
+    "GRANT ALL ON orders TO public",
+    "COPY orders TO '/tmp/out.csv'",
+    "VACUUM FULL",
+    "SET default_transaction_read_only = off",
+])
+def test_writes_are_refused(sql):
+    with pytest.raises(db.DatabaseError):
+        db.check_statement(sql)
+
+
+def test_a_second_statement_after_a_semicolon_is_refused():
+    """The classic way a read-only tool becomes a write tool."""
+    with pytest.raises(db.DatabaseError, match="one statement"):
+        db.check_statement("SELECT 1; DROP TABLE patients")
+
+
+def test_a_write_hidden_inside_a_cte_is_refused():
+    """PostgreSQL really will let you DELETE inside a WITH clause."""
+    with pytest.raises(db.DatabaseError, match="DELETE"):
+        db.check_statement(
+            "WITH gone AS (DELETE FROM patients RETURNING *) SELECT count(*) FROM gone"
+        )
+
+
+def test_a_write_hidden_behind_a_comment_is_refused():
+    with pytest.raises(db.DatabaseError):
+        db.check_statement("SELECT 1 /* harmless */ ; DELETE FROM orders")
+
+
+def test_a_comment_that_makes_it_look_like_a_select_is_refused():
+    with pytest.raises(db.DatabaseError):
+        db.check_statement("-- SELECT\nDELETE FROM patients")
+
+
+@pytest.mark.parametrize("sql", ["", "   ", "-- nothing here", "/* just a comment */"])
+def test_empty_input_is_refused(sql):
+    with pytest.raises(db.DatabaseError):
+        db.check_statement(sql)
+
+
+def test_the_error_says_what_would_have_worked():
+    """A model that cannot read the refusal cannot correct itself."""
+    with pytest.raises(db.DatabaseError) as caught:
+        db.check_statement("UPDATE merchants SET name = 'x'")
+    message = str(caught.value)
+    assert "SELECT" in message and "read-only" in message
+
+
+# --- configuration --------------------------------------------------------
+
+def test_the_tools_report_clearly_when_no_database_is_configured(monkeypatch):
+    monkeypatch.setattr(db, "DB_HOST", "")
+    monkeypatch.setattr(db, "DB_DATABASE", "")
+    monkeypatch.setattr(db, "DB_USER", "")
+    assert db.is_configured() is False
+    with pytest.raises(db.DatabaseError, match="DB_HOST"):
+        db.run_sql("SELECT 1")
+
+
+def test_the_password_never_appears_in_a_connection_error(monkeypatch):
+    """An error message goes to the model, the browser and the log."""
+    secret = "hunter2-do-not-leak"
+    monkeypatch.setattr(db, "DB_HOST", "203.0.113.1")
+    monkeypatch.setattr(db, "DB_DATABASE", "nope")
+    monkeypatch.setattr(db, "DB_USER", "nobody")
+    monkeypatch.setattr(db, "DB_PASSWORD", secret)
+    monkeypatch.setattr(db, "DB_CONNECT_TIMEOUT", 1)
+
+    class Boom(Exception):
+        pass
+
+    import psycopg
+
+    def explode(**kwargs):
+        raise Boom(f"connection failed: password={kwargs.get('password')}")
+
+    monkeypatch.setattr(psycopg, "connect", explode)
+    with pytest.raises(db.DatabaseError) as caught:
+        db.run_sql("SELECT 1")
+    assert secret not in str(caught.value)
+    assert "***" in str(caught.value)
+
+
+def test_the_row_cap_cannot_be_raised_by_the_model(monkeypatch):
+    """max_rows is a request, not an instruction."""
+    monkeypatch.setattr(db, "DB_MAX_ROWS", 50)
+    captured = {}
+
+    class FakeCursor:
+        description = [type("D", (), {"name": "n"})()]
+        def execute(self, sql): captured["sql"] = sql
+        def fetchmany(self, n): captured["limit"] = n; return []
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(db, "_connect", lambda: FakeConn())
+    db.run_sql("SELECT 1", max_rows=100000)
+    assert captured["limit"] == 51  # the cap, plus one to detect truncation

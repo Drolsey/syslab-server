@@ -241,6 +241,29 @@ That restarts the web app only. Ollama is left alone unless you pass
 `-IncludeOllama`, because restarting it drops the model out of VRAM and the next
 question waits for it to load again.
 
+### Turning it off
+
+```powershell
+$c = "scripts\service\control_windows.ps1"
+powershell -ExecutionPolicy Bypass -File $c -Action status    # what is running
+powershell -ExecutionPolicy Bypass -File $c -Action stop      # off until the next restart
+powershell -ExecutionPolicy Bypass -File $c -Action disable   # off, and stays off (needs admin)
+powershell -ExecutionPolicy Bypass -File $c -Action enable    # back on (needs admin)
+```
+
+`disable` is almost always the right one. Nothing is deleted: the tasks, your
+token, your files and your settings all stay exactly as they are, and `enable`
+puts it back in one command rather than redoing Phase 05. `stop` only lasts
+until the machine restarts, because the tasks are still set to run at boot.
+
+While it is disabled your laptop cannot reach the assistant. That is the whole
+trade.
+
+Two things it deliberately does not touch. Sleep stays disabled until you say
+otherwise (`powercfg /change standby-timeout-ac 30` restores it), and Ollama's
+own tray app, installed separately by Ollama, still starts with Windows. Turn
+that off in Task Manager, Startup apps, if you want the GPU completely idle.
+
 `scripts/service/uninstall_windows.ps1` removes both tasks. It deliberately
 leaves the power settings alone: those are a preference for the machine, not
 ours to guess at.
@@ -304,6 +327,82 @@ somewhere else, so it must not need the project installed there.
 
 A call is not a success: every check that matters looks for a tool step that
 returned `ok`, not merely a tool that was attempted.
+
+## Customer database access
+
+Optional and off unless `DB_HOST` is set. Adds three tools: `list_tables`,
+`describe_table` and `run_sql`. The model writes the SQL, which is the useful
+part and also the dangerous part, so there are four layers between it and any
+damage:
+
+1. **The database role should hold `SELECT` and nothing else.** The only layer
+   that cannot be argued with, and the only one that is not ours to set.
+2. **Every connection sets `default_transaction_read_only`.** PostgreSQL then
+   refuses writes itself, whatever gets sent.
+3. **`app/db.py` rejects anything that is not a single SELECT or WITH**,
+   including a second statement after a semicolon and a write hidden inside a
+   CTE, which PostgreSQL really does allow.
+4. **A statement timeout and a row cap**, so one careless query cannot sit on a
+   production database or drag back a million rows.
+
+Layer 3 alone would be theatre. Layer 2 is what actually holds. Layer 1 is what
+you should ask the client for.
+
+```bash
+python scripts/check_database.py
+```
+
+It does not take the account's word for being read-only: it attempts a
+`CREATE TEMP TABLE` and expects to be refused, reports which privileges the
+role actually holds, and confirms the connection is encrypted.
+
+Credentials live in `.env`, which is gitignored, and nowhere else. `describe_table`
+deliberately returns no sample rows: the model needs to know a column exists,
+not what is in it.
+
+## The job lane
+
+Chat and image generation behave in opposite ways under load, and that is the
+whole reason this exists.
+
+Generating a token reads the model's weights out of memory, so several
+conversations at once **share that read** and cost almost nothing extra. A
+batching server gets four to eight times the throughput with barely any latency
+penalty per user. Diffusion is the other way round: it does real arithmetic per
+denoising step, so two images cost close to twice the time. **One batches, one
+queues.**
+
+Put both through the same blocking endpoint and the person asking a question
+waits behind somebody's picture. So slow work goes through `app/jobs.py`:
+
+| | |
+|---|---|
+| `POST /api/jobs` | `{kind, params}`, returns **202** and an id, immediately |
+| `GET /api/jobs` | everything queued, running and recently finished |
+| `GET /api/jobs/{id}` | status, progress, queue position, result |
+| `DELETE /api/jobs/{id}` | cancel |
+
+One worker by default, because the GPU serialises this work anyway and extra
+workers only contend for it. Raise `JOB_WORKERS` only if you pin jobs to a
+second card. The queue is bounded, so a flood is refused with a readable
+message rather than accepted and forgotten.
+
+Cancelling a queued job is instant. Cancelling a running one is **cooperative**:
+handlers call `report(progress, note)` between steps and that is where the
+cancellation lands, because a GPU step cannot safely be interrupted half way
+through. A denoising loop has exactly that shape, which is why `selftest` is
+written the same way and can stand in for one.
+
+**The queue is in memory. Jobs do not survive a restart**, and the status
+endpoint says so rather than pretending. Moving this table into PostgreSQL is a
+change of storage, not of shape.
+
+```bash
+python scripts/check_jobs.py
+```
+
+The check that matters is the second one: it starts a three second job, then
+asks a question while it runs, and fails if the answer waited.
 
 ## Testing
 

@@ -12,6 +12,9 @@ uvicorn[standard]==0.32.0
 python-multipart==0.0.12
 python-dotenv==1.0.1
 
+# Optional: read-only access to a customer PostgreSQL database
+psycopg[binary]==3.2.3
+
 # dev
 pytest==8.3.3
 httpx==0.27.2   # only used by FastAPI's TestClient

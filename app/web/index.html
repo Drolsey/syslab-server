@@ -98,6 +98,26 @@ textarea:focus{outline:2px solid var(--accent); outline-offset:-1px; border-colo
 }
 @media (prefers-color-scheme:dark){.send{color:#0e1216}}
 .foot{max-width:760px; margin:7px auto 0; font:11px var(--mono); color:var(--muted)}
+/* ---------- jobs ---------- */
+#jobwrap{border-top:1px solid var(--line); display:none}
+#jobwrap.on{display:block}
+#jobs{padding:0 10px 8px; max-height:33vh; overflow-y:auto}
+.job{padding:8px 10px; border-radius:6px; border:1px solid var(--line); margin-bottom:6px;
+  background:var(--bg); display:flex; flex-direction:column; gap:5px}
+.job .top{display:flex; justify-content:space-between; align-items:baseline; gap:8px}
+.job .kind{font-size:13px; font-weight:500; overflow-wrap:anywhere}
+.job .state{font:10px var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted)}
+.job .state.run{color:var(--accent)}
+.job .state.bad{color:var(--danger)}
+.job .state.good{color:var(--accent)}
+.bar{height:3px; border-radius:2px; background:var(--line); overflow:hidden}
+.bar i{display:block; height:100%; background:var(--accent); width:0; transition:width .3s linear}
+.job .meta{font:10.5px var(--mono); color:var(--muted); display:flex; justify-content:space-between; gap:8px}
+.job .meta button{background:none; border:none; color:var(--muted); font:inherit; padding:0;
+  text-decoration:underline}
+.job .meta button:hover{color:var(--danger)}
+.job .err{font:11px var(--mono); color:var(--danger); overflow-wrap:anywhere}
+
 /* ---------- sign in ---------- */
 #gate{
   position:fixed; inset:0; z-index:50; background:var(--bg);
@@ -158,6 +178,13 @@ textarea:focus{outline:2px solid var(--accent); outline-offset:-1px; border-colo
     <button type="button" id="refresh">refresh</button>
   </div>
   <div id="files"><div class="empty">Loading...</div></div>
+  <div id="jobwrap">
+    <div class="filehead">
+      <span>Running</span>
+      <span id="jobsummary" style="font:10px var(--mono); color:var(--muted)"></span>
+    </div>
+    <div id="jobs"></div>
+  </div>
   <footer>
     <label class="upload" id="uploadLabel">
       Upload a PDF or Excel file
@@ -364,6 +391,8 @@ async function ask(text) {
       bubble(answerTurn, data.answer || "(no answer)");
       history = data.history || [];
       if (data.steps && data.steps.some((s) => s.tool.indexOf("write_") === 0)) loadFiles();
+      // A queued job starts the panel polling without waiting for the next tick.
+      if (data.steps && data.steps.some((s) => s.tool === "queue_image")) pollJobs();
     }
   } catch (err) {
     placeholder.remove();
@@ -492,6 +521,108 @@ $("fileInput").addEventListener("change", async (e) => {
   }
 });
 
+// ---------- jobs ----------
+// Slow work does not block a request: it is submitted, given an id, and polled.
+// Polling runs only while something is actually active, so an idle page is quiet.
+let jobTimer = null;
+
+function jobState(status) {
+  if (status === "running") return "run";
+  if (status === "failed") return "bad";
+  if (status === "done") return "good";
+  return "";
+}
+
+function renderJobs(data) {
+  const box = $("jobs");
+  const wrap = $("jobwrap");
+  const interesting = (data.jobs || []).filter(
+    (j) => j.status === "running" || j.status === "queued" ||
+           (j.status !== "cancelled" && j.seconds_running !== undefined && j.status === "failed")
+  );
+  const show = (data.jobs || []).slice(0, 6);
+
+  if (!show.length) { wrap.classList.remove("on"); box.innerHTML = ""; return; }
+  wrap.classList.add("on");
+  $("jobsummary").textContent =
+    data.running + " running, " + data.queued + " waiting";
+
+  box.innerHTML = "";
+  for (const job of show) {
+    const el = document.createElement("div");
+    el.className = "job";
+
+    const top = document.createElement("div");
+    top.className = "top";
+    const kind = document.createElement("span");
+    kind.className = "kind";
+    kind.textContent = job.kind;
+    const state = document.createElement("span");
+    state.className = "state " + jobState(job.status);
+    state.textContent = job.status === "queued" && job.position_in_queue
+      ? "queued #" + job.position_in_queue : job.status;
+    top.append(kind, state);
+    el.appendChild(top);
+
+    if (job.status === "running" || job.status === "done") {
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      const fill = document.createElement("i");
+      fill.style.width = Math.round((job.progress || 0) * 100) + "%";
+      bar.appendChild(fill);
+      el.appendChild(bar);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const timing = document.createElement("span");
+    timing.textContent = job.status === "queued"
+      ? "waiting " + job.seconds_waiting + "s"
+      : (job.seconds_running !== undefined ? job.seconds_running + "s" : "");
+    meta.appendChild(timing);
+    if (job.status === "queued" || job.status === "running") {
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.textContent = "cancel";
+      cancel.addEventListener("click", () => cancelJob(job.id));
+      meta.appendChild(cancel);
+    } else if (job.note) {
+      const note = document.createElement("span");
+      note.textContent = job.note;
+      meta.appendChild(note);
+    }
+    el.appendChild(meta);
+
+    if (job.error) {
+      const err = document.createElement("div");
+      err.className = "err";
+      err.textContent = job.error;
+      el.appendChild(err);
+    }
+    box.appendChild(el);
+  }
+}
+
+async function pollJobs() {
+  try {
+    const res = await api("/api/jobs");
+    if (!res.ok) return;
+    const data = await res.json();
+    renderJobs(data);
+    const active = data.running + data.queued;
+    // Keep polling only while there is something to watch.
+    clearTimeout(jobTimer);
+    if (active > 0) jobTimer = setTimeout(pollJobs, 1200);
+    else if (data.jobs && data.jobs.length) jobTimer = setTimeout(pollJobs, 6000);
+  } catch (err) { /* the page is still usable without the panel */ }
+}
+
+async function cancelJob(id) {
+  try { await api("/api/jobs/" + encodeURIComponent(id), { method: "DELETE" }); }
+  catch (err) { /* it may have finished a moment ago */ }
+  pollJobs();
+}
+
 // ---------- health ----------
 async function health() {
   try {
@@ -516,6 +647,7 @@ async function health() {
 
 health();
 loadFiles();
+pollJobs();
 </script>
 </body>
 </html>

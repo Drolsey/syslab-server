@@ -44,6 +44,27 @@ MAX_UPLOAD_BYTES = int(_env("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 APP_HOST = _env("APP_HOST", "127.0.0.1")
 APP_PORT = int(_env("APP_PORT", "8000"))
 
+# --- the job lane, for work too slow to answer a request with ---
+# One worker by default: the GPU serialises this work anyway, and extra
+# workers would only contend for it.
+JOB_WORKERS = int(_env("JOB_WORKERS", "1"))
+JOB_MAX_QUEUED = int(_env("JOB_MAX_QUEUED", "20"))
+# How long a finished job stays readable before it is forgotten.
+JOB_RETENTION_SECONDS = int(_env("JOB_RETENTION_SECONDS", "1800"))
+
+# --- customer database (optional, read only) ---
+DB_HOST = _env("DB_HOST", "")
+DB_PORT = int(_env("DB_PORT", "5432"))
+DB_DATABASE = _env("DB_DATABASE", "")
+DB_USER = _env("DB_USER", "")
+DB_PASSWORD = _env("DB_PASSWORD", "")
+DB_SSLMODE = _env("DB_SSLMODE", "require")
+DB_CONNECT_TIMEOUT = int(_env("DB_CONNECT_TIMEOUT", "10"))
+# The server cuts a query off at this point rather than letting the assistant
+# sit on someone's production database.
+DB_STATEMENT_TIMEOUT_MS = int(_env("DB_STATEMENT_TIMEOUT_MS", "15000"))
+DB_MAX_ROWS = int(_env("DB_MAX_ROWS", "200"))
+
 # --- auth (enforced from Phase 06) ---
 APP_TOKEN = _env("APP_TOKEN", "")
 
