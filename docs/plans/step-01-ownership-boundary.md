@@ -1,7 +1,8 @@
 # Step 1: The Ownership Boundary
 
-Status: PLANNED, NOT STARTED. Needs Amro's sign-off on the five decisions in section 4.
-Written 3 September 2026.
+Status: PLANNED, NOT STARTED. All five decisions in section 4 are DECIDED.
+Written 3 September 2026. Amro confirmed 4.1 (tenant = organisation) and 4.3 (SQLite control
+plane now) on the same day; 4.2, 4.4 and 4.5 were settled by the evidence in their own rows.
 
 ---
 
@@ -61,7 +62,7 @@ Each one is a fork with real alternatives. Recommendations are mine; the choice 
 | b. Tenant = individual user | Data belongs to a person. | High. Two people at one company cannot share a folder without a migration that invents an org. |
 | c. Two levels from day one | Org owns data, users belong to orgs, projects inside orgs | Medium. More schema than the product needs yet. |
 
-**Recommendation: (a).** The data-owning unit is `tenant`. A `users` table exists with a
+**DECIDED: (a),** confirmed by Amro 3 Sep. The data-owning unit is `tenant`. A `users` table exists with a
 `tenant_id`, unused in Step 1. If your first customers turn out to be individuals, an
 individual is simply a tenant with one user, and nothing has to change. This is the option
 that costs one column now instead of a data migration later.
@@ -94,7 +95,7 @@ want option (c) the change is mechanical rather than a rewrite.
 | **b. A SQLite control-plane database** | One file, WAL, no new service | **Recommended for now.** |
 | c. PostgreSQL control plane (your own instance) | A real database to run and back up | Right eventually, and it is the roadmap's Phase 02 answer. |
 
-**Recommendation: (b) now, (c) when there is a second server or genuinely concurrent
+**DECIDED: (b) now,** confirmed by Amro 3 Sep. Move to (c) when there is a second server or genuinely concurrent
 writers.** With one condition attached: the schema is written in portable SQL with no
 SQLite-only types, and every read and write goes through one module, `app/tenancy.py`. The
 move to PostgreSQL then changes one file.
