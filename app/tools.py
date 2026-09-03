@@ -39,6 +39,20 @@ class ToolError(Exception):
 # helpers
 # --------------------------------------------------------------------------
 
+def _table_hint(filename: str) -> str | None:
+    """Ask the database module whether this name is one of its tables.
+
+    Imported inside the function on purpose: tools.py must keep working when
+    no database is configured, and this is an error path where a failure to
+    produce a hint should cost nothing.
+    """
+    try:
+        from app import db
+        return db.table_hint(filename)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _resolve(filename: str, must_exist: bool) -> Path:
     if not filename or not str(filename).strip():
         raise ToolError("No filename given.")
@@ -51,6 +65,14 @@ def _resolve(filename: str, must_exist: bool) -> Path:
             p.name for p in sorted(ensure_data_dir().iterdir())
             if p.is_file() and not p.name.startswith(".")
         ]
+        # Before anything else: is the user asking for a database table?
+        # "Report" is a table in the customer database and not a file, and
+        # answering that with eighteen unrelated filenames is what sends the
+        # model off hunting through the data folder and never coming back.
+        hint = _table_hint(filename)
+        if hint:
+            raise ToolError(hint)
+
         if not available:
             raise ToolError(f"No file named {filename!r}. The data folder is empty.")
         message = f"No file named {filename!r} in the data folder."
@@ -75,7 +97,13 @@ def _resolve(filename: str, must_exist: bool) -> Path:
                 " If more than one could be, ask the user which they want"
                 " instead of choosing for them."
             )
-        message += f" All files: {', '.join(available)}"
+        if len(available) <= 12:
+            message += f" All files: {', '.join(available)}"
+        else:
+            message += (
+                f" There are {len(available)} files in the folder; call "
+                "list_files to see them all."
+            )
         raise ToolError(message)
     return path
 
@@ -445,10 +473,25 @@ def write_pdf(filename: str, title: str, body: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         raise ToolError(f"Could not build {path.name}: {exc}") from exc
 
+    # Report what actually went in, not just that something did.
+    # "1 page, 2 paragraphs, 2.1 KB" reads like success whether the body was a
+    # hundred rows of data or a two-line summary of them. The character count
+    # and the opening line are the difference, and they are what lets the model
+    # -- and the user reading the transcript -- notice a summary was written
+    # where the real content was asked for.
+    text = str(body).strip()
+    opening = " ".join(text.split())[:160]
     return {
         "file": path.name,
         "path": str(path),
         "pages": doc.page,
         "paragraphs": paragraphs,
+        "characters_written": len(text),
+        "lines_written": len(text.splitlines()),
+        "starts_with": opening + ("..." if len(opening) == 160 else ""),
         "size_kb": round(path.stat().st_size / 1024, 1),
+        "note": "characters_written is what you actually put on the page. If "
+                "the user asked you to save data you had retrieved and this "
+                "number is small, you summarised instead of saving it. Fetch "
+                "the data again and write the real rows.",
     }

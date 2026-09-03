@@ -44,6 +44,12 @@ MAX_UPLOAD_BYTES = int(_env("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 APP_HOST = _env("APP_HOST", "127.0.0.1")
 APP_PORT = int(_env("APP_PORT", "8000"))
 
+# --- the search index ---
+# Deliberately outside DATA_DIR: it is a derived cache, not user data, and
+# deleting it must be obviously safe.
+INDEX_DIR = Path(_env("INDEX_DIR", str(PROJECT_ROOT / "index"))).expanduser().resolve()
+INDEX_PATH = INDEX_DIR / "documents.sqlite3"
+
 # --- the job lane, for work too slow to answer a request with ---
 # One worker by default: the GPU serialises this work anyway, and extra
 # workers would only contend for it.
@@ -64,6 +70,19 @@ DB_CONNECT_TIMEOUT = int(_env("DB_CONNECT_TIMEOUT", "10"))
 # sit on someone's production database.
 DB_STATEMENT_TIMEOUT_MS = int(_env("DB_STATEMENT_TIMEOUT_MS", "15000"))
 DB_MAX_ROWS = int(_env("DB_MAX_ROWS", "200"))
+
+# The cap above protects the model's context window: 200 rows is roughly what
+# it can read without losing track. A file has no such limit -- nobody is
+# reading it a token at a time -- so an export gets its own, far larger ceiling.
+# Conflating the two is why "save the query as a spreadsheet" used to produce a
+# 200-row spreadsheet from a 49,795-row table.
+DB_EXPORT_MAX_ROWS = int(_env("DB_EXPORT_MAX_ROWS", "100000"))
+
+# An export is not an interactive query. 15 seconds is right for something a
+# person is waiting on in a chat window; it is far too short for writing tens
+# of thousands of rows to disk, and cutting that off produces a timeout the
+# model cannot do anything useful about.
+DB_EXPORT_TIMEOUT_MS = int(_env("DB_EXPORT_TIMEOUT_MS", "180000"))
 
 # --- auth (enforced from Phase 06) ---
 APP_TOKEN = _env("APP_TOKEN", "")
@@ -88,6 +107,11 @@ class UnsafePathError(ValueError):
 def ensure_data_dir() -> Path:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     return DATA_DIR
+
+
+def ensure_index_dir() -> Path:
+    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    return INDEX_DIR
 
 
 def resolve_in_data_dir(name: str) -> Path:

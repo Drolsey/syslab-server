@@ -142,3 +142,69 @@ def test_the_row_cap_cannot_be_raised_by_the_model(monkeypatch):
     monkeypatch.setattr(db, "_connect", lambda: FakeConn())
     db.run_sql("SELECT 1", max_rows=100000)
     assert captured["limit"] == 51  # the cap, plus one to detect truncation
+
+
+# --------------------------------------------------------------------------
+# Things that must hold without a database in front of them.
+# These are the parts that broke in real use, so they get regression tests
+# that run in CI where a live connection never will.
+# --------------------------------------------------------------------------
+
+import datetime
+import decimal
+
+import pytest
+
+from app import db
+
+
+@pytest.mark.parametrize(
+    "given, expected",
+    [
+        ("Report", (None, "Report")),
+        ('"Report"', (None, "Report")),
+        ("public.Report", ("public", "Report")),
+        ('public."Report"', ("public", "Report")),
+        ('"public"."Report"', ("public", "Report")),
+        ('  public . "Report" ', ("public", "Report")),
+        ('"odd.name"', (None, "odd.name")),
+        ('public."say ""hi"""', ("public", 'say "hi"')),
+    ],
+)
+def test_describe_table_accepts_every_spelling_it_hands_out(given, expected):
+    # describe_table tells the model to use public."Report". Refusing that
+    # string back is the tool contradicting its own instructions, which is
+    # exactly what happened in practice.
+    assert db._split_identifier(given) == expected
+
+
+def test_a_name_is_quoted_only_when_it_has_to_be():
+    assert db._quote_one("invoices") == "invoices"
+    assert db._quote_one("Report") == '"Report"'
+    assert db._quote_one("Hospital Name") == '"Hospital Name"'
+    assert db._quote_one("2024") == '"2024"'
+    assert db._quote_one('a"b') == '"a""b"'
+
+
+def test_excel_values_keep_their_type():
+    # A date written as a string sorts alphabetically in Excel and cannot be
+    # filtered by month, so the export converter must not stringify like the
+    # JSON one does.
+    when = datetime.datetime(2023, 4, 1, 12, 0)
+    assert db._excel_safe(when) == when
+    assert db._excel_safe(decimal.Decimal("11200.50")) == 11200.5
+    assert db._excel_safe(None) is None
+    assert db._excel_safe("text") == "text"
+
+
+def test_a_huge_decimal_stays_text_rather_than_being_rounded():
+    # Past 15 digits this is an identifier, not an amount. Rounding it would
+    # corrupt it silently, which is worse than showing it as text.
+    big = decimal.Decimal("123456789012345678901")
+    assert db._excel_safe(big) == "123456789012345678901"
+
+
+def test_a_timezone_is_dropped_not_stringified():
+    aware = datetime.datetime(2023, 4, 1, 12, 0, tzinfo=datetime.timezone.utc)
+    got = db._excel_safe(aware)
+    assert isinstance(got, datetime.datetime) and got.tzinfo is None

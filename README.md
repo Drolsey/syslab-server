@@ -119,6 +119,11 @@ Two behaviours worth knowing:
 `agent.ask()` returns the answer, a `steps` trace of what it actually called,
 and the full message list to pass back as `history` next turn.
 
+Read-only tools called together in one turn run concurrently, so "read these
+five invoices" costs one wait rather than five. Anything that writes stays
+sequential, because two writers racing on one file is a bug nobody enjoys
+finding.
+
 The model never touches a file. It only ever asks, and `run_tool` decides.
 Every failure inside a tool becomes a sentence in the result rather than an
 exception, so the model can read what went wrong and correct itself. That is
@@ -327,6 +332,43 @@ somewhere else, so it must not need the project installed there.
 
 A call is not a success: every check that matters looks for a tool step that
 returned `ok`, not merely a tool that was attempted.
+
+## Finding a document by what is in it
+
+Without an index, "find the invoice for the calibration job" forces the model to
+open documents one at a time looking for the words. Each one is a round trip, and
+`MAX_TOOL_STEPS` caps that at about nine files. Fine for a test folder, useless
+at two hundred.
+
+`search_files` searches every PDF and spreadsheet in one call and returns the
+best matches with a snippet and the tool that opens each one. Text is extracted
+at upload, so a file is searchable the moment it arrives.
+
+```bash
+python scripts/check_search.py              # find one document among 40 decoys
+python scripts/check_search.py --rebuild    # rebuild the index from scratch
+```
+
+**The index is a cache, and four rules keep it one.** This is what makes moving
+to PostgreSQL later a change of storage rather than a migration:
+
+1. `search()`, `index_file()` and `rebuild()` are the only interface. Nothing
+   else in the app knows SQLite exists.
+2. The extracted **text** is stored, not only the inverted index, so migrating is
+   an insert rather than a re-parse of every document.
+3. The database lives in `index/`, outside `DATA_DIR`, so it is obviously not
+   user data and deleting it is obviously safe.
+4. `rebuild()` reconstructs it from the files on disk, which makes it disposable
+   by construction rather than by intention.
+
+Nothing durable is ever stored there. No tags, no notes, no annotations. The
+moment something exists only in that file it stops being a cache.
+
+**What would make PostgreSQL the right answer instead:** a second machine (a
+SQLite file cannot serve two hosts, though any number of GPUs in one box is
+fine), a rebuild slow enough that losing the index is an outage, or wanting one
+query that ranks document matches and database rows together. None of those is
+about how many cards are in the server.
 
 ## Customer database access
 

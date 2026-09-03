@@ -367,3 +367,89 @@ def test_the_listing_schema_points_the_model_at_read_with():
 def test_the_prompt_covers_combining_mismatched_sources():
     assert "Never reuse a column name from one file" in agent.SYSTEM_PROMPT
     assert "identical figures" in agent.SYSTEM_PROMPT
+
+
+def test_several_read_only_calls_in_one_turn_run_concurrently(monkeypatch):
+    """Reading five documents should cost one wait, not five."""
+    import time
+
+    def slow_read(**_kwargs):
+        time.sleep(0.25)
+        return {"ok": True}
+
+    monkeypatch.setitem(agent.REGISTRY, "read_pdf", slow_read)
+    calls = [{"function": {"name": "read_pdf", "arguments": {"filename": f"{n}.pdf"}}}
+             for n in range(5)]
+    started = time.time()
+    outcomes = agent._run_calls(calls)
+    elapsed = time.time() - started
+    assert len(outcomes) == 5
+    assert all(error is None for _, _, error in outcomes)
+    assert elapsed < 0.9, f"took {elapsed:.2f}s, so they ran one after another"
+
+
+def test_a_turn_containing_a_write_stays_sequential(monkeypatch):
+    """Two writers racing on one file is a bug nobody enjoys finding."""
+    order: list[str] = []
+
+    def slow(name):
+        def run(**_kwargs):
+            order.append(f"start {name}")
+            time.sleep(0.1)
+            order.append(f"end {name}")
+            return {"ok": True}
+        return run
+
+    import time
+    monkeypatch.setitem(agent.REGISTRY, "read_pdf", slow("read"))
+    monkeypatch.setitem(agent.REGISTRY, "write_excel", slow("write"))
+    agent._run_calls([
+        {"function": {"name": "read_pdf", "arguments": {}}},
+        {"function": {"name": "write_excel", "arguments": {}}},
+    ])
+    assert order == ["start read", "end read", "start write", "end write"]
+
+
+def test_results_keep_the_order_the_model_asked_in(monkeypatch):
+    monkeypatch.setitem(agent.REGISTRY, "read_pdf", lambda filename=None, **_: {"f": filename})
+    outcomes = agent._run_calls([
+        {"function": {"name": "read_pdf", "arguments": {"filename": f"{n}.pdf"}}}
+        for n in ("a", "b", "c")
+    ])
+    assert [result["f"] for _, result, _ in outcomes] == ["a.pdf", "b.pdf", "c.pdf"]
+
+
+def test_the_prompt_demands_the_comparison_be_shown():
+    """A text hit is a candidate, not an answer. Listing 11,200 under 'over
+    12,000' is the failure this rule exists to prevent."""
+    assert "search_files matches WORDS, not conditions" in agent.SYSTEM_PROMPT
+    assert "SHOW THE COMPARISON" in agent.SYSTEM_PROMPT
+
+
+def test_search_results_say_they_are_matches_and_not_answers():
+    from app import search
+
+    schema = next(s for s in agent.TOOL_SCHEMAS if s["function"]["name"] == "search_files")
+    assert "not a filter" in schema["function"]["description"]
+
+
+def test_no_tool_description_contains_a_copyable_literal():
+    """An example inside a tool description is indistinguishable from an argument.
+
+    This is not hypothetical. The search_files description used to read
+    "whichever file mentions Meridian" as an illustration, and the model
+    searched for "Meridian" in a conversation where the user had never said
+    the word -- then reported eight matching invoices as if they were the
+    answer to a question about database tables.
+
+    Tool descriptions may show the SHAPE of a call. They must not contain a
+    name, company or identifier that could be sent as an argument.
+    """
+    import json
+    from app import agent
+
+    blob = json.dumps(agent.TOOL_SCHEMAS)
+    for literal in ("Meridian", "calibration job", 'public."Report"', "Report"):
+        assert literal not in blob, (
+            f"{literal!r} appears in a tool description; the model will copy it"
+        )

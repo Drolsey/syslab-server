@@ -12,11 +12,12 @@ that is allowed.
 
 from __future__ import annotations
 
+import concurrent.futures
 import inspect
 import json
 from typing import Any, Callable
 
-from app import db, jobs, llm, tools
+from app import db, jobs, llm, search, tools
 from app.config import MAX_TOOL_STEPS
 
 # --------------------------------------------------------------------------
@@ -42,11 +43,13 @@ def job_status(job_id: str) -> dict:
 
 REGISTRY: dict[str, Callable[..., dict]] = {
     "list_files": tools.list_files,
+    "search_files": search.search,
     "queue_image": queue_image,
     "job_status": job_status,
     "list_tables": db.list_tables,
     "describe_table": db.describe_table,
     "run_sql": db.run_sql,
+    "query_to_excel": db.query_to_excel,
     "read_pdf": tools.read_pdf,
     "read_excel": tools.read_excel,
     "write_excel": tools.write_excel,
@@ -156,6 +159,83 @@ TOOL_SCHEMAS: list[dict] = [
                     },
                 },
                 "required": ["sql"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_to_excel",
+            "description": (
+                "THE ONLY WAY to turn a database table into a file. Use it whenever "
+                "the user says any of: extract / export / save / copy / download / dump / "
+                "'get me' a table, the data, the database, or the records -- and whenever "
+                "they ask for database results as a spreadsheet. To save a table, pass "
+                "sql = 'SELECT * FROM ' followed by the query_as that list_tables gave "
+                "you for that table -- never a table name you have not seen in a tool result. "
+                "It runs the SELECT and writes EVERY matching row straight to an .xlsx "
+                "without the rows passing through you, so it is not limited to the 200 "
+                "rows run_sql shows you -- it writes up to 100,000. You are told the row "
+                "count and the column names and nothing else, which is all you need to "
+                "tell the user the file is ready. Never try to reach a table with "
+                "read_excel, read_pdf, list_files or search_files: those see only the "
+                "data folder and a table is not in the data folder."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {
+                        "type": "string",
+                        "description": (
+                            "One SELECT statement. Quote table and column names exactly as "
+                            "list_tables and describe_table gave them to you."
+                        ),
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Name for the .xlsx file in the data folder.",
+                    },
+                    "sheet": {
+                        "type": "string",
+                        "description": "Optional sheet name. Defaults to 'Query'.",
+                    },
+                    "max_rows": {
+                        "type": "integer",
+                        "description": "Optional ceiling on rows written. Default 100,000.",
+                    },
+                },
+                "required": ["sql", "filename"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": (
+                "Find documents by WHAT IS INSIDE THEM, across every PDF and spreadsheet "
+                "at once, returning the best matches with a snippet of the matching text. "
+                "This is a TEXT match and not a filter: it finds documents containing words, "
+                "and cannot compare amounts or dates. For a question with a condition in it, "
+                "use this to find candidates and then check each one yourself. "
+                "Use this whenever the user describes a document rather than naming "
+                "it -- by the job it covers, the company on it, or a word they "
+                "remember seeing in it. Search for THEIR words. Never search for a "
+                "term that has not appeared in this conversation. "
+                "One call searches everything, so never open files one by one looking for "
+                "something."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Words likely to appear in the document, such as a name, "
+                                       "a reference number or a phrase.",
+                    },
+                    "limit": {"type": "integer", "description": "Most results to return. Default 8."},
+                },
+                "required": ["query"],
             },
         },
     },
@@ -291,17 +371,96 @@ the tools provided. Rules:
 
 - Never state the contents of a file you have not read with a tool this turn.
   If you do not know, call the tool. Guessing is the only unacceptable answer.
-- Never invent a filename. If the user has not given you an exact name, or you
-  are not certain the name they gave is real, call list_files FIRST and work
-  from what is actually there.
+- Never invent a filename. When the user DESCRIBES a document rather than naming
+  it, call search_files with words likely to be inside it. One call searches
+  every file at once. Opening documents one by one to see what is in them is
+  always the wrong approach and will run out of steps before it finds anything.
+  Use list_files when they want to know what exists, search_files when they want
+  to know which file contains something.
 - After list_files: if exactly one file clearly matches what they asked for,
   use it. If several could match, or none obviously does, stop and ask which
   they mean, listing the candidates by name. Do not pick one and hope. Asking
   costs the user a sentence; guessing wrong costs them a wrong answer or a
   file written in the wrong place.
+- THERE ARE TWO SEPARATE PLACES and they share no names. The DATA FOLDER holds
+  files -- .pdf and .xlsx -- reached with list_files, search_files, read_pdf,
+  read_excel. The DATABASE holds tables, reached with list_tables,
+  describe_table, run_sql and query_to_excel. A table is not a file. A file is
+  not a table. If the user names something you saw in list_tables, it is in the
+  database, no matter which word they used for it -- people say "file",
+  "sheet", "record" and "table" for the same thing and mean whichever one they
+  are looking at. Never search the data folder for something you know is a
+  table, and never invent a filename like Report.xlsx for a table called
+  Report.
+- Decide which place they mean and ACT. If the words "database", "customer
+  database", "client database" or a database name appear, or
+  they name something list_tables showed you, it is the database: call
+  list_tables and answer. "Show me the files in the customer database" means
+  the tables -- they used the word "files" loosely and you know what they
+  meant. Asking them to rephrase a question you already understand is
+  worse than guessing: guessing costs one wrong tool call, refusing costs them
+  their turn. Only ask when a name exists in BOTH places and the two answers
+  would differ.
+- To put a table into a file, there is exactly one route: query_to_excel. Not
+  run_sql then write_excel, which would save 200 rows of a 50,000-row table.
+  Not read_excel, which cannot see the database at all.
 - For anything about the customer database: list_tables, then describe_table on
   the tables you will use, then run_sql. Never write SQL against a table whose
   columns you have not read. Never invent a column name.
+- Both tools give you a `query_as` field, on the table and on every column.
+  Paste those into your SQL exactly as written, quotes included. A table named
+  Report is a different table from report as far as the server is concerned,
+  and a column called Hospital Name written without quotes is a syntax error.
+  Never retype a name by hand when query_as gives it to you.
+- Database results the user wants as a FILE go through query_to_excel, always.
+  Give it the same SQL you would have given run_sql. Do not run the query,
+  read the rows, and then retype them into write_excel: you can only see 200
+  rows, so you would be writing a fraction of the answer into a file that
+  looks complete. query_to_excel has no such limit because the rows never
+  reach you.
+- When the user asks you to SAVE something you fetched earlier -- "put that in
+  a spreadsheet", "save the query you just showed me" -- do not write your
+  description of it. Run the same SQL through query_to_excel. Your earlier
+  reply was a summary for reading; the file they asked for is the data.
+  Silently saving a paragraph where they expected a table is the worst
+  possible outcome because it looks like it worked.
+- write_pdf and write_excel tell you characters_written. Read it. If the user
+  asked for a hundred rows of data and it says a few hundred characters, you
+  wrote a summary. Say so and redo it rather than reporting success.
+- Every argument you send must come from the user's words or from a tool
+  result. Never take a term from a tool's DESCRIPTION and search for it: the
+  examples in those descriptions are there to show you the shape of a call,
+  not to tell you what the user wants. If you cannot point to where a name
+  came from, do not use it.
+- A question ABOUT the data is a query with a WHERE clause, never a dump.
+  "What is the classification of the Category 2 patient monitor" is
+  SELECT "Classification" FROM public."Report"
+  WHERE "Category" = 'Category 2' AND "Asset Name" ILIKE '%patient monitor%'.
+  Do not fetch rows and read through them looking for the answer: you only see
+  a fraction of the table, so an answer found that way is a guess dressed up
+  as a fact. Let the server find it.
+- If the user's question is about something you have seen in a table, ANSWER
+  IT FROM THE TABLE. Do not answer from general knowledge. A question about a
+  category, a classification or a status in their data is asking what THEIR
+  RECORDS say, not what the term means in the wider world. If you find
+  yourself explaining regulatory frameworks, you have misread the question.
+- An exported spreadsheet is not a shortcut back to the data. Once you have
+  written Report.xlsx, do not read it to answer questions about the table --
+  it holds whatever subset you exported, and the table has the rest. Query the
+  table.
+- The row cap is small and these tables are large. Ask the server to do the
+  counting: COUNT, SUM, AVG, GROUP BY, ORDER BY ... LIMIT. Do not pull rows
+  back and add them up yourself -- you will only ever see the first few
+  hundred, so any total you compute that way is wrong without looking wrong.
+  If a result comes back truncated, that is a signal to rewrite the query as
+  an aggregate, not to report what you got.
+- search_files matches WORDS, not conditions. It cannot compare numbers or
+  dates, so a hit is a candidate, never an answer. When the question contains a
+  condition (more than, before, at least, between), find the candidates, read
+  each one, and then SHOW THE COMPARISON: list every candidate with its actual
+  value and say which pass and which fail. Never present a filtered list without
+  the numbers you filtered on written next to each item. If a value does not
+  satisfy the condition, leave it out and say you checked it.
 - Prefer aggregates over raw rows. A question about how many, how much or which
   is the largest is answered with count, sum or max, not by pulling every row
   and counting them yourself. Rows you pull are somebody's real records.
@@ -362,6 +521,43 @@ ARGUMENT_ALIASES: dict[str, str] = {
     "page_range": "pages",
 }
 
+# Aliases that are only correct for one tool. `query_as` is the worst offender
+# and it is our own doing: list_tables and describe_table hand the model a
+# field called query_as holding the text to paste into SQL, and the model
+# reasonably concludes that query_as is the name of an argument. Anything a
+# tool result names, a tool call may echo back -- so accept it rather than
+# lecture the model about a distinction we invented.
+TOOL_ARGUMENT_ALIASES: dict[str, dict[str, str]] = {
+    "describe_table": {
+        "query_as": "table",
+        "table_name": "table",
+        "relation": "table",
+        "schema_name": "schema",
+    },
+    "run_sql": {
+        "query_as": "sql",
+        "query": "sql",
+        "statement": "sql",
+        "sql_query": "sql",
+        "limit": "max_rows",
+        "row_limit": "max_rows",
+    },
+    "query_to_excel": {
+        "query_as": "sql",
+        "query": "sql",
+        "statement": "sql",
+        "sql_query": "sql",
+        "file": "filename",
+        "file_name": "filename",
+        "name": "filename",
+        "path": "filename",
+        "sheet_name": "sheet",
+        "worksheet": "sheet",
+        "limit": "max_rows",
+    },
+    "job_status": {"id": "job_id", "job": "job_id"},
+}
+
 
 def _coerce_arguments(name: str, function: Callable, arguments: Any) -> dict:
     """Models sometimes send a JSON string, or the wrong names, or nothing."""
@@ -381,16 +577,24 @@ def _coerce_arguments(name: str, function: Callable, arguments: Any) -> dict:
 
     parameters = inspect.signature(function).parameters
     accepted = set(parameters)
+    local = TOOL_ARGUMENT_ALIASES.get(name, {})
+
+    def resolve(key: str) -> str:
+        if key in accepted:
+            return key
+        # A tool's own alias beats the shared table: ARGUMENT_ALIASES maps
+        # "table" to "rows" for write_excel, which would be exactly wrong for
+        # describe_table, where "table" is a real argument.
+        return local.get(key) or ARGUMENT_ALIASES.get(key, key)
 
     # Rename what we recognise, but never clobber a key that is already correct.
     renamed: dict[str, Any] = {}
     for key, value in arguments.items():
-        target = key if key in accepted else ARGUMENT_ALIASES.get(key, key)
+        target = resolve(key)
         if target in accepted and target not in renamed:
             renamed[target] = value
 
-    dropped = sorted(set(arguments) - {k for k in arguments if k in accepted}
-                     - {k for k in arguments if ARGUMENT_ALIASES.get(k) in accepted})
+    dropped = sorted(k for k in arguments if resolve(k) not in accepted)
 
     required = [
         key for key, parameter in parameters.items()
@@ -455,6 +659,34 @@ def _is_a_promise(text: str) -> bool:
         return False
     return any(phrase in lowered for phrase in PROMISES)
 
+# Tools that only read. When every call in one turn is on this list they can run
+# at the same time, which turns "read these five invoices" from five waits into
+# one. Anything that writes stays sequential: two writers racing on one file is
+# a bug nobody enjoys finding.
+READ_ONLY = {
+    "list_files", "search_files", "read_pdf", "read_excel",
+    "list_tables", "describe_table", "run_sql", "job_status",
+}
+
+
+def _run_calls(calls: list[dict]) -> list[tuple[str, Any, str | None]]:
+    """Execute one turn's tool calls, in parallel when it is safe to."""
+    prepared = []
+    for call in calls:
+        block = call.get("function") or {}
+        prepared.append((block.get("name", ""), block.get("arguments")))
+
+    if len(prepared) > 1 and all(name in READ_ONLY for name, _ in prepared):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(prepared), 6)) as pool:
+            futures = [pool.submit(run_tool, name, args) for name, args in prepared]
+            outcomes = [future.result() for future in futures]
+    else:
+        outcomes = [run_tool(name, args) for name, args in prepared]
+
+    return [(name, result, error)
+            for (name, _), (result, error) in zip(prepared, outcomes)]
+
+
 def _tool_calls_of(message: dict) -> list[dict]:
     calls = message.get("tool_calls") or []
     return calls if isinstance(calls, list) else []
@@ -481,6 +713,8 @@ def ask(
 
     steps: list[dict] = []
     nudged = False
+    # (tool name, exact arguments) -> how many times it has already failed.
+    attempts: dict[tuple[str, str], int] = {}
 
     # One round per model call. The single nudge below gets its own round back,
     # so asking the model to try again never eats the user's tool budget.
@@ -538,11 +772,10 @@ def ask(
                 answer = "The model returned an empty reply. Try asking again."
             return {"answer": answer, "steps": steps, "messages": messages, "empty_reply": True}
 
-        for call in calls:
-            function_block = call.get("function") or {}
-            name = function_block.get("name", "")
-            arguments = function_block.get("arguments")
-            result, error = run_tool(name, arguments)
+        # Order is preserved even when these ran concurrently: the model must see
+        # its results in the order it asked for them.
+        for (name, result, error), call in zip(_run_calls(calls), calls):
+            arguments = (call.get("function") or {}).get("arguments")
             steps.append(
                 {
                     "tool": name,
@@ -552,6 +785,28 @@ def ask(
                     "result": result,
                 }
             )
+
+            # A small model that hits an error will often repeat the identical
+            # call, word for word, and then repeat it again. Nothing about the
+            # world changed between attempts, so nothing about the result will
+            # either -- it is a loop, and it burns the user's budget in silence.
+            # Say so plainly the second time, because the model clearly is not
+            # going to notice on its own.
+            if error is not None:
+                signature = (name, json.dumps(arguments, sort_keys=True, default=str))
+                attempts[signature] = attempts.get(signature, 0) + 1
+                if attempts[signature] > 1:
+                    result = dict(result)
+                    result["error"] = (
+                        f"{result.get('error', error)}\n\n"
+                        f"You have now called {name} with these exact arguments "
+                        f"{attempts[signature]} times and it has failed every "
+                        "time. Repeating it will fail again. Change the "
+                        "arguments, use a different tool, or tell the user what "
+                        "is blocking you and what you need from them. Do not "
+                        "make this call again."
+                    )
+
             messages.append(
                 {
                     "role": "tool",

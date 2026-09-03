@@ -202,3 +202,52 @@ def test_list_files_says_which_tool_reads_each_file():
     tools.write_excel("sales.xlsx", rows=[["a", 1]])
     by_name = {f["name"]: f["read_with"] for f in tools.list_files()["files"]}
     assert by_name == {"invoice.pdf": "read_pdf", "sales.xlsx": "read_excel"}
+
+
+# --------------------------------------------------------------------------
+# The two worlds must not be confused for each other.
+# In real use the model asked for "Report.xlsx" -- Report being a database
+# table, not a file -- and the error listed eighteen unrelated filenames.
+# It then spent the rest of the conversation searching the data folder and
+# eventually denied being able to reach a database at all.
+# --------------------------------------------------------------------------
+
+def test_asking_for_a_table_as_a_file_points_at_the_database(monkeypatch, tmp_path):
+    from app import db, tools
+
+    monkeypatch.setattr(db, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        db, "known_table_names", lambda *a, **k: {"report": 'public."Report"'}
+    )
+
+    with pytest.raises(tools.ToolError) as caught:
+        tools.read_excel("Report.xlsx")
+
+    message = str(caught.value)
+    assert "not a file" in message
+    assert "query_to_excel" in message
+    assert 'public."Report"' in message
+    # The old behaviour, and what sent it hunting: a wall of filenames.
+    assert "phase03_sales.xlsx" not in message
+
+
+def test_a_real_missing_file_still_gets_the_normal_error(monkeypatch):
+    from app import db, tools
+
+    monkeypatch.setattr(db, "known_table_names", lambda *a, **k: {"report": "x"})
+    with pytest.raises(tools.ToolError) as caught:
+        tools.read_excel("definitely_not_a_table.xlsx")
+    assert "No file named" in str(caught.value)
+
+
+def test_the_hint_never_breaks_the_error_path(monkeypatch):
+    """A database that is down must not stop a missing file from being reported."""
+    from app import db, tools
+
+    def explode(*a, **k):
+        raise RuntimeError("database is on fire")
+
+    monkeypatch.setattr(db, "table_hint", explode)
+    with pytest.raises(tools.ToolError) as caught:
+        tools.read_excel("nope.xlsx")
+    assert "No file named" in str(caught.value)

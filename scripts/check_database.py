@@ -11,6 +11,7 @@ permanent is touched either way.
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import time
@@ -27,8 +28,8 @@ require("psycopg")
 
 from app import db  # noqa: E402
 from app.config import (  # noqa: E402
-    DB_CONNECT_TIMEOUT, DB_DATABASE, DB_HOST, DB_MAX_ROWS, DB_PORT,
-    DB_SSLMODE, DB_STATEMENT_TIMEOUT_MS, DB_USER,
+    DATA_DIR, DB_CONNECT_TIMEOUT, DB_DATABASE, DB_EXPORT_MAX_ROWS, DB_HOST,
+    DB_MAX_ROWS, DB_PORT, DB_SSLMODE, DB_STATEMENT_TIMEOUT_MS, DB_USER,
 )
 
 LINE = "-" * 66
@@ -136,7 +137,7 @@ def diagnose_connection() -> None:
     print("    - Is this instance reachable over a public IP, or only through the")
     print("      Cloud SQL Auth Proxy or a private network?")
     print("    - If public: please add <your address> to the authorised networks.")
-    print("    - Does database_agent_ai hold SELECT only? I would rather it did.")
+    print(f"    - Does {DB_USER} hold SELECT only? I would rather it did.")
     print()
 
 
@@ -157,6 +158,12 @@ def main() -> int:
             version, user, database = cursor.fetchone()
     except db.DatabaseError as exc:
         record("Connected", False, str(exc))
+        diagnose_connection()
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        record("Connected", False,
+               f"leaked a raw {type(exc).__name__}: {exc} "
+               "-- the model would see a traceback, not an instruction")
         diagnose_connection()
         return 1
     record("Connected", True, f"{(time.time() - started) * 1000:.0f} ms")
@@ -238,11 +245,16 @@ def main() -> int:
         listing = db.list_tables()
         record("list_tables works", True, f"{listing['count']} tables visible")
         for entry in listing["tables"][:12]:
-            print(f"    {entry['schema_name']}.{entry['table_name']:<32} ~{entry['approx_rows']:>10,} rows")
+            print(f"    {entry['query_as']:<40} ~{entry['approx_rows']:>10,} rows")
         if listing["count"] > 12:
             print(f"    ... and {listing['count'] - 12} more")
     except db.DatabaseError as exc:
         record("list_tables works", False, str(exc))
+        listing = {"tables": []}
+    except Exception as exc:  # noqa: BLE001
+        record("list_tables works", False,
+               f"leaked a raw {type(exc).__name__}: {exc} "
+               "-- the model would see a traceback, not an instruction")
         listing = {"tables": []}
 
     if listing["tables"]:
@@ -252,15 +264,188 @@ def main() -> int:
             names = ", ".join(c["name"] for c in shape["columns"][:8])
             record("describe_table works", True,
                    f"{first['table_name']}: {len(shape['columns'])} columns ({names}...)")
+            awkward = shape.get("needs_quoting", [])
+            if awkward:
+                print(f"    {len(awkward)} of {len(shape['columns'])} column names "
+                      "need quoting; the model is given them pre-quoted")
         except db.DatabaseError as exc:
             record("describe_table works", False, str(exc))
+            shape = None
+        except Exception as exc:  # noqa: BLE001
+            record("describe_table works", False,
+                   f"leaked a raw {type(exc).__name__}: {exc} "
+                   "-- the model would see a traceback, not an instruction")
+            shape = None
+
+        # Reading a real table is the check that matters. A name with capitals
+        # in it only works if it is quoted, and the model can only quote it if
+        # list_tables told it how -- so this proves the whole path, not the
+        # connection alone.
+        if shape:
+            target = shape["query_as"]
+            try:
+                probe = db.run_sql(f"SELECT * FROM {target} LIMIT 1")
+                record("Reading a real table works", bool(probe["columns"]),
+                       f"{target} returned {len(probe['columns'])} columns")
+            except db.DatabaseError as exc:
+                record("Reading a real table works", False, f"{target}: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                record("Reading a real table works", False,
+                       f"leaked a raw {type(exc).__name__}: {exc} "
+                       "-- the model would see a traceback, not an instruction")
+
+            awkward = [c for c in shape["columns"] if c["query_as"] != c["name"]]
+            if awkward:
+                pick = awkward[0]
+                try:
+                    db.run_sql(
+                        f'SELECT {pick["query_as"]} FROM {target} LIMIT 1'
+                    )
+                    record("Awkward column names work", True,
+                           f'selected {pick["query_as"]}')
+                except db.DatabaseError as exc:
+                    record("Awkward column names work", False,
+                           f'{pick["query_as"]}: {exc}')
+                except Exception as exc:  # noqa: BLE001
+                    record("Awkward column names work", False,
+                           f"leaked a raw {type(exc).__name__}: {exc} "
+                           "-- the model would see a traceback, not an instruction")
+
+            bare = target.replace('"', "")
+            if bare != target:
+                try:
+                    db.run_sql(f"SELECT * FROM {bare} LIMIT 1")
+                    print(f"    note: {bare} happens to work unquoted too")
+                except db.DatabaseError:
+                    print(f"    note: {bare} fails unquoted, as expected -- "
+                          "this is why query_as exists")
 
     try:
         started = time.time()
-        result = db.run_sql("SELECT 1 AS ok")
-        record("run_sql works", result["rows"] == [[1]], f"{(time.time() - started) * 1000:.0f} ms")
+        result = db.run_sql("SELECT 1 AS ok, 'x' AS label")
+        # Rows come back labelled by column name, not as bare positional
+        # lists. That is the contract the model depends on to avoid
+        # mis-aligning a wide table, so assert the shape and not just the value.
+        shaped = result["rows"] == [{"ok": 1, "label": "x"}]
+        record("run_sql works", shaped,
+               f"{(time.time() - started) * 1000:.0f} ms, rows labelled by column"
+               if shaped else f"unexpected row shape: {result['rows']!r}")
     except db.DatabaseError as exc:
         record("run_sql works", False, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        record("run_sql works", False,
+               f"leaked a raw {type(exc).__name__}: {exc} "
+               "-- the model would see a traceback, not an instruction")
+
+    # ---- 6. the export path --------------------------------------------
+    # This is the tool that answers "give me the data as a file". The check
+    # that matters is not that a file appeared -- it is that the file holds
+    # MORE rows than run_sql would have shown the model, because writing 200
+    # rows of a 49,795-row answer into a spreadsheet the user believes is
+    # complete is the failure this tool exists to prevent.
+    if listing["tables"] and shape:
+        section("Query straight to a spreadsheet")
+        target = shape["query_as"]
+        out = f"_gate_export_{os.getpid()}.xlsx"
+        wanted = min(DB_MAX_ROWS * 3, 600)
+        try:
+            export = db.query_to_excel(
+                f"SELECT * FROM {target} LIMIT {wanted}", out, sheet="Gate"
+            )
+            record("query_to_excel writes a file", export["rows_written"] > 0,
+                   f"{export['rows_written']:,} rows x {export['column_count']} "
+                   f"columns, {export['size_kb']} KB")
+            record(
+                "The file holds more rows than the model can see",
+                export["rows_written"] > DB_MAX_ROWS,
+                f"{export['rows_written']:,} written vs the {DB_MAX_ROWS}-row "
+                "cap on run_sql",
+            )
+
+            # Read it back. A spreadsheet that openpyxl cannot reopen is not a
+            # deliverable, and a header row alone is a silent empty export.
+            from openpyxl import load_workbook
+            book = load_workbook(export["path"], read_only=True)
+            try:
+                ws = book[book.sheetnames[0]]
+                first = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+                body = sum(1 for _ in ws.iter_rows(min_row=2))
+                record("The file reopens with its data intact",
+                       body == export["rows_written"] and len(first) == export["column_count"],
+                       f"header {len(first)} columns, {body:,} data rows")
+            finally:
+                book.close()
+
+            # Nothing about the rows may reach the model.
+            leaked = "rows" in export or "data" in export
+            record("The rows never reach the model", not leaked,
+                   "result carries counts and column names only")
+        except db.DatabaseError as exc:
+            record("query_to_excel writes a file", False, str(exc))
+        except Exception as exc:  # noqa: BLE001
+            record("query_to_excel writes a file", False,
+                   f"leaked a raw {type(exc).__name__}: {exc} "
+                   "-- the model would see a traceback, not an instruction")
+        finally:
+            stale = DATA_DIR / out
+            if stale.is_file():
+                try:
+                    stale.unlink()
+                except OSError:
+                    print(f"    note: could not remove {stale}")
+
+        try:
+            db.query_to_excel(f"SELECT * FROM {target} LIMIT 1", "../escape.xlsx")
+            record("Refuses a filename outside the data folder", False, "IT WROTE IT")
+        except db.DatabaseError:
+            record("Refuses a filename outside the data folder", True, "rejected")
+
+        try:
+            db.query_to_excel("DELETE FROM public.nothing", "bad.xlsx")
+            record("Refuses a write disguised as an export", False, "IT DID NOT REFUSE")
+        except db.DatabaseError:
+            record("Refuses a write disguised as an export", True,
+                   "rejected before it reached the database")
+
+        # The whole table, unfiltered, is what the model asks for first and
+        # what used to time out at 15 seconds -- because an ordinary cursor
+        # fetches every row during execute(), so a 200-row cap did nothing.
+        # This is the regression test for that.
+        section("Large tables do not time out")
+        biggest = max(listing["tables"], key=lambda t: t["approx_rows"])
+        started = time.time()
+        try:
+            probe = db.run_sql(f'SELECT * FROM {biggest["query_as"]}')
+            elapsed = (time.time() - started) * 1000
+            record(
+                "An unfiltered query on the biggest table returns",
+                probe["row_count"] > 0 or biggest["approx_rows"] == 0,
+                f"{biggest['query_as']} (~{biggest['approx_rows']:,} rows): "
+                f"{probe['row_count']} rows back in {elapsed:.0f} ms",
+            )
+        except db.DatabaseError as exc:
+            record("An unfiltered query on the biggest table returns", False,
+                   f"{(time.time() - started) * 1000:.0f} ms: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            record("An unfiltered query on the biggest table returns", False,
+                   f"leaked a raw {type(exc).__name__}: {exc} "
+                   "-- the model would see a traceback, not an instruction")
+
+        try:
+            db.run_sql("SELECT pg_sleep(60)")
+            record("A genuinely slow query is still cut off", False, "IT DID NOT STOP")
+        except db.DatabaseError as exc:
+            helpful = "took too long" in str(exc)
+            record("A genuinely slow query is still cut off", helpful,
+                   "and the message says what to do about it" if helpful
+                   else f"but the message is unhelpful: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            # This is the exact failure that crashed the gate: with a
+            # server-side cursor the timeout arrives on FETCH, not on execute,
+            # so a handler wrapped around execute alone never saw it.
+            record("A genuinely slow query is still cut off", False,
+                   f"leaked a raw {type(exc).__name__}: {exc} "
+                   "-- the model would see a traceback, not an instruction")
 
     try:
         db.run_sql("DELETE FROM information_schema.tables")
@@ -274,7 +459,9 @@ def main() -> int:
     for name, ok, _ in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
     print(f"\n  {passed} of {len(results)} checks passed")
-    print(f"\n  Row cap {DB_MAX_ROWS} per query, statement timeout {DB_STATEMENT_TIMEOUT_MS} ms.")
+    print(f"\n  Row cap {DB_MAX_ROWS} per query to the model, "
+          f"{DB_EXPORT_MAX_ROWS:,} per export to a file.")
+    print(f"  Statement timeout {DB_STATEMENT_TIMEOUT_MS} ms.")
     if passed != len(results):
         print("\n  Paste this output back into the chat.\n")
         return 1
@@ -284,4 +471,17 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\n  Stopped.\n")
+        sys.exit(130)
+    except Exception as exc:  # noqa: BLE001
+        # A gate that crashes tells you nothing about the checks it never
+        # reached. Say what broke, in one line, and fail honestly.
+        import traceback
+        print(f"\n  The check itself crashed: {type(exc).__name__}: {exc}")
+        print("  This is a bug in the checker or an error a tool failed to")
+        print("  translate. The trace follows; paste it into the chat.\n")
+        traceback.print_exc()
+        sys.exit(2)

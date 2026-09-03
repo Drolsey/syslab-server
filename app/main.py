@@ -24,7 +24,7 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Respon
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from app import agent, config, jobs, tools
+from app import agent, config, jobs, search, tools
 from app.config import (
     APP_HOST,
     APP_PORT,
@@ -242,10 +242,22 @@ async def upload(file: UploadFile = File(...)) -> dict:
         )
     path = unique_path(name)
     path.write_bytes(contents)
+
+    # Index it now, while we have it. Doing this at upload is what lets someone
+    # later find a document by what is in it rather than by remembering its name.
+    # A failure here must never lose the upload: the file is already on disk and
+    # scripts/check_search.py can rebuild the index at any time.
+    indexed = False
+    try:
+        indexed = bool(search.index_file(path).get("indexed"))
+    except Exception:  # noqa: BLE001
+        pass
+
     return {
         "name": path.name,
         "size_kb": round(len(contents) / 1024, 1),
         "renamed": path.name != name,
+        "searchable": indexed,
     }
 
 
