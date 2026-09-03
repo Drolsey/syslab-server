@@ -5,9 +5,13 @@ Written 3 September 2026. A portable copy of the session notes, so a new chat
 
 ## Where it stands
 
-Everything green. 174+ pytest tests pass. `scripts\check_database.py` passes
-around 20 checks. The app runs as a Windows scheduled task (LogonType S4U)
-and is reachable over Tailscale.
+Everything green, and gated on Windows on 3 September: pytest 201 passed,
+`check_tools` 12 of 12, `check_search` 9 of 9, `check_database` 22 of 22
+against the live client instance. The app runs as a Windows scheduled task
+(LogonType S4U) and is reachable over Tailscale.
+
+The eight-bug audit pass is committed as `23ab5ea`. The running service still
+holds pre-fix code until it is restarted.
 
 Working: file tools (list_files, read_pdf, read_excel, write_excel,
 write_pdf), FTS5 document search, the async job lane, token auth and the web
@@ -18,8 +22,11 @@ Stack: qwen3:8b via Ollama at temperature 0, FastAPI, RTX 3060 12 GB.
 ## The client database
 
 A client PostgreSQL instance on GCP; host, name and credentials live in
-`.env`, which is not tracked. One real table with about 52,000 rows and 35
-columns of asset-removal records. **Every one of those 35 column names needs
+`.env`, which is not tracked. One real table, `public."Report"`, holding
+**52,190 rows** by `count(*)` on 3 September, with 35 columns of
+asset-removal records. `list_tables` shows roughly 49,795, which is
+`pg_class.reltuples`, a planner estimate refreshed by ANALYZE. A 4.6 per cent
+gap between the two is ordinary staleness and is not a finding. **Every one of those 35 column names needs
 SQL quoting** — capitals and spaces throughout. Two `pg_stat_statements*`
 entries also appear; those are PostgreSQL monitoring views, not client data.
 
@@ -31,16 +38,20 @@ entries also appear; those are PostgreSQL monitoring views, not client data.
 
 ## Next, in order
 
-1. **Verify the row count.** Run `SELECT count(*)` on the main table and
-   confirm it matches the count `query_to_excel` wrote. The estimate from
-   `list_tables` is the planner's estimate, not a count — the two measure
-   different things and read thousands apart. A disagreement between count(*)
-   and the export is a real bug; a disagreement with the estimate is not.
-2. **Watch the phrase "files in the database".** The rule that resolves it
+1. **Restart the service** so it loads `23ab5ea`, then run
+   `py scripts\check_services.py` and confirm the code fingerprint it reports
+   matches the files on disk. The restart is not the proof; that comparison is.
+2. **Push.** `23ab5ea` is committed locally and not yet on GitHub.
+3. **Watch the phrase "files in the database".** The rule that resolves it
    landed after the last restart and has not been tested in a real session.
-3. **Commit.** Nothing has been committed since 2 Sep. Delete
-   `.git\index.lock` and `.git\index.lock.stale` first.
-4. **Empty `data\_to_delete\`** — 41 decoy test files.
+4. **Step 1, the ownership boundary.** See `docs/plans/`. Tenant identity
+   threaded through storage, search, jobs and database credentials, before any
+   customer data exists. It comes before vision, extraction and voice because
+   it is the most expensive thing to retrofit.
+
+Done and no longer on this list: the row count is verified at 52,190 and the
+export matches it exactly, so `query_to_excel` is faithful; the git locks are
+cleared; `data\_to_delete\` is empty.
 
 ## Offered, not built
 
@@ -69,6 +80,12 @@ entries also appear; those are PostgreSQL monitoring views, not client data.
 4. **An error that dumps 18 filenames drowns the context.** After two such
    errors the model said it had no database access while holding four
    database tools. It had not lost the tools; it had lost sight of them.
+
+5. **Read a return shape, do not infer it from the name.** `run_sql` returns
+   rows as dicts keyed by unique column label, not as lists, and a helper
+   written against the assumed shape died with `KeyError: 0`. The deliberate
+   design is documented in `app/db.py`; the assumption was not checked against
+   it.
 
 Fuller notes live in the project memory files, `feedback_agent_hardening.md`
 and `project_database_tools.md` chief among them.
