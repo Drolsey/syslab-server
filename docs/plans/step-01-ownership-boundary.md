@@ -1,6 +1,6 @@
 # Step 1: The Ownership Boundary
 
-Status: IN PROGRESS. 1.0 DONE (commit 5579399). All five decisions in section 4 are DECIDED.
+Status: IN PROGRESS. 1.0 and 1.1 DONE. All five decisions in section 4 are DECIDED.
 Written 3 September 2026. Amro confirmed 4.1 (tenant = organisation) and 4.3 (SQLite control
 plane now) on the same day; 4.2, 4.4 and 4.5 were settled by the evidence in their own rows.
 
@@ -263,6 +263,17 @@ Nothing uses it yet.
 **Gate:** unit tests for set, get, nesting, and that an unset read raises rather than
 returning a default.
 
+**DONE 3 Sep 2026.** 41 tests, suite 238 to 279. Verified by mutation: giving
+`current_tenant()` a default, and dropping the id pattern check, are both caught.
+
+`context.py` imports nothing from the rest of the app, because `config` will import it in
+1.2 and `tenancy` imports `config`, so it has to sit at the bottom of the graph. The id
+validation moved there from `tenancy.py` at the same time, so the control plane and anything
+that turns an id into a path apply exactly one rule rather than two that can drift.
+
+**It also pinned two runtime facts that later sub-steps depend on, by test rather than by
+memory.** Both were measured, not assumed. See the next section.
+
 ### 1.2 Tenant-aware paths
 
 The largest mechanical change and the one that carries the most risk.
@@ -319,6 +330,28 @@ tenant B, and assert each job wrote into its own folder.
 `require_auth` hashes the presented token, looks it up, and sets the context for the request.
 An unknown or revoked token is the existing 401. The rate limiter stays as it is.
 
+**CONSTRAINT MEASURED IN 1.1, AND IT CHANGES THIS SUB-STEP.** `require_auth` is `def` today,
+not `async def`. FastAPI runs a sync dependency in one anyio worker thread and a sync endpoint
+in another. Context flows INTO a worker thread and never back out, so a tenant set inside a
+sync dependency is gone by the time the endpoint runs. Measured against a probe app:
+
+| Where the tenant is set | What the endpoint sees |
+|---|---|
+| sync dependency | **None** |
+| async dependency | the tenant |
+| async middleware | the tenant |
+| a plain `threading.Thread` | **None**, which is 1.4's whole problem |
+
+So 1.5 must either make `require_auth` async or set the tenant in middleware. Making it async
+is the smaller change and keeps authentication and ownership in the one function that the code
+already calls "deliberately one function".
+
+Worth noting what would have happened without this: every request would have arrived with no
+tenant and `current_tenant()` would have raised on all of them. Loud, immediate, and traceable
+in a minute. That is decision 4.2's no-default rule doing exactly the job it was chosen for,
+and it is why the rule is worth more than the convenience it costs. The three cases above are
+asserted in `tests/test_context.py`, so if any of them ever changes the tests say so.
+
 `APP_TOKEN` in `.env` keeps working as the token for the `default` tenant, so your own setup
 does not break on the day this lands. It is removed in a later step, not this one.
 
@@ -367,7 +400,8 @@ confirming the check catches it.
 
 | Risk | Why it bites | Mitigation |
 |---|---|---|
-| `ContextVar` and threads | The job worker does not inherit the request's context. Silent wrong-tenant writes. | 1.4's two-tenant test, and the worker sets context explicitly from the job. |
+| `ContextVar` and threads | The job worker does not inherit the request's context. Silent wrong-tenant writes. | Confirmed by test in 1.1. 1.4's two-tenant test, and the worker sets context explicitly from the job. |
+| `ContextVar` and sync FastAPI dependencies | A tenant set in a sync dependency never reaches the endpoint. | Measured in 1.1 and asserted in `tests/test_context.py`. 1.5 makes `require_auth` async. |
 | A forgotten call site | One place still reads `config.DATA_DIR` and serves the wrong folder. | The source check in 1.2 that forbids the constants outright. |
 | Migration on Windows | Files held open by the running service. | Service stopped, dry run first, count matched after. |
 | Test churn hiding a real change | 201 tests edited at once. | The fixture is one shared helper, applied mechanically, and the diff is read rather than trusted. |

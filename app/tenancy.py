@@ -26,13 +26,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import re
 import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.config import CONTROL_PATH, ensure_control_dir
+from app.context import BadTenantError, validate_tenant_id
 
 
 class TenancyError(Exception):
@@ -94,10 +94,6 @@ CREATE TABLE IF NOT EXISTS tenant_database (
 # where a typo comes from.
 _ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 _ID_LENGTH = 12
-
-# An id given by hand (only "default", in practice) is allowed a wider set,
-# but still nothing that could escape a folder or surprise a filesystem.
-_VALID_ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 TOKEN_BYTES = 32  # secrets.token_urlsafe(32) gives 43 characters
 _TOUCH_AFTER = timedelta(seconds=60)
@@ -241,25 +237,14 @@ def create_tenant(name: str, tenant_id: str | None = None,
         if tenant_id is None:
             tenant_id = new_id(conn)
         else:
-            tenant_id = tenant_id.strip()
-            # Refused, not lowercased. Silently changing an id the caller chose
-            # means they hold one string and the store holds another. The reason
-            # ids are lower-case at all is that this becomes a folder name, and
-            # Windows would treat "Acme" and "acme" as one folder while Linux
-            # would treat them as two.
-            if tenant_id != tenant_id.lower():
-                raise TenancyError(
-                    f"{tenant_id!r} is not a usable tenant id: ids are lower-case, "
-                    f"because an id becomes a folder name and Windows would see "
-                    f"{tenant_id!r} and {tenant_id.lower()!r} as the same folder "
-                    f"while Linux would see two. Use {tenant_id.lower()!r}."
-                )
-            if not _VALID_ID.match(tenant_id):
-                raise TenancyError(
-                    f"{tenant_id!r} is not a usable tenant id. It becomes a folder "
-                    "name, so it must start with a lower-case letter and hold only "
-                    "letters, digits, hyphen and underscore, up to 32 characters."
-                )
+            # One rule for what an id may be, and it lives in context.py so that
+            # the control plane and anything that turns an id into a path cannot
+            # drift apart. Refused, never clamped: silently changing an id the
+            # caller chose means they hold one string and the store holds another.
+            try:
+                tenant_id = validate_tenant_id(tenant_id)
+            except BadTenantError as exc:
+                raise TenancyError(str(exc)) from exc
         if conn.execute("SELECT 1 FROM tenants WHERE id = ?", (tenant_id,)).fetchone():
             raise TenancyError(f"A tenant with id {tenant_id!r} already exists.")
 
