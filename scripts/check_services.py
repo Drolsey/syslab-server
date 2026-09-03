@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -25,6 +26,12 @@ from app.config import APP_PORT, APP_TOKEN, OLLAMA_HOST, OLLAMA_MODEL, code_fing
 LINE = "-" * 62
 APP_URL = f"http://127.0.0.1:{APP_PORT}"
 TASKS = ["syslab-ollama", "syslab-server"]
+
+# The token this check sends. Normally config.APP_TOKEN, but see
+# _recover_from_401: an environment variable can shadow .env, and when it does
+# we fall back to the value written in the file so the rest of the checks can
+# still run instead of being abandoned.
+_active_token: str = APP_TOKEN or ""
 
 results: list[tuple[str, bool, str]] = []
 app_started_at: datetime | None = None
@@ -74,7 +81,7 @@ def record(name: str, ok: bool, detail: str) -> None:
 
 def get(url: str, timeout: int = 10):
     # From Phase 06 the API needs the token. Scripts read it from .env.
-    request = urllib.request.Request(url, headers={"X-Syslab-Token": APP_TOKEN or ""})
+    request = urllib.request.Request(url, headers={"X-Syslab-Token": _active_token})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -85,6 +92,98 @@ def run(cmd: list[str]) -> str:
         return out.stdout
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+# --------------------------------------------------------------------------
+# Why did the app refuse our token? Three causes, and they need three answers.
+# --------------------------------------------------------------------------
+
+def _token_in_env_file() -> str | None:
+    """APP_TOKEN as it is literally written in .env.
+
+    Parsed by hand rather than through dotenv, because a diagnostic must not
+    depend on the thing it is diagnosing. The point of reading it separately:
+    load_dotenv does NOT override a variable that is already in the
+    environment, so config.APP_TOKEN and this value can legitimately differ.
+    That difference is invisible from the outside and is the single most
+    confusing way this check can fail.
+    """
+    path = Path(__file__).resolve().parent.parent / ".env"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() != "APP_TOKEN":
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        return value
+    return None
+
+
+def _recover_from_401():
+    """Name the actual cause of a 401, and recover from it where possible.
+
+    Returns the health payload if a retry with the token from .env worked,
+    otherwise None. Never raises: a crash here would take out every check
+    below it, and this function only exists to explain a failure.
+    """
+    global _active_token
+    try:
+        file_token = _token_in_env_file()
+
+        if file_token is None:
+            print("\n  Cause: .env has no APP_TOKEN line, or could not be read, so")
+            print("  this check had nothing to send.")
+            print("  Fix:   py scripts\\new_token.py")
+            return None
+
+        if file_token == (APP_TOKEN or ""):
+            print("\n  Cause: the token this check sent IS the one in .env, and the app")
+            print("  refused it anyway. So the app is holding an OLDER token, from")
+            print("  before .env was last changed. A running service is a snapshot of")
+            print("  its configuration as well as of its code.")
+            print("  Fix:   powershell -ExecutionPolicy Bypass -File "
+                  "scripts\\service\\restart_windows.ps1")
+            return None
+
+        # The two differ. Nothing but a pre-set environment variable can cause
+        # that, because load_dotenv would otherwise have supplied the file's
+        # value. Restarting the app would not have helped, and the old message
+        # here told you to do exactly that.
+        print("\n  Cause: the token this check sent is NOT the one in .env.")
+        print("  APP_TOKEN is set as an environment variable, and load_dotenv does")
+        print("  not override a variable that is already set, so .env was ignored")
+        print("  by THIS PROCESS. The app, started by Task Scheduler, has its own")
+        print("  environment and read the file normally.")
+        print("  This is a problem with the shell you are in, not with the app.")
+
+        _active_token = file_token
+        try:
+            health = get(f"{APP_URL}/api/health")
+        except Exception as exc:  # noqa: BLE001
+            _active_token = APP_TOKEN or ""
+            print(f"  Retrying with the token from .env failed too ({exc}), so the")
+            print("  app is holding a third value. Restart it and run this again.")
+            return None
+
+        print("  Retrying with the token from .env worked, so THE APP IS FINE and")
+        print("  this check was the thing that was wrong. Carrying on with the")
+        print("  file's token so the rest of the checks below are real.")
+        print("  Clear it in this shell:   Remove-Item Env:APP_TOKEN")
+        print("  If it returns in a new shell it was set permanently. Check with:")
+        print("    [Environment]::GetEnvironmentVariable('APP_TOKEN','User')")
+        return health
+    except Exception as exc:  # noqa: BLE001
+        print(f"\n  (could not work out why the token was refused: "
+              f"{type(exc).__name__}: {exc})")
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -111,15 +210,22 @@ def check_app() -> None:
         health = get(f"{APP_URL}/api/health")
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
-            record("App is answering", False,
-                   "it is up but refused the token in .env. Restart the app if you "
-                   "changed APP_TOKEN: scripts\\service\\restart_windows.ps1")
+            health = _recover_from_401()
+            if health is None:
+                record("App is answering", False,
+                       "it is up but refused the token this check sent; the cause is "
+                       "named above")
+                return
+            record("Token this check sent", False,
+                   "an environment variable shadowed .env; the app itself accepted "
+                   "the file's token")
         elif exc.code == 503:
             record("App is answering", False,
-                   "it is up but APP_TOKEN is not set. Run: python scripts\\new_token.py")
+                   "it is up but APP_TOKEN is not set. Run: py scripts\\new_token.py")
+            return
         else:
             record("App is answering", False, f"{APP_URL}: HTTP {exc.code}")
-        return
+            return
     except (urllib.error.URLError, TimeoutError) as exc:
         record("App is answering", False, f"{APP_URL}: {exc}")
         print("\n  If Ollama is up but this is not, read logs\\server.log. The usual")
