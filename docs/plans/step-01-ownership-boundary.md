@@ -1,6 +1,6 @@
 # Step 1: The Ownership Boundary
 
-Status: IN PROGRESS. 1.0 and 1.1 DONE. All five decisions in section 4 are DECIDED.
+Status: COMPLETE. All eight sub-steps built, the migration run on the real install, and scripts/check_isolation.py passes 24 of 24. Two departures from this plan are recorded in sections 6.7 and 4.5; both were forced by the code rather than chosen. All five decisions in section 4 are DECIDED.
 Written 3 September 2026. Amro confirmed 4.1 (tenant = organisation) and 4.3 (SQLite control
 plane now) on the same day; 4.2, 4.4 and 4.5 were settled by the evidence in their own rows.
 
@@ -374,6 +374,21 @@ this tenant" rather than silently using someone else's.
 leaked into the model's view of the world and needs revisiting rather than patching.
 
 ### 1.8 The adversarial gate
+
+**DONE.** `scripts/check_isolation.py`, 24 checks, run entirely inside a temporary folder with
+two invented tenants so it cannot touch a real customer's anything, and it says so as its first
+check rather than claiming it in a comment. Verified by pointing `data_dir()` at one tenant's
+folder for everyone: 8 of the 24 fail, including the HTTP ones.
+
+Two things it found while being written, both worth keeping:
+
+- A symlink inside a tenant's folder DOES appear in that tenant's listing, because `list_files`
+  reads the directory. It cannot be opened. Names are not content, and the check that matters is
+  the read, so the gate now asserts both halves.
+- Hard deletion of a tenant is NOT built and this plan promised it. `set_disabled` is a soft
+  delete: the tokens stop working instantly and nothing on disk is touched. Removing a tenant's
+  folder, index and rows is a destructive operation that deserves its own dry-run-first design,
+  the way the migration got one. It is the first thing after Step 1.
 
 This is the gate for Step 1 as a whole, and the reason the step exists.
 `scripts/check_isolation.py`, two tenants, every one of these must hold:
