@@ -383,3 +383,124 @@ def test_a_worker_takes_the_owner_from_the_job_and_not_from_its_own_residue(tena
     second = lane.submit("whoami", {})
     assert _finish(lane, second.id).result == {"tenant": TEST_TENANT}, \
         "the worker inherited the previous job's tenant"
+
+
+# --------------------------------------------------------------------------
+# signing in: which tenant does a token make you?
+# --------------------------------------------------------------------------
+
+@pytest.fixture()
+def two_signed_in(tenant_storage, monkeypatch):
+    """Two tenants in the control plane, each with a real token, plus a file."""
+    from fastapi.testclient import TestClient
+    from app import main, tenancy
+
+    monkeypatch.setattr(config, "APP_TOKEN", "an-operator-token-long-enough")
+    main._failures.clear()
+
+    connection = tenancy.connect()
+    try:
+        acme = tenancy.create_tenant("Acme", tenant_id="acme", connection=connection)
+        globex = tenancy.create_tenant("Globex", tenant_id="globex", connection=connection)
+        acme_token = tenancy.issue_token(acme["id"], connection=connection)
+        globex_token = tenancy.issue_token(globex["id"], connection=connection)
+    finally:
+        connection.close()
+
+    for tenant, word in (("acme", "Aardvark"), ("globex", "Bandicoot")):
+        with context.use_tenant(tenant):
+            config.ensure_data_dir()
+            tools.write_pdf(f"{tenant}_only.pdf", title=tenant, body=f"{word} lives here.")
+
+    def client_for(token):
+        client = TestClient(main.app)
+        client.headers.update({"X-Syslab-Token": token})
+        return client
+
+    return {
+        "acme_token": acme_token,
+        "globex_token": globex_token,
+        "client_for": client_for,
+    }
+
+
+def test_a_control_plane_token_signs_you_in_as_its_own_tenant(two_signed_in):
+    acme = two_signed_in["client_for"](two_signed_in["acme_token"])
+    globex = two_signed_in["client_for"](two_signed_in["globex_token"])
+
+    acme_files = {f["name"] for f in acme.get("/api/files").json()["files"]}
+    globex_files = {f["name"] for f in globex.get("/api/files").json()["files"]}
+
+    assert acme_files == {"acme_only.pdf"}
+    assert globex_files == {"globex_only.pdf"}
+
+
+def test_one_tenant_cannot_download_anothers_file(two_signed_in):
+    globex = two_signed_in["client_for"](two_signed_in["globex_token"])
+    assert globex.get("/api/files/acme_only.pdf").status_code == 404
+
+
+def test_a_revoked_token_stops_working_over_http(two_signed_in):
+    from app import tenancy
+
+    acme = two_signed_in["client_for"](two_signed_in["acme_token"])
+    assert acme.get("/api/files").status_code == 200
+
+    tenancy.revoke_token(tenancy.token_hash(two_signed_in["acme_token"])[:12])
+    assert acme.get("/api/files").status_code == 401
+
+
+def test_disabling_a_tenant_locks_it_out_over_http(two_signed_in):
+    from app import tenancy
+
+    globex = two_signed_in["client_for"](two_signed_in["globex_token"])
+    assert globex.get("/api/files").status_code == 200
+
+    tenancy.set_disabled("globex", True)
+    assert globex.get("/api/files").status_code == 401
+
+
+def test_an_unknown_token_is_refused(two_signed_in):
+    stranger = two_signed_in["client_for"]("not-a-real-token-at-all-really")
+    assert stranger.get("/api/files").status_code == 401
+
+
+def test_signing_in_returns_your_own_token_not_the_operators(two_signed_in):
+    """The cookie used to be set to config.APP_TOKEN whatever you signed in with.
+
+    With one tenant that looked like tidy normalisation. With two it hands
+    every customer the operator's credential, which is the bootstrap tenant's,
+    so signing in as Globex would have made you the operator on the next
+    request that used the cookie.
+    """
+    from fastapi.testclient import TestClient
+    from app import main
+
+    client = TestClient(main.app)
+    response = client.post("/api/login", json={"token": two_signed_in["globex_token"]})
+    assert response.status_code == 200
+
+    cookie = client.cookies.get(main.TOKEN_COOKIE)
+    assert cookie == two_signed_in["globex_token"]
+    assert cookie != config.APP_TOKEN
+
+    # And the cookie alone really does sign you in as Globex, not the operator.
+    fresh = TestClient(main.app)
+    fresh.cookies.set(main.TOKEN_COOKIE, cookie)
+    names = {f["name"] for f in fresh.get("/api/files").json()["files"]}
+    assert names == {"globex_only.pdf"}
+
+
+def test_the_operators_env_token_still_works_as_the_bootstrap_tenant(two_signed_in, monkeypatch):
+    """The bridge that keeps this install and every existing device working."""
+    from fastapi.testclient import TestClient
+    from app import main
+
+    monkeypatch.setattr(config, "BOOTSTRAP_TENANT", TEST_TENANT)
+    with context.use_tenant(TEST_TENANT):
+        tools.write_pdf("bootstrap.pdf", title="Bootstrap", body="Operator file.")
+
+    client = TestClient(main.app)
+    client.headers.update({"X-Syslab-Token": config.APP_TOKEN})
+    names = {f["name"] for f in client.get("/api/files").json()["files"]}
+    assert names == {"bootstrap.pdf"}

@@ -403,6 +403,30 @@ def revoke_token(fingerprint: str, connection: sqlite3.Connection | None = None)
             conn.close()
 
 
+def has_any_active_token(connection: sqlite3.Connection | None = None) -> bool:
+    """Could anyone sign in through the control plane?
+
+    Used by the startup guard, which refuses to serve when nobody can. Any
+    failure answers False, so a control plane that will not open makes the app
+    refuse rather than open the door.
+    """
+    try:
+        conn, owned = _with(connection)
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM tokens t JOIN tenants n ON n.id = t.tenant_id "
+            "WHERE t.revoked_at IS NULL AND n.disabled_at IS NULL LIMIT 1"
+        ).fetchone()
+        return row is not None
+    except sqlite3.Error:
+        return False
+    finally:
+        if owned:
+            conn.close()
+
+
 def resolve_token(token: str, connection: sqlite3.Connection | None = None,
                   touch: bool = True) -> dict | None:
     """Which tenant does this token belong to? None means no tenant.

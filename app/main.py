@@ -23,7 +23,7 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Respon
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from app import agent, config, context, jobs, search, tools
+from app import agent, config, context, jobs, search, tenancy, tools
 from app.config import (
     APP_HOST,
     APP_PORT,
@@ -50,33 +50,6 @@ app = FastAPI(title="syslab-server", docs_url="/api/docs", redoc_url=None)
 # itself at boot from one someone started by hand afterwards.
 STARTED_AT = time.time()
 CODE_FINGERPRINT = code_fingerprint()
-
-
-@app.middleware("http")
-async def attach_tenant(request: Request, call_next):
-    """Say whose request this is, for the whole request.
-
-    TEMPORARY SHAPE: every request is currently the bootstrap tenant. Sub-step
-    1.5 replaces the constant with a lookup of the presented token, and nothing
-    else about this function changes.
-
-    It has to be middleware or an async dependency, and it cannot be
-    require_auth as that function stands. FastAPI runs a sync dependency in one
-    anyio worker thread and a sync endpoint in another, and a context flows into
-    a worker thread but never back out, so a tenant set in a `def` dependency is
-    gone before the endpoint runs. Measured, and asserted in
-    tests/test_context.py so that it stays measured.
-    """
-    # config.BOOTSTRAP_TENANT is read here rather than bound at import, so that
-    # what this returns can be changed without reloading the module. That is
-    # what lets the tests run as their own tenant, and it is the same lesson as
-    # search.py's old module-level INDEX_PATH: a value read once at import is a
-    # value nothing can vary later.
-    token = context.set_tenant(config.BOOTSTRAP_TENANT)
-    try:
-        return await call_next(request)
-    finally:
-        context.reset_tenant(token)
 
 
 # --------------------------------------------------------------------------
@@ -121,8 +94,45 @@ def token_is_configured() -> bool:
 
 
 def token_matches(candidate: str) -> bool:
+    """Does this match the operator's own token in .env?"""
     # compare_digest, not ==, so a wrong guess takes the same time as a right one
     return token_is_configured() and hmac.compare_digest(candidate, config.APP_TOKEN)
+
+
+def tenant_for_token(candidate: str) -> str | None:
+    """Which tenant does this token belong to? None means nobody.
+
+    Two sources, in this order:
+
+    1. The control plane. This is the real one: a token issued by
+       scripts\tenant.py, stored as a hash, revocable, and belonging to exactly
+       one tenant.
+    2. APP_TOKEN in .env, which means the bootstrap tenant. This is a BRIDGE,
+       kept so that this install and every existing device keep working on the
+       day tenancy lands. It is not revocable and it is not in the control
+       plane. It goes away once real tokens are issued.
+
+    A control plane that will not open authenticates nobody through path 1 and
+    falls through to path 2, so a broken control plane leaves the operator able
+    to get in and fix it, and nobody else able to get in at all.
+    """
+    candidate = (candidate or "").strip()
+    if not candidate:
+        return None
+    try:
+        tenant = tenancy.resolve_token(candidate)
+    except Exception:  # noqa: BLE001
+        tenant = None
+    if tenant:
+        return tenant["id"]
+    if token_matches(candidate):
+        return config.BOOTSTRAP_TENANT
+    return None
+
+
+def anyone_can_sign_in() -> bool:
+    """Is there any credential at all? If not, this app serves nothing."""
+    return token_is_configured() or tenancy.has_any_active_token()
 
 
 def supplied_token(request: Request) -> str:
@@ -135,16 +145,41 @@ def supplied_token(request: Request) -> str:
     return request.cookies.get(TOKEN_COOKIE, "")
 
 
-def require_auth(request: Request) -> None:
-    """Applied to every API route except login. Deliberately one function."""
-    if not token_is_configured():
+async def require_auth(request: Request):
+    """Applied to every API route except login. Deliberately one function.
+
+    It answers two questions at once, on purpose: may this request happen, and
+    whose data is it? Splitting them would mean a request that is authenticated
+    but ownerless, which is the state everything else in this app now refuses
+    to be in.
+
+    ASYNC, and that is not cosmetic. FastAPI runs a `def` dependency in one
+    anyio worker thread and a `def` endpoint in another; a context flows into a
+    worker thread and never back out, so a tenant set in a sync dependency is
+    gone before the endpoint runs. Measured in 1.1, asserted in
+    tests/test_context.py.
+
+    The yield is the teardown: the tenant is put back when the response is
+    done, so nothing carries into the next request on this thread.
+    """
+    if not anyone_can_sign_in():
         raise HTTPException(
             503,
-            "APP_TOKEN is not set in .env, so this app refuses to serve anything. "
-            "Generate one with: python scripts/new_token.py",
+            "There is no way to sign in to this server: APP_TOKEN is not set in "
+            ".env and no tenant has an active token. It refuses to serve anything "
+            "rather than open the door. Generate one with: py scripts/new_token.py "
+            "or py scripts/tenant.py new \"Name\"",
         )
-    if not token_matches(supplied_token(request)):
+
+    tenant = tenant_for_token(supplied_token(request))
+    if tenant is None:
         raise HTTPException(401, "Not signed in.")
+
+    reset = context.set_tenant(tenant)
+    try:
+        yield
+    finally:
+        context.reset_tenant(reset)
 
 
 def _recent_failures(client: str) -> list[float]:
@@ -202,26 +237,32 @@ def index() -> HTMLResponse:
 
 @app.post("/api/login")
 def login(request: Request, response: Response, body: LoginRequest = Body(...)) -> dict:
-    if not token_is_configured():
+    if not anyone_can_sign_in():
         raise HTTPException(
             503,
-            "APP_TOKEN is not set in .env. Generate one with: python scripts/new_token.py",
+            "There is no way to sign in to this server. Generate a token with: "
+            "py scripts/new_token.py or py scripts/tenant.py new \"Name\"",
         )
 
     client = request.client.host if request.client else "unknown"
     if len(_recent_failures(client)) >= MAX_FAILURES:
         raise HTTPException(429, "Too many wrong tokens. Wait fifteen minutes.")
 
-    if not token_matches(body.token.strip()):
+    presented = body.token.strip()
+    if tenant_for_token(presented) is None:
         _failures[client].append(time.time())
         time.sleep(0.4)  # slow down anyone trying tokens in a loop
         remaining = MAX_FAILURES - len(_recent_failures(client))
         raise HTTPException(401, f"That token is not right. {remaining} attempts left.")
 
     _failures.pop(client, None)
+    # The token they signed in with, NOT config.APP_TOKEN. Setting the cookie
+    # to the operator's token handed every tenant the operator's credential,
+    # which with one tenant looked like a tidy way to normalise it and with two
+    # is a privilege escalation.
     response.set_cookie(
         TOKEN_COOKIE,
-        config.APP_TOKEN,
+        presented,
         httponly=True,      # javascript on the page cannot read it
         samesite="lax",     # another site cannot make your browser use it
         max_age=60 * 60 * 24 * 30,

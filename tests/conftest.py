@@ -15,10 +15,30 @@ from __future__ import annotations
 
 import pytest
 
-from app import config, context
+from app import config, context, tenancy
 
 TEST_TENANT = "testtenant"
 OTHER_TENANT = "othertenant"
+
+
+@pytest.fixture(autouse=True)
+def never_the_real_control_plane(tmp_path, monkeypatch):
+    """No test may open control/control.sqlite3.
+
+    Autouse and unconditional, because the way this goes wrong is silent. Once
+    require_auth started resolving tokens through the control plane, every API
+    test in the suite opened the developer's real one without anything failing
+    to say so. Redirecting only the data and index roots was not enough: the
+    rule is that a test touches nothing outside tmp_path, and that has to be
+    enforced for every test rather than for the ones that remembered.
+    """
+    control = tmp_path / "control"
+    monkeypatch.setattr(config, "CONTROL_DIR", control)
+    monkeypatch.setattr(config, "CONTROL_PATH", control / "control.sqlite3")
+    monkeypatch.setattr(tenancy, "CONTROL_PATH", control / "control.sqlite3")
+    monkeypatch.setattr(tenancy, "ensure_control_dir",
+                        lambda: control.mkdir(parents=True, exist_ok=True))
+    yield control
 
 
 @pytest.fixture()
