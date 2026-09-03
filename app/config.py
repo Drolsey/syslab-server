@@ -68,6 +68,14 @@ APP_PORT = int(_env("APP_PORT", "8000"))
 INDEX_DIR = _path("INDEX_DIR", PROJECT_ROOT / "index")
 INDEX_PATH = INDEX_DIR / "documents.sqlite3"
 
+# --- control plane ---
+# Who exists, and which token belongs to whom. Deliberately outside DATA_DIR,
+# which is customer content, and outside INDEX_DIR, which is a derived cache
+# this project is happy to delete. This is neither: losing it loses every
+# tenant's identity, so it is the one directory here worth backing up.
+CONTROL_DIR = _path("CONTROL_DIR", PROJECT_ROOT / "control")
+CONTROL_PATH = CONTROL_DIR / "control.sqlite3"
+
 # --- the job lane, for work too slow to answer a request with ---
 # One worker by default: the GPU serialises this work anyway, and extra
 # workers would only contend for it.
@@ -130,6 +138,11 @@ def ensure_data_dir() -> Path:
 def ensure_index_dir() -> Path:
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
     return INDEX_DIR
+
+
+def ensure_control_dir() -> Path:
+    CONTROL_DIR.mkdir(parents=True, exist_ok=True)
+    return CONTROL_DIR
 
 
 def resolve_in_data_dir(name: str) -> Path:
