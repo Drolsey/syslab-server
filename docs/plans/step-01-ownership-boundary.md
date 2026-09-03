@@ -1,6 +1,6 @@
 # Step 1: The Ownership Boundary
 
-Status: PLANNED, NOT STARTED. All five decisions in section 4 are DECIDED.
+Status: IN PROGRESS. 1.0 DONE (commit 5579399). All five decisions in section 4 are DECIDED.
 Written 3 September 2026. Amro confirmed 4.1 (tenant = organisation) and 4.3 (SQLite control
 plane now) on the same day; 4.2, 4.4 and 4.5 were settled by the evidence in their own rows.
 
@@ -229,9 +229,30 @@ Nothing in the running app imports this yet.
 
 **Gate:** `scripts/check_tenancy.py` creates two tenants, issues tokens, resolves each token
 back to the right tenant, refuses a revoked token, refuses an unknown one, and confirms no
-plaintext token appears anywhere in the file. `pytest` unchanged at 201.
+plaintext token appears anywhere in the file.
 
-**Revert:** delete two new files.
+**Revert:** delete the new files.
+
+**DONE 3 Sep 2026, commit 5579399.** 20 of 20 checks pass, `pytest` 201 to 238, and nothing in
+`app/` imports `app/tenancy.py`, so the running service is untouched.
+
+Verified by deliberately breaking four things and confirming the gate catches each: storing
+tokens in plaintext, ignoring `revoked_at`, ignoring a disabled tenant, and deriving an id from
+the customer name. That exercise found three defects in the checker itself, worth recording
+because they are the same three classes this project keeps meeting:
+
+1. **Setup calls sat outside the wrapper.** Under the plaintext mutation the run crashed at
+   `revoke_token`, and the most important check in the file, the disk scan for plaintext
+   tokens, was never reached. A crash tells you nothing about the checks it never got to.
+2. **Failure lines printed the success phrase**, so a broken build reported "FAIL A revoked
+   token stops working, no longer resolves", which argues with itself.
+3. **Two outcomes where there should be three.** A check whose setup did not happen is now
+   "not tested", listed with its reason, and is not a pass.
+
+Two real bugs in `tenancy.py` came out of the tests: `create_tenant` silently lowercased a
+hand-given id, so the caller held one string and the store held another, now refused with the
+reason (an id becomes a folder name, and Windows sees "Acme" and "acme" as one folder while
+Linux sees two); and the listing let a 25-character timestamp overrun a 22-character column.
 
 ### 1.1 The context, inert
 
