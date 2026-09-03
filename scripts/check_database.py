@@ -465,8 +465,8 @@ def main() -> int:
     if passed != len(results):
         print("\n  Paste this output back into the chat.\n")
         return 1
-    print("\n  The database tools are safe to switch on. Restart the app and ask it")
-    print("  something about the data.\n")
+    print("\n  The database path holds: read-only at the server, capped, timed out,")
+    print("  and the rows never reach the model. Nothing further to do here.\n")
     return 0
 
 

@@ -5,8 +5,8 @@ file plus scripts/_fixtures.py onto your laptop and run it there. That is the
 point: the thing worth proving is the path from a machine that is not the one
 doing the work.
 
-    python scripts/check_endtoend.py
-    python scripts/check_endtoend.py --url http://desktop-r0g7ikh.tail85a02b.ts.net:8000 --token <token>
+    py scripts/check_endtoend.py
+    py scripts/check_endtoend.py --url http://desktop-r0g7ikh.tail85a02b.ts.net:8000 --token <token>
 
 Every fact in the test files is invented for this run, so a correct answer
 cannot have come from anywhere but the file.
@@ -258,7 +258,7 @@ def main() -> int:
         print("\n  But this ran against 127.0.0.1, which proves the software and not the")
         print("  point of the whole build. Run it again from your laptop, on a network")
         print("  that is not your home one:")
-        print("    python scripts/check_endtoend.py --url http://<your-machine>.ts.net:8000 --token <token>")
+        print("    py scripts/check_endtoend.py --url http://<your-machine>.ts.net:8000 --token <token>")
     else:
         print(f"\n  And it ran against {url}, which is the real thing.")
     print("\n  The other half is yours: your own PDF, your own spreadsheet, a question")

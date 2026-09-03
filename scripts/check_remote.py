@@ -2,7 +2,7 @@
 
 Run this on the desktop after setting a token and installing Tailscale.
 
-    python scripts/check_remote.py
+    py scripts/check_remote.py
 
 The last section prints the address to open on your laptop. The real gate is
 doing that from a genuinely different network, such as your phone's hotspot.
@@ -92,12 +92,12 @@ def run(cmd: list[str], timeout: int = 20) -> str:
 def check_token() -> None:
     section("The token")
     if not APP_TOKEN or APP_TOKEN.strip().lower() in WEAK_TOKENS:
-        record("APP_TOKEN is set", False, "missing or still a placeholder. Run: python scripts/new_token.py")
+        record("APP_TOKEN is set", False, "missing or still a placeholder. Run: py scripts/new_token.py")
         return
     strong = len(APP_TOKEN.strip()) >= MIN_TOKEN_LENGTH
     record("APP_TOKEN is set", True, f"{len(APP_TOKEN.strip())} characters")
     record("APP_TOKEN is long enough", strong,
-           "" if strong else f"under {MIN_TOKEN_LENGTH} characters. Run: python scripts/new_token.py")
+           "" if strong else f"under {MIN_TOKEN_LENGTH} characters. Run: py scripts/new_token.py")
 
 
 def check_the_door() -> None:
@@ -269,8 +269,10 @@ def main() -> int:
     else:
         print(f"    http://{ip}:{APP_PORT}")
     print("\n  Sign in with the token from .env. The browser remembers it for 30 days.")
-    print("\n  The gate is not this machine. It is your laptop, on your phone's hotspot,")
-    print("  off your home network entirely. If it works from there, Phase 06 passes.\n")
+    print("\n  This machine can only prove the software. The gate is your laptop on")
+    print("  your phone's hotspot, off your home network entirely. If you have")
+    print("  already done that once and it worked, Phase 06 is passed and this is")
+    print("  just a regression check.\n")
     return 0
 
 

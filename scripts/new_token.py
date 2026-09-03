@@ -1,6 +1,6 @@
 """Generate a strong APP_TOKEN and write it into .env.
 
-    python scripts/new_token.py
+    py scripts/new_token.py
 
 Creates .env from .env.example if it does not exist, replaces the APP_TOKEN
 line, and leaves everything else alone. Run it again any time you want to

@@ -2,8 +2,8 @@
 
 Stdlib only, so it runs before the project's virtualenv exists.
 
-    python scripts/check_ollama.py
-    python scripts/check_ollama.py --model qwen3:4b
+    py scripts/check_ollama.py
+    py scripts/check_ollama.py --model qwen3:4b
 """
 
 from __future__ import annotations
@@ -141,9 +141,8 @@ def main() -> int:
         return 1
 
     section("Gate")
-    print("  Phase 01 passes: Ollama is running, the model is pulled, it answers")
-    print("  over the REST API that Phase 03 will use.")
-    print("  Paste this output back into the chat and we move to Phase 02.\n")
+    print("  Phase 01 passes: Ollama is running, the model is pulled, and it")
+    print("  answers over the REST API the agent uses. Nothing further to do here.\n")
     return 0
 
 

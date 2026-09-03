@@ -3,7 +3,7 @@
 Run it after installing the tasks, and again after a reboot. The second run is
 the one that counts: it proves the assistant came back without you starting it.
 
-    python scripts/check_services.py
+    py scripts/check_services.py
 """
 
 from __future__ import annotations
@@ -361,8 +361,8 @@ def main() -> int:
         print("\n  Phase 05 does not pass yet. Paste this output back into the chat.\n")
         return 1
     if started_itself:
-        print("\n  PHASE 05 PASSES. Nothing to reboot again. Paste this output into the")
-        print("  chat and we move to Phase 06.\n")
+        print("\n  PHASE 05 PASSES. It came back on its own after the last restart.")
+        print("  Nothing to reboot again, and nothing further to do here.\n")
     return 0
 
 

@@ -2,7 +2,7 @@
 
 Stdlib only, so it runs on a fresh machine before anything is installed.
 
-    python scripts/check_env.py
+    py scripts/check_env.py
 """
 
 from __future__ import annotations
@@ -104,7 +104,8 @@ def main() -> None:
     check_tools()
     section("Gate")
     print("  Phase 00 passes once you know your real VRAM number and your OS.")
-    print("  Paste this whole output back into the chat and we move to Phase 01.\n")
+    print("  This is a survey rather than a gate: it reports what the machine")
+    print("  has. Nothing here needs acting on unless a number surprises you.\n")
 
 
 if __name__ == "__main__":

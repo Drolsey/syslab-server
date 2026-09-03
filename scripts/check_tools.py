@@ -3,7 +3,7 @@
 Writes its scratch files into DATA_DIR and leaves them there so you can open
 them in Excel and a PDF viewer and judge them yourself.
 
-    python scripts/check_tools.py
+    py scripts/check_tools.py
 """
 
 from __future__ import annotations
@@ -185,10 +185,11 @@ def main() -> int:
             print(f"    FAILED: {name}")
         print("\n  Phase 02 does not pass yet. Paste this output back into the chat.\n")
         return 1
-    print(f"\n  Phase 02 passes. Open these two files by hand and confirm they look right:")
+    print("\n  Phase 02 passes. The file tools do what they claim on real files.")
+    print("  Nothing further to do here. The two samples this check just wrote are")
+    print("  still in the data folder if you want to look at them by eye:")
     print(f"    {DATA_DIR / XLSX_NAME}")
-    print(f"    {DATA_DIR / PDF_NAME}")
-    print("  Then paste this output back into the chat and we move to Phase 03.\n")
+    print(f"    {DATA_DIR / PDF_NAME}\n")
     return 0
 
 

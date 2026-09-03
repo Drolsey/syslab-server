@@ -4,8 +4,8 @@ Builds two files with facts invented for this test, so a correct answer can
 only have come from reading them. Then asks real questions and checks both the
 answer and the tools the model chose along the way.
 
-    python scripts/check_agent.py
-    python scripts/check_agent.py --verbose    # show the full trace
+    py scripts/check_agent.py
+    py scripts/check_agent.py --verbose    # show the full trace
 """
 
 from __future__ import annotations
@@ -272,7 +272,7 @@ def main() -> int:
 
     if passed == len(results):
         print("\n  Phase 03 passes. The model reads before it answers and writes what")
-        print("  it is asked to. Paste this output back into the chat for Phase 04.\n")
+        print("  it is asked to. Nothing further to do here.\n")
         return 0
     print("\n  Phase 03 does not pass yet. Paste this whole output back into the chat,")
     print("  including the tool traces, and we will work out whether it is the prompt,")
