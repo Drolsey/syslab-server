@@ -90,8 +90,21 @@ def test_one_worker_means_one_job_at_a_time(lane):
 
 
 def test_the_queue_is_bounded(lane):
+    # The cap counts work in flight, queued and running together. Counting
+    # only what was waiting made this depend on whether the worker had picked
+    # the first job up yet, so the same five submissions passed or failed by
+    # thread timing.
     for _ in range(5):
         lane.submit("selftest", {"seconds": 5, "steps": 10})
+    with pytest.raises(jobs.JobError, match="queue is full"):
+        lane.submit("selftest", {"seconds": 5})
+
+
+def test_the_bound_holds_however_the_worker_is_scheduled(lane):
+    """The same submissions must be refused whether or not a job has started."""
+    for _ in range(5):
+        lane.submit("selftest", {"seconds": 5, "steps": 10})
+    time.sleep(0.2)  # long enough for the worker to have taken one
     with pytest.raises(jobs.JobError, match="queue is full"):
         lane.submit("selftest", {"seconds": 5})
 

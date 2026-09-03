@@ -251,3 +251,53 @@ def test_the_hint_never_breaks_the_error_path(monkeypatch):
     with pytest.raises(tools.ToolError) as caught:
         tools.read_excel("nope.xlsx")
     assert "No file named" in str(caught.value)
+
+
+# --------------------------------------------------------------------------
+# Regressions found on 3 Sep 2026 by reading the code back.
+# --------------------------------------------------------------------------
+
+def test_trailing_blank_rows_do_not_look_like_missing_data(tmp_path, monkeypatch):
+    # openpyxl reports a row for any stray formatted cell at the bottom of a
+    # sheet. Counting those made total_rows too high and truncated true for a
+    # sheet that had in fact been read in full -- which the prompt tells the
+    # model to treat as a signal that it is missing data.
+    from openpyxl import Workbook
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["h1", "h2"])
+    sheet.append([1, 2])
+    sheet.append([3, 4])
+    sheet.cell(row=9, column=2).value = None      # touched, empty
+    book.save(tmp_path / "blanks.xlsx")
+
+    result = tools.read_excel("blanks.xlsx")
+    assert result["total_rows"] == 3
+    assert result["rows_returned"] == 3
+    assert result["truncated"] is False
+
+
+def test_a_new_file_says_its_data_starts_on_row_one(tmp_path, monkeypatch):
+    # ws.max_row is 1 for an empty sheet as well as for a sheet with one row,
+    # so a guess made before appending was off by one on every new file.
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    made = tools.write_excel("fresh.xlsx", [["a", 1], ["b", 2]])
+    assert made["started_at_row"] == 1
+    appended = tools.write_excel("fresh.xlsx", [["c", 3]], mode="append")
+    assert appended["started_at_row"] == 3
+
+
+def test_a_file_the_assistant_writes_can_be_found_by_search(tmp_path, monkeypatch):
+    # Uploads were indexed and files written by the tools were not, so the
+    # assistant could create a spreadsheet and then fail to find it.
+    from app import search
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "INDEX_PATH", tmp_path / "idx.sqlite3")
+    monkeypatch.setattr(config, "INDEX_DIR", tmp_path)
+    monkeypatch.setattr(search, "INDEX_PATH", tmp_path / "idx.sqlite3")
+
+    tools.write_excel("written.xlsx", [["Kryptonite", 7]], headers=["item", "qty"])
+    assert search.search("Kryptonite")["count"] == 1

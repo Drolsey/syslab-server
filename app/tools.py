@@ -53,6 +53,22 @@ def _table_hint(filename: str) -> str | None:
         return None
 
 
+def _index_quietly(path: Path) -> None:
+    """Add a file we have just written to the search index.
+
+    Uploads were indexed; files the assistant wrote itself were not, so it
+    could create a spreadsheet and then be unable to find it with search_files
+    a minute later. Imported here and wrapped, on purpose: indexing is a
+    convenience and must never be able to fail a write that already succeeded.
+    """
+    try:
+        from app import search
+
+        search.index_file(path)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _resolve(filename: str, must_exist: bool) -> Path:
     if not filename or not str(filename).strip():
         raise ToolError("No filename given.")
@@ -279,16 +295,25 @@ def read_excel(filename: str, sheet: str | None = None, max_rows: int = MAX_ROWS
                 "Call read_excel again with one of those, or omit sheet for the first."
             )
 
+        limit = max(1, int(max_rows))
         rows: list[list[Any]] = []
         total = 0
+        blanks_held = 0  # blank rows kept back until a real row follows them
         for row in ws.iter_rows(values_only=True):
-            total += 1
-            if len(rows) < max(1, int(max_rows)):
-                rows.append([_cell(v) for v in row[:MAX_COLS]])
-
-        # trim fully empty trailing rows, which openpyxl often reports
-        while rows and all(v is None for v in rows[-1]):
-            rows.pop()
+            cells = [_cell(v) for v in row[:MAX_COLS]]
+            if all(v is None for v in cells):
+                # A blank row only counts once something real comes after it.
+                # openpyxl reports trailing blanks for any stray formatted
+                # cell, and counting those inflated total_rows and made
+                # `truncated` true for a sheet that had been read in full.
+                blanks_held += 1
+                continue
+            total += blanks_held + 1
+            if len(rows) < limit:
+                rows.extend([None] * len(cells) for _ in range(min(blanks_held, limit - len(rows))))
+                if len(rows) < limit:
+                    rows.append(cells)
+            blanks_held = 0
         sheet_title = ws.title
     finally:
         book.close()
@@ -300,6 +325,9 @@ def read_excel(filename: str, sheet: str | None = None, max_rows: int = MAX_ROWS
         "sheets_available": names,
         "total_rows": total,
         "rows_returned": len(rows),
+        # total counts rows that hold something. Comparing against the rows
+        # actually handed back is what makes this flag mean "there is more",
+        # rather than "the sheet had some empty formatting at the bottom".
         "truncated": total > len(rows),
         "likely_header": header,
         "rows": rows,
@@ -379,9 +407,15 @@ def write_excel(
         if headers:
             ws.append(list(headers))
 
-    start_row = ws.max_row
+    # Where the new rows actually landed, read back after the first append
+    # rather than guessed from ws.max_row beforehand: max_row is 1 for a brand
+    # new empty sheet as well as for a sheet with one row in it, so guessing
+    # reported data starting at row 2 when it started at row 1.
+    first_row: int | None = None
     for row in clean:
         ws.append(row)
+        if first_row is None:
+            first_row = ws.max_row
 
     try:
         book.save(path)
@@ -394,6 +428,8 @@ def write_excel(
     finally:
         book.close()
 
+    _index_quietly(path)
+
     return {
         "file": path.name,
         "path": str(path),
@@ -401,7 +437,7 @@ def write_excel(
         "action": "appended to" if (existed and mode == "append") else ("overwrote" if existed else "created"),
         "rows_written": len(clean),
         "total_rows_now": ws.max_row,
-        "started_at_row": start_row + 1 if clean else start_row,
+        "started_at_row": first_row if first_row is not None else ws.max_row,
     }
 
 
@@ -479,6 +515,8 @@ def write_pdf(filename: str, title: str, body: str) -> dict:
     # and the opening line are the difference, and they are what lets the model
     # -- and the user reading the transcript -- notice a summary was written
     # where the real content was asked for.
+    _index_quietly(path)
+
     text = str(body).strip()
     opening = " ".join(text.split())[:160]
     return {

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hmac
 import re
-import secrets
 import time
 import unicodedata
 from collections import defaultdict
@@ -231,15 +230,28 @@ def get_files() -> dict:
 async def upload(file: UploadFile = File(...)) -> dict:
     ensure_data_dir()
     name = safe_upload_name(file.filename or "")
-    contents = await file.read()
+
+    # Read in chunks and stop at the limit. Reading the whole body first and
+    # checking its length afterwards means the limit is enforced only after the
+    # server has already held the entire file in memory, so MAX_UPLOAD_MB
+    # protects the disk and nothing else.
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1_048_576)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                413,
+                f"That file is larger than the {MAX_UPLOAD_BYTES / 1_048_576:.0f} MB "
+                "limit set by MAX_UPLOAD_MB.",
+            )
+        chunks.append(chunk)
+    contents = b"".join(chunks)
     if not contents:
         raise HTTPException(400, "That file is empty.")
-    if len(contents) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            413,
-            f"That file is {len(contents) / 1_048_576:.1f} MB. The limit is "
-            f"{MAX_UPLOAD_BYTES / 1_048_576:.0f} MB, set by MAX_UPLOAD_MB.",
-        )
     path = unique_path(name)
     path.write_bytes(contents)
 

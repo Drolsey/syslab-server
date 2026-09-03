@@ -453,3 +453,19 @@ def test_no_tool_description_contains_a_copyable_literal():
         assert literal not in blob, (
             f"{literal!r} appears in a tool description; the model will copy it"
         )
+
+
+def test_a_large_tool_result_still_reaches_the_model_as_json():
+    # Slicing the serialised result at a character budget cut it mid-key, so a
+    # big result arrived as something that was not JSON and the model guessed
+    # at the tail.
+    import json as _json
+
+    big = {"rows": [{"name": "x" * 200, "n": i} for i in range(400)]}
+    content = agent._tool_content("read_excel", big)
+    parsed = _json.loads(content)          # the point of the test
+    assert parsed["truncated"] is True
+    assert "read_excel" in parsed["tool"]
+
+    small = {"ok": True}
+    assert _json.loads(agent._tool_content("list_files", small)) == small

@@ -62,6 +62,29 @@ def _strip_comments(sql: str) -> str:
     return sql.strip()
 
 
+def _without_literals(sql: str) -> str:
+    """The statement with the inside of every quoted string replaced by spaces.
+
+    Length is preserved so positions still line up, and identifiers in double
+    quotes are kept: a column really can be called "comment", and the keyword
+    scan has to see it as a name rather than a command.
+    """
+    out = []
+    quote: str | None = None
+    for ch in sql:
+        if quote:
+            out.append(ch if ch == quote else " ")
+            if ch == quote:
+                quote = None
+            continue
+        if ch == "'":
+            quote = ch
+            out.append(ch)
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
 def check_statement(sql: str) -> str:
     """Return the statement, or raise with a message the model can act on."""
     if not sql or not sql.strip():
@@ -88,7 +111,11 @@ def check_statement(sql: str) -> str:
         )
 
     # A CTE can hide a write in PostgreSQL: WITH x AS (DELETE ... RETURNING *)
-    lowered = bare.lower()
+    # Scan the statement with its string literals blanked out first: the words
+    # below are ordinary English, and WHERE "Comment" LIKE '%do not use%' was
+    # being refused as an attempt to run DO. Only the text outside quotes can
+    # be a keyword.
+    lowered = _without_literals(bare).lower()
     for word in FORBIDDEN:
         if re.search(rf"(^|[\s(]){word}\s", lowered):
             raise DatabaseError(
@@ -206,6 +233,20 @@ def _rows(cursor, limit: int) -> tuple[list[str], list[list[Any]], bool]:
     truncated = len(fetched) > limit
     data = [[_json_safe(v) for v in row] for row in fetched[:limit]]
     return columns, data, truncated
+
+
+def _unique_labels(columns: list[str]) -> list[str]:
+    """Column names made unique, so a row can be keyed by them without loss."""
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for index, name in enumerate(columns):
+        label = name or f"column_{index + 1}"
+        if label in seen:
+            seen[label] += 1
+            label = f"{label} ({seen[label]})"
+        seen.setdefault(label, 1)
+        out.append(label)
+    return out
 
 
 def _json_safe(value: Any) -> Any:
@@ -426,11 +467,16 @@ def run_sql(sql: str, max_rows: int | None = None) -> dict:
     # table it silently gets it wrong -- inventing "Field 1 ... Field 28"
     # instead of reading the real names. Repeating the key on every row costs
     # tokens; getting the wrong column costs the user a wrong answer.
-    labelled = [dict(zip(columns, row)) for row in rows]
+    # SELECT a."ID", b."ID" hands back two columns called ID. Keyed straight
+    # into a dict the second overwrites the first, and the model is told about
+    # one column while looking at the values of another -- a wrong answer that
+    # looks like a right one. Make the labels unique instead.
+    labels = _unique_labels(columns)
+    labelled = [dict(zip(labels, row)) for row in rows]
 
     result = {
         "sql": statement,
-        "columns": columns,
+        "columns": labels,
         "column_count": len(columns),
         "row_count": len(labelled),
         "rows": labelled,
@@ -442,6 +488,12 @@ def run_sql(sql: str, max_rows: int | None = None) -> dict:
             f"You are seeing the first {limit} rows and there are more. Any "
             "total, count or average you work out from these rows will be "
             "wrong. Ask the server instead: count(*), sum(...), GROUP BY."
+        )
+    if labels != columns:
+        notes.append(
+            "Two or more columns came back with the same name, so the repeats "
+            "have been numbered to keep them apart. Name the columns in your "
+            "SELECT, or alias them, if you need to tell them apart properly."
         )
     if len(columns) > 12:
         notes.append(
@@ -501,6 +553,7 @@ def query_to_excel(sql: str, filename: str, sheet: str | None = None,
         raise DatabaseError("No filename given for the spreadsheet.")
     if not name.lower().endswith(".xlsx"):
         name = f"{name}.xlsx"
+
     try:
         path = resolve_in_data_dir(name)
     except UnsafePathError as exc:
@@ -552,6 +605,15 @@ def query_to_excel(sql: str, filename: str, sheet: str | None = None,
         raise DatabaseError(f"Could not write {path.name}: {exc}") from exc
     finally:
         book.close()
+
+    # The export is a file in the data folder like any other, so it belongs in
+    # the search index. Never fatal: the spreadsheet is already written.
+    try:
+        from app import search
+
+        search.index_file(path)
+    except Exception:  # noqa: BLE001
+        pass
 
     result = {
         "file": path.name,

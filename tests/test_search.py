@@ -120,17 +120,38 @@ def test_the_index_lives_outside_the_data_folder(temp_dirs):
 
 # --- keeping up with the folder -------------------------------------------
 
-def test_a_new_file_is_reported_as_not_yet_indexed(documents):
-    tools.write_pdf("late_arrival.pdf", title="Late", body="A brand new document.")
-    assert "late_arrival.pdf" in search.status()["not_yet_indexed"]
+def test_a_file_that_appears_without_the_tools_is_reported_as_not_yet_indexed(temp_dirs):
+    # A file copied into the folder by hand, rather than written through a
+    # tool, is the case status() has to notice.
+    (temp_dirs / "dropped_in.pdf").write_bytes(b"%PDF-1.4 dropped in by hand")
+    assert "dropped_in.pdf" in search.status()["not_yet_indexed"]
+
+
+def test_a_file_written_by_a_tool_is_findable_at_once(documents):
+    # It used to take a separate index_file call, which nothing in the app
+    # made, so the assistant could write a document and then not find it.
+    tools.write_pdf("late_arrival.pdf", title="Late", body="Contains the word pomegranate.")
+    assert search.search("pomegranate")["count"] == 1
+    assert search.status()["not_yet_indexed"] == []
 
 
 def test_indexing_one_file_makes_it_findable_without_a_full_rebuild(documents, temp_dirs):
-    tools.write_pdf("late_arrival.pdf", title="Late", body="Contains the word pomegranate.")
-    assert search.search("pomegranate")["count"] == 0
-    search.index_file(temp_dirs / "late_arrival.pdf")
-    assert search.search("pomegranate")["count"] == 1
+    source = (temp_dirs / "meridian_invoice.pdf").read_bytes()
+    (temp_dirs / "copied.pdf").write_bytes(source)          # bypasses the tools
+    assert search.search("Rania Haddad")["count"] == 1      # only the original
+    search.index_file(temp_dirs / "copied.pdf")
+    assert search.search("Rania Haddad")["count"] == 2
     assert search.status()["not_yet_indexed"] == []
+
+
+def test_a_deleted_file_stops_being_a_search_result(documents, temp_dirs):
+    # The index was written when a file arrived and never when one left, so
+    # search_files went on offering a document that was not there and the
+    # model spent its budget discovering that.
+    tools.write_pdf("temporary.pdf", title="Temp", body="The word is ephemeral.")
+    assert search.search("ephemeral")["count"] == 1
+    (temp_dirs / "temporary.pdf").unlink()
+    assert search.search("ephemeral")["count"] == 0
 
 
 def test_reindexing_a_changed_file_replaces_it_rather_than_duplicating(documents, temp_dirs):

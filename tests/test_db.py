@@ -208,3 +208,28 @@ def test_a_timezone_is_dropped_not_stringified():
     aware = datetime.datetime(2023, 4, 1, 12, 0, tzinfo=datetime.timezone.utc)
     got = db._excel_safe(aware)
     assert isinstance(got, datetime.datetime) and got.tzinfo is None
+
+
+def test_a_keyword_inside_a_string_literal_is_not_a_command():
+    # "comment", "do", "grant" and "set" are ordinary English. Scanning the raw
+    # statement refused perfectly good queries whose WHERE clause happened to
+    # contain one, and the model had no way to tell why.
+    assert db.check_statement("SELECT * FROM t WHERE note = 'do not use'")
+    assert db.check_statement("SELECT * FROM t WHERE name = 'Grant Hospital'")
+    assert db.check_statement('''SELECT "Comment" FROM public."Report"''')
+
+
+def test_a_write_outside_quotes_is_still_refused():
+    with pytest.raises(db.DatabaseError):
+        db.check_statement("WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x")
+    with pytest.raises(db.DatabaseError):
+        db.check_statement("SELECT * FROM t WHERE a = 'ok' AND (DROP TABLE t)")
+
+
+def test_repeated_column_names_are_kept_apart():
+    # SELECT a."ID", b."ID" returns two columns called ID. Keyed into a dict
+    # the second silently replaced the first, so the model was shown one
+    # column's name above another column's values.
+    assert db._unique_labels(["ID", "ID", "name"]) == ["ID", "ID (2)", "name"]
+    assert db._unique_labels(["a", "b"]) == ["a", "b"]
+

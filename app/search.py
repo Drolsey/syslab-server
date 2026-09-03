@@ -28,7 +28,6 @@ import re
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Iterable
 
 from app.config import INDEX_PATH, ensure_data_dir, ensure_index_dir
 
@@ -190,6 +189,36 @@ def rebuild(report=None) -> dict:
     }
 
 
+def forget_missing(connection: sqlite3.Connection | None = None) -> list[str]:
+    """Drop index rows for files that are no longer on disk.
+
+    The index is written when a file arrives and never when one leaves, so a
+    deleted document went on being returned by search_files for ever. The model
+    then called read_pdf on it, got "no file named ...", and spent the rest of
+    its budget working out that the search result had lied to it. Cheap to run
+    on the read path, and it keeps the cache honest without a sweeper.
+    """
+    own = connection is None
+    connection = connection or connect()
+    try:
+        folder = ensure_data_dir()
+        gone = [
+            row["name"]
+            for row in connection.execute("SELECT name FROM documents")
+            if not (folder / row["name"]).is_file()
+        ]
+        for name in gone:
+            connection.execute("DELETE FROM documents WHERE name = ?", (name,))
+        if gone:
+            connection.commit()
+        return gone
+    except sqlite3.Error:  # a tidy-up is never worth failing a search over
+        return []
+    finally:
+        if own:
+            connection.close()
+
+
 def stale(connection: sqlite3.Connection | None = None) -> list[str]:
     """Files on disk that the index has not seen, or has seen an older copy of."""
     own = connection is None
@@ -249,6 +278,7 @@ def search(query: str, limit: int = 8) -> dict:
 
     connection = connect()
     try:
+        forget_missing(connection)
         total = connection.execute("SELECT count(*) AS n FROM documents").fetchone()["n"]
         for joiner, precision in ((" AND ", "all terms"), (" OR ", "any term")):
             expression = joiner.join(terms)

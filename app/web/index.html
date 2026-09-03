@@ -536,10 +536,6 @@ function jobState(status) {
 function renderJobs(data) {
   const box = $("jobs");
   const wrap = $("jobwrap");
-  const interesting = (data.jobs || []).filter(
-    (j) => j.status === "running" || j.status === "queued" ||
-           (j.status !== "cancelled" && j.seconds_running !== undefined && j.status === "failed")
-  );
   const show = (data.jobs || []).slice(0, 6);
 
   if (!show.length) { wrap.classList.remove("on"); box.innerHTML = ""; return; }

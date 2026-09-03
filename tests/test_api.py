@@ -303,3 +303,18 @@ def test_loopback_with_no_token_is_still_allowed_to_start(monkeypatch):
     monkeypatch.setattr("uvicorn.run", lambda *a, **k: started.update(k))
     main.main()
     assert started["host"] == "127.0.0.1"
+
+
+def test_a_relative_data_dir_means_the_project_folder(tmp_path, monkeypatch):
+    """Not "wherever this command was run from".
+
+    The scheduled task cds to the project before starting, so DATA_DIR=./data
+    was right there and quietly meant a different, empty folder for anything
+    run from somewhere else.
+    """
+    monkeypatch.setenv("DATA_DIR", "./data")
+    monkeypatch.chdir(tmp_path)
+    assert config._path("DATA_DIR", Path("unused")) == (config.PROJECT_ROOT / "data").resolve()
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "elsewhere"))
+    assert config._path("DATA_DIR", Path("unused")) == (tmp_path / "elsewhere").resolve()

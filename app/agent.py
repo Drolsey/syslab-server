@@ -687,6 +687,37 @@ def _run_calls(calls: list[dict]) -> list[tuple[str, Any, str | None]]:
             for (name, _), (result, error) in zip(prepared, outcomes)]
 
 
+TOOL_RESULT_BUDGET = 12_000
+
+
+def _tool_content(name: str, result: Any) -> str:
+    """Serialise one tool result for the model, without handing it broken JSON.
+
+    Slicing the JSON string at a character budget cut it mid-key or mid-escape,
+    so a large result reached the model as something that was not JSON at all
+    and it had to guess at the tail. Cut the payload instead and say plainly
+    that it was cut, so what arrives is always valid and always honest about
+    being partial.
+    """
+    body = json.dumps(result, default=str)
+    if len(body) <= TOOL_RESULT_BUDGET:
+        return body
+    return json.dumps(
+        {
+            "truncated": True,
+            "tool": name,
+            "note": (
+                f"This result was too large to show in full, so only the first "
+                f"{TOOL_RESULT_BUDGET} characters of it are here and the rest is "
+                "gone. Do not total or count anything from it. Ask for less: "
+                "fewer rows, fewer pages, or an aggregate."
+            ),
+            "partial_result_text": body[:TOOL_RESULT_BUDGET],
+        },
+        default=str,
+    )
+
+
 def _tool_calls_of(message: dict) -> list[dict]:
     calls = message.get("tool_calls") or []
     return calls if isinstance(calls, list) else []
@@ -811,7 +842,7 @@ def ask(
                 {
                     "role": "tool",
                     "tool_name": name,
-                    "content": json.dumps(result, default=str)[:12_000],
+                    "content": _tool_content(name, result),
                 }
             )
 

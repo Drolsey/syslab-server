@@ -116,11 +116,19 @@ class Lane:
                 f"No job type named {kind!r}. Available: {', '.join(self.kinds) or 'none'}"
             )
         with self._lock:
+            # Count RUNNING as well as QUEUED. Counting only what is waiting
+            # makes the cap depend on thread scheduling: with one worker the
+            # first submission is picked up somewhere between the next two
+            # calls, so the same five submissions are sometimes five waiting
+            # and sometimes four, and the sixth is accepted or refused by
+            # timing. In-flight work is what the lane actually owes the user,
+            # so that is what is capped.
             waiting = sum(1 for j in self._jobs.values() if j.status == QUEUED)
-            if waiting >= self.max_queued:
+            running = sum(1 for j in self._jobs.values() if j.status == RUNNING)
+            if waiting + running >= self.max_queued:
                 raise JobError(
-                    f"The queue is full ({waiting} waiting). Try again in a minute, "
-                    "or cancel something."
+                    f"The queue is full ({waiting} waiting, {running} running). "
+                    "Try again in a minute, or cancel something."
                 )
             job = Job(id=uuid.uuid4().hex[:12], kind=kind, params=dict(params or {}))
             self._jobs[job.id] = job

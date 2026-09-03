@@ -34,8 +34,26 @@ OLLAMA_THINK = _env("OLLAMA_THINK", "false").lower() in {"1", "true", "yes", "on
 # How many tool calls the model may make before we stop it, per question.
 MAX_TOOL_STEPS = int(_env("MAX_TOOL_STEPS", "10"))
 
+def _path(key: str, default: Path) -> Path:
+    """A path from the environment, relative ones anchored to the project.
+
+    DATA_DIR=./data used to be resolved against the current working directory,
+    so the same setting meant a different folder depending on where a command
+    was run from: the scheduled task cds to the project first and saw the real
+    data folder, a script run from anywhere else quietly created an empty one
+    beside itself. Anchoring to the project makes the setting mean one thing.
+    """
+    raw = _env(key, "")
+    if not raw:
+        return default.expanduser().resolve()
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = PROJECT_ROOT / candidate
+    return candidate.resolve()
+
+
 # --- files ---
-DATA_DIR = Path(_env("DATA_DIR", str(PROJECT_ROOT / "data"))).expanduser().resolve()
+DATA_DIR = _path("DATA_DIR", PROJECT_ROOT / "data")
 MAX_UPLOAD_BYTES = int(_env("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 
 # --- server ---
@@ -47,7 +65,7 @@ APP_PORT = int(_env("APP_PORT", "8000"))
 # --- the search index ---
 # Deliberately outside DATA_DIR: it is a derived cache, not user data, and
 # deleting it must be obviously safe.
-INDEX_DIR = Path(_env("INDEX_DIR", str(PROJECT_ROOT / "index"))).expanduser().resolve()
+INDEX_DIR = _path("INDEX_DIR", PROJECT_ROOT / "index")
 INDEX_PATH = INDEX_DIR / "documents.sqlite3"
 
 # --- the job lane, for work too slow to answer a request with ---
