@@ -14,7 +14,8 @@ change of storage rather than a migration:
      in the app knows SQLite exists.
   2. The extracted TEXT is stored, not only the inverted index. Migrating is
      then an insert, not a re-parse of every PDF.
-  3. The database lives outside DATA_DIR, so it is obviously not user data.
+  3. The database lives outside the data folders, so it is obviously not
+     user data, and there is one file per tenant.
   4. rebuild() reconstructs it from scratch, which makes it disposable by
      construction rather than by intention.
 
@@ -29,7 +30,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from app.config import INDEX_PATH, ensure_data_dir, ensure_index_dir
+from app.config import ensure_data_dir, ensure_index_dir, index_path
 
 SEARCHABLE = {".pdf", ".xlsx", ".xlsm"}
 MAX_TEXT_PER_FILE = 400_000
@@ -56,8 +57,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents USING fts5(
 
 
 def connect() -> sqlite3.Connection:
+    """Open THIS TENANT's index. One file each, never one file with an owner
+    column, so a bug opens the wrong file and returns nothing rather than
+    returning another customer's documents."""
     ensure_index_dir()
-    connection = sqlite3.connect(INDEX_PATH, timeout=15)
+    path = index_path()
+    connection = sqlite3.connect(path, timeout=15)
     connection.row_factory = sqlite3.Row
     # WAL lets several worker processes on one machine read while one writes,
     # which is what a multi-card single server needs. It relies on shared memory
@@ -73,7 +78,7 @@ def connect() -> sqlite3.Connection:
     except sqlite3.OperationalError as exc:
         connection.close()
         raise SearchError(
-            f"Could not open the search index at {INDEX_PATH}: {exc}. "
+            f"Could not open the search index at {path}: {exc}. "
             "Set INDEX_DIR in .env to a local disk; network shares and some "
             "container mounts cannot host a SQLite database."
         ) from exc
@@ -346,7 +351,7 @@ def status() -> dict:
             "SELECT count(*) AS n, sum(length(text)) AS chars FROM documents"
         ).fetchone()
         return {
-            "index_path": str(INDEX_PATH),
+            "index_path": str(index_path()),
             "documents": row["n"] or 0,
             "characters": row["chars"] or 0,
             "not_yet_indexed": stale(connection),

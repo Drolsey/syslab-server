@@ -21,11 +21,10 @@ TEST_TOKEN = "a-test-token-long-enough-to-count"
 
 
 @pytest.fixture(autouse=True)
-def temp_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+def temp_data_dir(tenant_storage, monkeypatch):
     monkeypatch.setattr(config, "APP_TOKEN", TEST_TOKEN)
     main._failures.clear()
-    yield tmp_path
+    yield tenant_storage
 
 
 @pytest.fixture

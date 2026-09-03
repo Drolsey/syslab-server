@@ -23,7 +23,8 @@ from _deps import require  # noqa: E402
 require("pymupdf", "openpyxl", "reportlab")
 
 from app import agent, tools  # noqa: E402
-from app.config import DATA_DIR, OLLAMA_MODEL, ensure_data_dir  # noqa: E402
+from app import context  # noqa: E402
+from app.config import BOOTSTRAP_TENANT, OLLAMA_MODEL, data_dir, ensure_data_dir  # noqa: E402
 from app.llm import LlmError  # noqa: E402
 
 LINE = "-" * 62
@@ -118,7 +119,7 @@ def main() -> int:
     VERBOSE = args.verbose
 
     print("\nsyslab-server / Phase 03 tool-calling check")
-    print(f"Model: {OLLAMA_MODEL}   Data folder: {DATA_DIR}")
+    print(f"Model: {OLLAMA_MODEL}   Data folder: {data_dir()}")
     try:
         from app import llm
 
@@ -281,4 +282,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+# Gate scripts call the tool functions directly, with no HTTP request to say
+# whose data this is, so they name a tenant themselves. BOOTSTRAP_TENANT is the
+# one holding the data this install started with.
+    with context.use_tenant(BOOTSTRAP_TENANT):
+        sys.exit(main())

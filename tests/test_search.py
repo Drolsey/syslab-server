@@ -13,15 +13,11 @@ from app import config, search, tools
 
 
 @pytest.fixture(autouse=True)
-def temp_dirs(tmp_path, monkeypatch):
-    data = tmp_path / "data"
-    index = tmp_path / "index"
-    data.mkdir()
-    monkeypatch.setattr(config, "DATA_DIR", data)
-    monkeypatch.setattr(config, "INDEX_DIR", index)
-    monkeypatch.setattr(config, "INDEX_PATH", index / "documents.sqlite3")
-    monkeypatch.setattr(search, "INDEX_PATH", index / "documents.sqlite3")
-    yield data
+def temp_dirs(tenant_storage):
+    """One tenant, throwaway roots. There is no module-level INDEX_PATH to
+    patch any more: search.connect() asks for the current tenant's index at the
+    moment it opens one."""
+    yield tenant_storage
 
 
 @pytest.fixture
@@ -95,7 +91,7 @@ def test_rebuild_reconstructs_everything_from_the_files(documents):
 
 
 def test_deleting_the_index_file_loses_nothing(documents, temp_dirs):
-    config.INDEX_PATH.unlink()
+    config.index_path().unlink()
     assert search.status()["documents"] == 0
     search.rebuild()
     assert search.search("sensor calibration")["count"] >= 1
@@ -115,7 +111,8 @@ def test_the_extracted_text_is_stored_not_only_the_index(documents):
 
 def test_the_index_lives_outside_the_data_folder(temp_dirs):
     """So that deleting it is obviously safe, and it is never mistaken for user data."""
-    assert config.DATA_DIR not in config.INDEX_PATH.parents
+    assert config.DATA_ROOT not in config.index_path().parents
+    assert config.data_dir() not in config.index_path().parents
 
 
 # --- keeping up with the folder -------------------------------------------

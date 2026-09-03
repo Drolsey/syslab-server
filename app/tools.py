@@ -9,7 +9,8 @@ value is fed straight back to the model as the result of a tool call.
 
 Rules that keep this safe to expose to a model:
   * filenames are resolved through config.resolve_in_data_dir, so nothing can
-    touch a path outside DATA_DIR
+    touch a path outside the CURRENT TENANT's folder, which also means it
+    cannot walk sideways into another tenant's
   * output is truncated to a character budget, so one large PDF cannot blow
     up the context window
   * failures raise ToolError with a plain message the model can read and act on

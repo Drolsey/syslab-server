@@ -13,6 +13,7 @@ that is allowed.
 from __future__ import annotations
 
 import concurrent.futures
+import contextvars
 import inspect
 import json
 from typing import Any, Callable
@@ -678,7 +679,14 @@ def _run_calls(calls: list[dict]) -> list[tuple[str, Any, str | None]]:
 
     if len(prepared) > 1 and all(name in READ_ONLY for name, _ in prepared):
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(prepared), 6)) as pool:
-            futures = [pool.submit(run_tool, name, args) for name, args in prepared]
+            # Carry the calling thread's context into each worker. A thread does
+            # not inherit one, so without this every tool in a parallel turn runs
+            # with no tenant set and fails. A fresh copy per submission because a
+            # single Context cannot be entered by two threads at once.
+            futures = [
+                pool.submit(contextvars.copy_context().run, run_tool, name, args)
+                for name, args in prepared
+            ]
             outcomes = [future.result() for future in futures]
     else:
         outcomes = [run_tool(name, args) for name, args in prepared]

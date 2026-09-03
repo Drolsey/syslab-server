@@ -19,7 +19,8 @@ from _deps import require  # noqa: E402
 require("pymupdf", "openpyxl", "reportlab")
 
 from app import tools  # noqa: E402
-from app.config import DATA_DIR, ensure_data_dir  # noqa: E402
+from app import context  # noqa: E402
+from app.config import BOOTSTRAP_TENANT, data_dir, ensure_data_dir  # noqa: E402
 
 LINE = "-" * 62
 PDF_NAME = "phase02_sample.pdf"
@@ -50,7 +51,7 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 def main() -> int:
     ensure_data_dir()
     print("\nsyslab-server / Phase 02 tool check")
-    print(f"Data folder: {DATA_DIR}")
+    print(f"Data folder: {data_dir()}")
 
     # ---- write_pdf ----------------------------------------------------
     step("write_pdf")
@@ -68,7 +69,7 @@ def main() -> int:
             ),
         )
         print(f"  wrote {result['file']}: {result['pages']} page(s), {result['size_kb']} KB")
-        check("write_pdf created a file", (DATA_DIR / PDF_NAME).is_file())
+        check("write_pdf created a file", (data_dir() / PDF_NAME).is_file())
     except Exception as exc:  # noqa: BLE001
         bad("write_pdf", repr(exc))
 
@@ -101,7 +102,7 @@ def main() -> int:
             mode="overwrite",
         )
         print(f"  {result['action']} {result['file']}, sheet {result['sheet']}, now {result['total_rows_now']} rows")
-        check("write_excel created the workbook", (DATA_DIR / XLSX_NAME).is_file())
+        check("write_excel created the workbook", (data_dir() / XLSX_NAME).is_file())
         check("header plus three data rows", result["total_rows_now"] == 4,
               f"got {result['total_rows_now']}")
     except Exception as exc:  # noqa: BLE001
@@ -188,10 +189,14 @@ def main() -> int:
     print("\n  Phase 02 passes. The file tools do what they claim on real files.")
     print("  Nothing further to do here. The two samples this check just wrote are")
     print("  still in the data folder if you want to look at them by eye:")
-    print(f"    {DATA_DIR / XLSX_NAME}")
-    print(f"    {DATA_DIR / PDF_NAME}\n")
+    print(f"    {data_dir() / XLSX_NAME}")
+    print(f"    {data_dir() / PDF_NAME}\n")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+# Gate scripts call the tool functions directly, with no HTTP request to say
+# whose data this is, so they name a tenant themselves. BOOTSTRAP_TENANT is the
+# one holding the data this install started with.
+    with context.use_tenant(BOOTSTRAP_TENANT):
+        sys.exit(main())

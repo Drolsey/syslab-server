@@ -16,9 +16,8 @@ from app import agent, config, llm, tools
 
 
 @pytest.fixture(autouse=True)
-def temp_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
-    yield tmp_path
+def temp_data_dir(tenant_storage):
+    yield tenant_storage
 
 
 def scripted(monkeypatch, *responses):

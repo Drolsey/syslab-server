@@ -23,11 +23,11 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Respon
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from app import agent, config, jobs, search, tools
+from app import agent, config, context, jobs, search, tools
 from app.config import (
     APP_HOST,
     APP_PORT,
-    DATA_DIR,
+    DATA_ROOT,
     LOOPBACK,
     MAX_UPLOAD_BYTES,
     MIN_TOKEN_LENGTH,
@@ -35,6 +35,7 @@ from app.config import (
     WEAK_TOKENS,
     UnsafePathError,
     code_fingerprint,
+    data_dir,
     ensure_data_dir,
     resolve_in_data_dir,
 )
@@ -49,6 +50,33 @@ app = FastAPI(title="syslab-server", docs_url="/api/docs", redoc_url=None)
 # itself at boot from one someone started by hand afterwards.
 STARTED_AT = time.time()
 CODE_FINGERPRINT = code_fingerprint()
+
+
+@app.middleware("http")
+async def attach_tenant(request: Request, call_next):
+    """Say whose request this is, for the whole request.
+
+    TEMPORARY SHAPE: every request is currently the bootstrap tenant. Sub-step
+    1.5 replaces the constant with a lookup of the presented token, and nothing
+    else about this function changes.
+
+    It has to be middleware or an async dependency, and it cannot be
+    require_auth as that function stands. FastAPI runs a sync dependency in one
+    anyio worker thread and a sync endpoint in another, and a context flows into
+    a worker thread but never back out, so a tenant set in a `def` dependency is
+    gone before the endpoint runs. Measured, and asserted in
+    tests/test_context.py so that it stays measured.
+    """
+    # config.BOOTSTRAP_TENANT is read here rather than bound at import, so that
+    # what this returns can be changed without reloading the module. That is
+    # what lets the tests run as their own tenant, and it is the same lesson as
+    # search.py's old module-level INDEX_PATH: a value read once at import is a
+    # value nothing can vary later.
+    token = context.set_tenant(config.BOOTSTRAP_TENANT)
+    try:
+        return await call_next(request)
+    finally:
+        context.reset_tenant(token)
 
 
 # --------------------------------------------------------------------------
@@ -213,7 +241,7 @@ def health() -> dict:
     return {
         "ok": True,
         "model": OLLAMA_MODEL,
-        "data_dir": str(DATA_DIR),
+        "data_dir": str(data_dir()),
         "started_at": datetime.fromtimestamp(STARTED_AT).isoformat(timespec="seconds"),
         "job_kinds": jobs.lane.kinds,
         "uptime_seconds": round(time.time() - STARTED_AT, 1),
@@ -353,7 +381,10 @@ def chat(request: ChatRequest = Body(...)) -> JSONResponse:
 def main() -> None:
     import uvicorn
 
-    ensure_data_dir()
+    # Not ensure_data_dir(): startup has no request and therefore no tenant, and
+    # asking for one here would raise. The root is what needs to exist; a
+    # tenant's folder is made when a tenant first uses it.
+    DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
     # The one guard worth having: never listen beyond this machine without a
     # real token. Getting this order wrong is how a file-writing app ends up
@@ -362,11 +393,11 @@ def main() -> None:
         print("\nRefusing to start.\n")
         print(f"  APP_HOST is {APP_HOST}, which listens beyond this machine, but")
         print("  APP_TOKEN is missing or too weak. This app can write files.\n")
-        print("  Fix it:   python scripts/new_token.py")
+        print("  Fix it:   py scripts/new_token.py")
         print("  Or set:   APP_HOST=127.0.0.1\n")
         raise SystemExit(2)
 
-    print(f"syslab-server: model {OLLAMA_MODEL}, files in {DATA_DIR}")
+    print(f"syslab-server: model {OLLAMA_MODEL}, files under {DATA_ROOT}")
     if APP_HOST in LOOPBACK:
         print("Listening on this machine only. Phase 06 opens it to your tailnet.")
     else:

@@ -27,8 +27,9 @@ from _deps import require  # noqa: E402
 require("psycopg")
 
 from app import db  # noqa: E402
+from app import context  # noqa: E402
 from app.config import (  # noqa: E402
-    DATA_DIR, DB_CONNECT_TIMEOUT, DB_DATABASE, DB_EXPORT_MAX_ROWS, DB_HOST,
+    BOOTSTRAP_TENANT, data_dir, DB_CONNECT_TIMEOUT, DB_DATABASE, DB_EXPORT_MAX_ROWS, DB_HOST,
     DB_MAX_ROWS, DB_PORT, DB_SSLMODE, DB_STATEMENT_TIMEOUT_MS, DB_USER,
 )
 
@@ -387,7 +388,7 @@ def main() -> int:
                    f"leaked a raw {type(exc).__name__}: {exc} "
                    "-- the model would see a traceback, not an instruction")
         finally:
-            stale = DATA_DIR / out
+            stale = data_dir() / out
             if stale.is_file():
                 try:
                     stale.unlink()
@@ -472,7 +473,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        # Gate scripts call the tool functions directly, with no HTTP request to
+        # say whose data this is, so they name a tenant themselves.
+        # BOOTSTRAP_TENANT is the one holding the data this install started with.
+        with context.use_tenant(BOOTSTRAP_TENANT):
+            sys.exit(main())
     except KeyboardInterrupt:
         print("\n  Stopped.\n")
         sys.exit(130)

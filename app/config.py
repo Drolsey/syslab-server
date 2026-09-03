@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 from pathlib import Path, PurePosixPath
 
+from app.context import current_tenant
+
 try:
     from dotenv import load_dotenv
 except ImportError:  # dotenv is not installed until Phase 04 requirements land
@@ -53,7 +55,19 @@ def _path(key: str, default: Path) -> Path:
 
 
 # --- files ---
-DATA_DIR = _path("DATA_DIR", PROJECT_ROOT / "data")
+# The env var names stay DATA_DIR and INDEX_DIR because they are what is in
+# every .env already, and what they point at has not changed: the root. What
+# changed is that nothing reads a single folder any more. Each tenant gets a
+# folder under DATA_ROOT and an index file under INDEX_ROOT, and the constants
+# were RENAMED rather than kept as aliases so that any code still expecting one
+# global folder fails at import with a NameError instead of quietly serving the
+# wrong customer.
+DATA_ROOT = _path("DATA_DIR", PROJECT_ROOT / "data")
+
+# The tenant this install's existing data belongs to, and the one the gate
+# scripts work as. app/main.py uses it as a placeholder until sub-step 1.5
+# resolves a real tenant from the request token.
+BOOTSTRAP_TENANT = _env("BOOTSTRAP_TENANT", "default")
 MAX_UPLOAD_BYTES = int(_env("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 
 # --- server ---
@@ -65,8 +79,7 @@ APP_PORT = int(_env("APP_PORT", "8000"))
 # --- the search index ---
 # Deliberately outside DATA_DIR: it is a derived cache, not user data, and
 # deleting it must be obviously safe.
-INDEX_DIR = _path("INDEX_DIR", PROJECT_ROOT / "index")
-INDEX_PATH = INDEX_DIR / "documents.sqlite3"
+INDEX_ROOT = _path("INDEX_DIR", PROJECT_ROOT / "index")
 
 # --- control plane ---
 # Who exists, and which token belongs to whom. Deliberately outside DATA_DIR,
@@ -130,14 +143,36 @@ class UnsafePathError(ValueError):
     """Raised when a requested path escapes DATA_DIR."""
 
 
+def data_dir() -> Path:
+    """The current tenant's document folder.
+
+    Raises NoTenantError if nothing has said whose request this is. That is the
+    point: there is no folder to fall back to, because falling back is how one
+    customer's request reads another customer's files.
+    """
+    return DATA_ROOT / current_tenant()
+
+
+def index_path() -> Path:
+    """The current tenant's search index.
+
+    One file per tenant rather than one file with an owner column. The failure
+    modes are not comparable: a forgotten WHERE returns another customer's
+    document text silently, while a wrong path returns nothing or raises.
+    """
+    return INDEX_ROOT / f"{current_tenant()}.sqlite3"
+
+
 def ensure_data_dir() -> Path:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    return DATA_DIR
+    folder = data_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def ensure_index_dir() -> Path:
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    return INDEX_DIR
+    # The root, not a per-tenant folder: the index files sit directly in it.
+    INDEX_ROOT.mkdir(parents=True, exist_ok=True)
+    return INDEX_ROOT
 
 
 def ensure_control_dir() -> Path:
@@ -146,14 +181,14 @@ def ensure_control_dir() -> Path:
 
 
 def resolve_in_data_dir(name: str) -> Path:
-    """Turn a model-supplied filename into a real path inside DATA_DIR.
+    """Turn a model-supplied filename into a real path inside the tenant's folder.
 
     The model chooses these strings, so treat them as untrusted input. Anything
     that escapes DATA_DIR is rejected rather than clamped. Backslashes are
     normalised first so a Windows-style string is judged the same way on Linux,
     where a backslash would otherwise be an ordinary filename character.
     """
-    ensure_data_dir()
+    root = ensure_data_dir()
     cleaned = str(name).strip().replace("\\", "/").strip("/")
     if not cleaned:
         raise UnsafePathError("No filename given.")
@@ -165,12 +200,15 @@ def resolve_in_data_dir(name: str) -> Path:
     if len(cleaned) > 1 and cleaned[1] == ":":
         raise UnsafePathError(f"Refusing absolute path: {name}")
 
-    candidate = (DATA_DIR / cleaned).expanduser()
+    candidate = (root / cleaned).expanduser()
     try:
         resolved = candidate.resolve()
     except OSError as exc:
         raise UnsafePathError(f"Cannot resolve path: {name}") from exc
-    if resolved != DATA_DIR and DATA_DIR not in resolved.parents:
+    # Judged against THIS TENANT's folder, so the same check that used to stop
+    # an escape to C:\Windows now also stops a walk sideways into another
+    # tenant's folder, which is a subdirectory of the same root.
+    if resolved != root and root not in resolved.parents:
         raise UnsafePathError(f"Refusing path outside the data folder: {name}")
     return resolved
 

@@ -27,7 +27,14 @@ from _deps import require  # noqa: E402
 require("pymupdf", "openpyxl", "reportlab")
 
 from app import search, tools  # noqa: E402
-from app.config import DATA_DIR, INDEX_PATH, MAX_TOOL_STEPS, ensure_data_dir  # noqa: E402
+from app import context  # noqa: E402
+from app.config import (  # noqa: E402
+    BOOTSTRAP_TENANT,
+    MAX_TOOL_STEPS,
+    data_dir,
+    ensure_data_dir,
+    index_path,
+)
 
 LINE = "-" * 66
 results: list[tuple[str, bool, str]] = []
@@ -55,8 +62,8 @@ def main() -> int:
     engineer = "Yusra Bekele"
 
     print("\nsyslab-server / document search check")
-    print(f"  Data folder: {DATA_DIR}")
-    print(f"  Index:       {INDEX_PATH}")
+    print(f"  Data folder: {data_dir()}")
+    print(f"  Index:       {index_path()}")
 
     # ---- 1. the index itself -------------------------------------------
     section("1. The index")
@@ -130,7 +137,7 @@ def main() -> int:
 
     # ---- 5. it stays a cache -------------------------------------------
     section("5. It is still a cache")
-    INDEX_PATH.unlink(missing_ok=True)
+    index_path().unlink(missing_ok=True)
     record("Deleting the index loses nothing", search.status()["documents"] == 0,
            "index removed")
     again = search.rebuild()
@@ -142,7 +149,7 @@ def main() -> int:
         section("Tidying up")
         removed = 0
         for name in made:
-            path = DATA_DIR / name
+            path = data_dir() / name
             try:
                 path.unlink()
                 removed += 1
@@ -168,4 +175,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+# Gate scripts call the tool functions directly, with no HTTP request to say
+# whose data this is, so they name a tenant themselves. BOOTSTRAP_TENANT is the
+# one holding the data this install started with.
+    with context.use_tenant(BOOTSTRAP_TENANT):
+        sys.exit(main())

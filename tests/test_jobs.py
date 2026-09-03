@@ -154,8 +154,7 @@ TOKEN = "a-test-token-long-enough-to-count"
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+def client(tenant_storage, monkeypatch):
     monkeypatch.setattr(config, "APP_TOKEN", TOKEN)
     main._failures.clear()
     signed_in = TestClient(main.app)
