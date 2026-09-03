@@ -36,6 +36,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Its own folder too, so this file can be imported by the tests as well as run
+# as a script. Run as __main__ python adds it; imported, nothing does.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _deps  # noqa: E402
+
+# Before anything else, and before a single file moves. Run under an
+# interpreter without these and the move still works while the index rebuild
+# silently produces nothing, which is how a successful-looking migration left
+# nineteen readable documents unsearchable.
+_deps.require("pymupdf", "openpyxl")
 
 from app import context, search, tenancy  # noqa: E402
 from app.config import (  # noqa: E402
@@ -183,8 +194,21 @@ def apply(tenant: str) -> int:
         print(f"  deleted the old single index {old.name}")
     with context.use_tenant(tenant):
         result = search.rebuild()
-    print(f"  rebuilt {INDEX_ROOT / f'{tenant}.sqlite3'} with "
-          f"{result['indexed']} document(s)")
+    print(f"  rebuilt {INDEX_ROOT / f'{tenant}.sqlite3'}")
+    print(f"  {result['files_seen']} searchable file(s) seen, "
+          f"{result['indexed']} indexed, {len(result['skipped'])} skipped")
+
+    if result["files_seen"] and not result["indexed"]:
+        print("\n  EVERY SEARCHABLE FILE FAILED TO INDEX. The files moved and are")
+        print("  safe, but the index is empty, so nothing can be found by content.")
+        print("  This is an environment fault rather than a data one. Fix it and run:")
+        print(f"    py scripts\\check_search.py\n")
+        return 1
+    if result["skipped"]:
+        print(f"  skipped: {', '.join(result['skipped'][:8])}"
+              f"{' ...' if len(result['skipped']) > 8 else ''}")
+        print("  A skipped file has no extractable text. It is still in the folder")
+        print("  and still readable by name; it just cannot be found by content.")
 
     section("Done")
     print(f"  {after} file(s) now belong to tenant {tenant}.")

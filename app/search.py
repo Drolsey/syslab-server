@@ -25,8 +25,10 @@ moment something exists only in this file it stops being a cache.
 
 from __future__ import annotations
 
+import importlib
 import re
 import sqlite3
+import sys
 import time
 from pathlib import Path
 
@@ -89,21 +91,51 @@ def connect() -> sqlite3.Connection:
 # extraction
 # --------------------------------------------------------------------------
 
-def extract(path: Path) -> str:
-    """Pull readable text out of one file. Empty string if there is none."""
-    suffix = path.suffix.lower()
-    try:
-        if suffix == ".pdf":
-            import pymupdf
+def _reader(module: str, what: str):
+    """Import a parser, or say plainly that it is missing.
 
+    A missing library is NOT an unreadable file, and catching both with one
+    `except Exception` made them indistinguishable. Running a rebuild under an
+    interpreter without pymupdf indexed nineteen perfectly good PDFs as empty
+    and reported each as "no extractable text, probably a scan": a cause the
+    code had not established, for a folder that was entirely fine.
+
+    An unreadable file affects one document. A missing parser affects every
+    document of that type, and it is an environment fault, not a data fault.
+    """
+    try:
+        return importlib.import_module(module)
+    except ImportError as exc:
+        raise SearchError(
+            f"{module} is not installed in the interpreter running this "
+            f"({sys.executable}), so {what}. Every file of that type would be "
+            "indexed as empty, which reads like a folder of unreadable documents "
+            "rather than a missing package. Install the project's requirements, "
+            "or run this with the virtualenv's python."
+        ) from exc
+
+
+def extract(path: Path) -> str:
+    """Pull readable text out of one file. Empty string if there is none.
+
+    Raises SearchError if the parser for this file type is not installed. That
+    is deliberately not the same outcome as a file that cannot be read.
+    """
+    suffix = path.suffix.lower()
+
+    if suffix == ".pdf":
+        pymupdf = _reader("pymupdf", "no PDF can be read")
+        try:
             with pymupdf.open(path) as document:
                 pages = [document.load_page(i).get_text("text") for i in range(document.page_count)]
             return "\n".join(pages)[:MAX_TEXT_PER_FILE]
+        except Exception:  # noqa: BLE001 - this one file is unreadable, never fatal
+            return ""
 
-        if suffix in {".xlsx", ".xlsm"}:
-            from openpyxl import load_workbook
-
-            book = load_workbook(path, data_only=True, read_only=True)
+    if suffix in {".xlsx", ".xlsm"}:
+        openpyxl = _reader("openpyxl", "no spreadsheet can be read")
+        try:
+            book = openpyxl.load_workbook(path, data_only=True, read_only=True)
             try:
                 parts: list[str] = []
                 for sheet in book.worksheets:
@@ -117,8 +149,9 @@ def extract(path: Path) -> str:
             finally:
                 book.close()
             return "\n".join(parts)[:MAX_TEXT_PER_FILE]
-    except Exception:  # noqa: BLE001 - an unreadable file is skipped, never fatal
-        return ""
+        except Exception:  # noqa: BLE001
+            return ""
+
     return ""
 
 
@@ -146,7 +179,9 @@ def index_file(path: Path, connection: sqlite3.Connection | None = None) -> dict
             "name": path.name,
             "indexed": bool(text.strip()),
             "characters": len(text),
-            "reason": "" if text.strip() else "no extractable text, probably a scan",
+            # Do not name a cause this has not established. A scan is one
+            # explanation for a file with no text in it; it is not the only one.
+            "reason": "" if text.strip() else "no text could be extracted from it",
         }
     finally:
         if own:
@@ -173,6 +208,17 @@ def rebuild(report=None) -> dict:
         p for p in folder.iterdir()
         if p.is_file() and p.suffix.lower() in SEARCHABLE and not p.name.startswith(".")
     )
+    # Check we can actually read these before throwing the index away. rebuild()
+    # used to DELETE first and discover the missing parser afterwards, so a run
+    # under the wrong interpreter cost the whole index and replaced it with
+    # nothing. Same shape as the row cap that was applied after the fetch: a
+    # limit enforced after the cost is paid is not a limit.
+    for suffix in sorted({p.suffix.lower() for p in files}):
+        if suffix == ".pdf":
+            _reader("pymupdf", "no PDF can be read")
+        elif suffix in {".xlsx", ".xlsm"}:
+            _reader("openpyxl", "no spreadsheet can be read")
+
     connection = connect()
     started = time.time()
     indexed, skipped = [], []

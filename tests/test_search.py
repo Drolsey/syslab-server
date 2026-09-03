@@ -169,3 +169,88 @@ def test_a_file_with_no_text_is_skipped_not_failed(temp_dirs):
 def test_an_unsupported_file_type_is_ignored(temp_dirs):
     (temp_dirs / "notes.txt").write_text("this is not searchable")
     assert search.index_file(temp_dirs / "notes.txt")["indexed"] is False
+
+
+# --- a missing parser is not an unreadable file ----------------------------
+
+def test_a_missing_parser_is_a_fault_not_an_empty_document(documents, monkeypatch):
+    """The bug this prevents cost a whole migration.
+
+    Running a rebuild under an interpreter without pymupdf indexed nineteen
+    perfectly readable PDFs as empty, reported "0 document(s)" as though that
+    were an ordinary outcome, and gave each file the reason "no extractable
+    text, probably a scan" -- a cause the code had not established, for a
+    folder that was entirely fine.
+
+    A missing library affects every file of a type and is an environment fault.
+    An unreadable file affects one and is a data fault. One `except Exception`
+    around both made them the same thing.
+    """
+    import importlib as importlib_module
+
+    real = importlib_module.import_module
+
+    def without_pymupdf(name, *args, **kwargs):
+        if name == "pymupdf":
+            raise ImportError("No module named 'pymupdf'")
+        return real(name, *args, **kwargs)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(search.importlib, "import_module", without_pymupdf)
+        with pytest.raises(search.SearchError) as caught:
+            search.rebuild()
+    message = str(caught.value)
+    assert "pymupdf" in message
+    assert "not installed" in message
+
+
+def test_a_genuinely_unreadable_file_is_still_only_skipped(temp_dirs):
+    """The other half of the same distinction: one broken file must not stop
+    the rest of the folder being indexed."""
+    (temp_dirs / "broken.pdf").write_bytes(b"this is not a pdf at all")
+    tools.write_pdf("fine.pdf", title="Fine", body="Sphinx of black quartz.")
+
+    result = search.rebuild()
+    assert "broken.pdf" in result["skipped"]
+    assert result["indexed"] >= 1
+    assert search.search("Sphinx")["count"] == 1
+
+
+def test_the_skip_reason_does_not_diagnose_a_cause_it_cannot_know(temp_dirs):
+    (temp_dirs / "broken.pdf").write_bytes(b"not a pdf")
+    result = search.index_file(temp_dirs / "broken.pdf")
+    assert result["indexed"] is False
+    assert "scan" not in result["reason"], "that is one explanation, not the only one"
+
+
+def test_a_failed_rebuild_does_not_destroy_the_index_it_could_not_replace(documents, monkeypatch):
+    """rebuild() used to DELETE first and discover the missing parser after.
+
+    A run under the wrong interpreter therefore cost the entire index and put
+    nothing in its place. This is the same shape as the row cap that was once
+    applied after the fetch: a limit enforced after the cost is paid is not a
+    limit. It cost this project a real index during Step 1.
+    """
+    import importlib as importlib_module
+
+    search.rebuild()
+    before = search.status()["documents"]
+    assert before > 0
+
+    real = importlib_module.import_module
+
+    def without_pymupdf(name, *args, **kwargs):
+        if name == "pymupdf":
+            raise ImportError("No module named 'pymupdf'")
+        return real(name, *args, **kwargs)
+
+    # monkeypatch.context(), not monkeypatch.undo(). undo() reverts EVERY patch
+    # made during the test, including the storage roots the tenant_storage
+    # fixture set, so the assertion below would have read the real index on the
+    # developer's machine instead of this test's. It did, once.
+    with monkeypatch.context() as scoped:
+        scoped.setattr(search.importlib, "import_module", without_pymupdf)
+        with pytest.raises(search.SearchError):
+            search.rebuild()
+
+    assert search.status()["documents"] == before, "the index survived a failed rebuild"

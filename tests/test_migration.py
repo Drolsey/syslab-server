@@ -44,7 +44,12 @@ def migrate(tmp_path, monkeypatch):
     # they would only add IO to a test about moving files.
     monkeypatch.setattr(module.tenancy, "connect", lambda *a, **k: _NullConnection())
     monkeypatch.setattr(module.tenancy, "get_tenant", lambda *a, **k: {"id": "default"})
-    monkeypatch.setattr(module.search, "rebuild", lambda *a, **k: {"indexed": 3})
+    # The full shape the real rebuild() returns. A stub that answers with less
+    # than the real thing hides a contract change: this one returned only
+    # "indexed" and the migration's new reporting raised KeyError against it.
+    monkeypatch.setattr(module.search, "rebuild",
+                        lambda *a, **k: {"files_seen": 3, "indexed": 3,
+                                         "skipped": [], "seconds": 0.0})
 
     module._data = data
     module._tmp = tmp_path
