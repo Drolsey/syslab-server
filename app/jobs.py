@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
 
+from app import context
 from app.config import JOB_MAX_QUEUED, JOB_RETENTION_SECONDS, JOB_WORKERS
 
 QUEUED, RUNNING, DONE, FAILED, CANCELLED = "queued", "running", "done", "failed", "cancelled"
@@ -44,6 +45,10 @@ class Job:
     id: str
     kind: str
     params: dict
+    # Deliberately no default. A job with no owner cannot be constructed, so
+    # there is no path where one gets made and the owner is filled in later,
+    # or not at all.
+    tenant_id: str
     status: str = QUEUED
     progress: float = 0.0
     note: str = ""
@@ -55,7 +60,12 @@ class Job:
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
 
     def public(self, position: int | None = None) -> dict:
-        """What the browser and the model are allowed to see."""
+        """What the browser and the model are allowed to see.
+
+        No tenant_id. The caller already knows whose jobs these are, because
+        they only ever receive their own, and putting an owner in the payload
+        would be one more place for it to leak.
+        """
         body = {
             "id": self.id,
             "kind": self.kind,
@@ -130,7 +140,10 @@ class Lane:
                     f"The queue is full ({waiting} waiting, {running} running). "
                     "Try again in a minute, or cancel something."
                 )
-            job = Job(id=uuid.uuid4().hex[:12], kind=kind, params=dict(params or {}))
+            # current_tenant() raises if nothing said whose job this is, so an
+            # unowned job cannot enter the lane at all.
+            job = Job(id=uuid.uuid4().hex[:12], kind=kind,
+                      params=dict(params or {}), tenant_id=context.current_tenant())
             self._jobs[job.id] = job
             self._order.append(job.id)
             self._prune()
@@ -140,8 +153,17 @@ class Lane:
 
     # ---- reading -------------------------------------------------------
     def get(self, job_id: str) -> Job:
+        """This tenant's job with that id, or the ordinary not-found error.
+
+        Another tenant's job is NOT FORBIDDEN, it is not found. "That job exists
+        but is not yours" is itself a disclosure: it confirms an id someone
+        guessed, and over enough guesses it counts another customer's work.
+        """
+        tenant = context.current_tenant()
         with self._lock:
             job = self._jobs.get(job_id)
+        if job is not None and job.tenant_id != tenant:
+            job = None
         if job is None:
             raise JobError(
                 f"No job with id {job_id!r}. Jobs are kept for "
@@ -157,12 +179,20 @@ class Lane:
         return waiting.index(job_id) + 1 if job_id in waiting else None
 
     def snapshot(self, limit: int = 40) -> dict:
+        tenant = context.current_tenant()
         with self._lock:
             self._prune()
             jobs = [self._jobs[i] for i in self._order if i in self._jobs]
         waiting = [j for j in jobs if j.status == QUEUED]
         running = [j for j in jobs if j.status == RUNNING]
-        recent = list(reversed(jobs))[:limit]
+
+        # WHICH jobs are running is private. HOW BUSY the machine is, is not,
+        # and hiding it would make position_in_queue a lie: telling someone they
+        # are first while ten jobs sit ahead of them is a wrong answer that
+        # looks like a right one. So the counts and the queue position are
+        # server-wide and truthful, and only the list is filtered.
+        mine = [j for j in jobs if j.tenant_id == tenant]
+        recent = list(reversed(mine))[:limit]
         return {
             "queued": len(waiting),
             "running": len(running),
@@ -215,7 +245,16 @@ class Lane:
                         job.note = note
 
                 try:
-                    job.result = handler(report=report, **job.params)
+                    # THE LINE THIS SUB-STEP EXISTS FOR. A worker thread does
+                    # not inherit the context of whoever submitted the job, so
+                    # without this the handler runs for nobody: every tool it
+                    # calls raises NoTenantError, and a worker that had run for
+                    # someone else earlier would still be holding nothing,
+                    # because a thread's context does not carry over either.
+                    # The owner is read from the job, which is the only place it
+                    # is still true by the time the work happens.
+                    with context.use_tenant(job.tenant_id):
+                        job.result = handler(report=report, **job.params)
                     job.status = DONE
                     job.progress = 1.0
                 except Cancelled:

@@ -16,7 +16,9 @@ from app import config, jobs, main
 
 
 @pytest.fixture
-def lane():
+def lane(tenant_storage):
+    """tenant_storage because a job now has an owner, and submitting without
+    one raises rather than defaulting to somebody."""
     made = jobs.Lane(workers=1, max_queued=5)
     made.handler("selftest", jobs.selftest)
     made.handler("boom", lambda report, **_: 1 / 0)

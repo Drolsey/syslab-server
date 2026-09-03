@@ -245,3 +245,141 @@ def test_the_old_single_folder_constants_are_gone_from_the_storage_modules():
             hits = [line for line in source.splitlines()
                     if re.search(rf"\b{gone}\b", line)]
             assert not hits, f"{module} still mentions {gone}: {hits}"
+
+
+# --------------------------------------------------------------------------
+# the job lane
+# --------------------------------------------------------------------------
+
+def _finish(lane, job_id, seconds=3.0):
+    from app import jobs as jobs_module
+    import time
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        with lane._lock:
+            job = lane._jobs.get(job_id)
+        if job and job.status in jobs_module.FINISHED:
+            return job
+        time.sleep(0.02)
+    raise AssertionError(f"job {job_id} never finished")
+
+
+@pytest.fixture()
+def writing_lane(tenant_storage):
+    """A lane whose handler writes a file, so where it lands is visible."""
+    from app import jobs as jobs_module
+
+    made = jobs_module.Lane(workers=1, max_queued=10)
+    made.handler("write", lambda report, name="x.pdf", body="hello":
+                 tools.write_pdf(name, title="from a job", body=body))
+    made.handler("whoami", lambda report: {"tenant": context.current_tenant()})
+    return made
+
+
+def test_a_job_runs_as_the_tenant_that_submitted_it(writing_lane):
+    """The line 1.4 exists for.
+
+    A worker thread does not inherit the context of whoever submitted the job.
+    Without the use_tenant() in Lane._work the handler runs for nobody and
+    every tool it calls raises; worse, a worker that had run for someone else
+    would be the obvious place for a wrong-tenant write to appear.
+    """
+    mine = writing_lane.submit("write", {"name": "mine.pdf", "body": "Aardvark"})
+    with context.use_tenant(OTHER_TENANT):
+        config.ensure_data_dir()
+        theirs = writing_lane.submit("write", {"name": "theirs.pdf", "body": "Bandicoot"})
+
+    assert _finish(writing_lane, mine.id).status == "done"
+    assert _finish(writing_lane, theirs.id).status == "done"
+
+    assert (config.DATA_ROOT / TEST_TENANT / "mine.pdf").is_file()
+    assert (config.DATA_ROOT / OTHER_TENANT / "theirs.pdf").is_file()
+    assert not (config.DATA_ROOT / TEST_TENANT / "theirs.pdf").exists()
+    assert not (config.DATA_ROOT / OTHER_TENANT / "mine.pdf").exists()
+
+
+def test_the_handler_sees_the_jobs_owner_not_the_workers_last_one(writing_lane):
+    first = writing_lane.submit("whoami", {})
+    with context.use_tenant(OTHER_TENANT):
+        second = writing_lane.submit("whoami", {})
+
+    assert _finish(writing_lane, first.id).result == {"tenant": TEST_TENANT}
+    # The same worker thread, having just run as TEST_TENANT.
+    assert _finish(writing_lane, second.id).result == {"tenant": OTHER_TENANT}
+
+
+def test_a_job_cannot_be_submitted_without_an_owner(writing_lane):
+    with context.no_tenant():
+        with pytest.raises(context.NoTenantError):
+            writing_lane.submit("whoami", {})
+
+
+def test_another_tenants_job_is_not_found_rather_than_forbidden(writing_lane):
+    from app import jobs as jobs_module
+
+    mine = writing_lane.submit("whoami", {})
+    with context.use_tenant(OTHER_TENANT):
+        with pytest.raises(jobs_module.JobError) as caught:
+            writing_lane.get(mine.id)
+    message = str(caught.value)
+    assert "No job with id" in message
+    assert "forbidden" not in message.lower() and "not yours" not in message.lower()
+
+
+def test_another_tenant_cannot_cancel_the_job(writing_lane):
+    from app import jobs as jobs_module
+
+    mine = writing_lane.submit("write", {"name": "slow.pdf"})
+    with context.use_tenant(OTHER_TENANT):
+        with pytest.raises(jobs_module.JobError):
+            writing_lane.cancel(mine.id)
+
+
+def test_a_listing_shows_only_this_tenants_jobs(writing_lane):
+    mine = writing_lane.submit("whoami", {})
+    with context.use_tenant(OTHER_TENANT):
+        theirs = writing_lane.submit("whoami", {})
+        their_ids = {j["id"] for j in writing_lane.snapshot()["jobs"]}
+
+    my_ids = {j["id"] for j in writing_lane.snapshot()["jobs"]}
+    assert mine.id in my_ids and theirs.id not in my_ids
+    assert theirs.id in their_ids and mine.id not in their_ids
+
+
+def test_a_job_payload_never_carries_an_owner(writing_lane):
+    job = writing_lane.submit("whoami", {})
+    assert "tenant_id" not in job.public()
+    assert all("tenant_id" not in entry for entry in writing_lane.snapshot()["jobs"])
+
+
+def test_a_worker_takes_the_owner_from_the_job_and_not_from_its_own_residue(tenant_storage):
+    """Unconditionally from the job, even if the thread already holds a tenant.
+
+    Reading the worker's own context first and falling back to the job looks
+    equivalent, because a fresh worker thread holds nothing. It stops being
+    equivalent the moment anything leaves a tenant set in that thread: a
+    handler that sets one and does not reset, a library that does, a future
+    edit that hoists the context outside the loop. Then the next job for a
+    different customer inherits it, and the wrong folder is written silently.
+
+    This handler leaks on purpose. The job after it must be unaffected.
+    """
+    from app import jobs as jobs_module
+
+    lane = jobs_module.Lane(workers=1, max_queued=10)
+
+    def leaky(report):
+        context.set_tenant(OTHER_TENANT)   # deliberately never reset
+        return {"tenant": context.current_tenant()}
+
+    lane.handler("leaky", leaky)
+    lane.handler("whoami", lambda report: {"tenant": context.current_tenant()})
+
+    with context.use_tenant(OTHER_TENANT):
+        config.ensure_data_dir()
+        first = lane.submit("leaky", {})
+    assert _finish(lane, first.id).status == "done"
+
+    second = lane.submit("whoami", {})
+    assert _finish(lane, second.id).result == {"tenant": TEST_TENANT}, \
+        "the worker inherited the previous job's tenant"
