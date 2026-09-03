@@ -403,6 +403,47 @@ def revoke_token(fingerprint: str, connection: sqlite3.Connection | None = None)
             conn.close()
 
 
+# --------------------------------------------------------------------------
+# a tenant's own database
+# --------------------------------------------------------------------------
+
+def database_for(tenant_id: str,
+                 connection: sqlite3.Connection | None = None) -> dict | None:
+    """The connection settings this tenant's database was configured with.
+
+    None means none stored. It does NOT mean "use somebody else's": there is no
+    fallback here, and the caller has to decide what to do with nothing.
+
+    NOTHING WRITES TO THIS TABLE YET, on purpose. Storing one customer's
+    database password is what .env already does; storing many is a different
+    thing, and it needs an encryption decision that has not been made. Until it
+    is, a row that somehow exists is refused rather than trusted, so the first
+    thing that puts credentials in here has to deal with the question.
+    """
+    conn, owned = _with(connection)
+    try:
+        row = conn.execute(
+            "SELECT * FROM tenant_database WHERE tenant_id = ?", (tenant_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        stored = row["password_enc"] or ""
+        if not stored.startswith("enc:"):
+            raise TenancyError(
+                f"The stored database password for tenant {tenant_id!r} is not in a "
+                "form this build recognises. Credential encryption has not been "
+                "chosen yet, so nothing should have written it. Refusing to use it."
+            )
+        raise TenancyError(
+            f"Tenant {tenant_id!r} has stored database credentials, but this build "
+            "cannot decrypt them: no cipher is configured. See decision 4.5 in "
+            "docs/plans/step-01-ownership-boundary.md."
+        )
+    finally:
+        if owned:
+            conn.close()
+
+
 def has_any_active_token(connection: sqlite3.Connection | None = None) -> bool:
     """Could anyone sign in through the control plane?
 

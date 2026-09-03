@@ -23,21 +23,17 @@ import re
 import time
 from typing import Any
 
+from app import config, tenancy
 from app.config import (
     DB_CONNECT_TIMEOUT,
-    DB_DATABASE,
     DB_EXPORT_MAX_ROWS,
     DB_EXPORT_TIMEOUT_MS,
-    DB_HOST,
     DB_MAX_ROWS,
-    DB_PASSWORD,
-    DB_PORT,
-    DB_SSLMODE,
     DB_STATEMENT_TIMEOUT_MS,
-    DB_USER,
     UnsafePathError,
     resolve_in_data_dir,
 )
+from app.context import current_tenant
 
 
 class DatabaseError(Exception):
@@ -129,15 +125,72 @@ def check_statement(sql: str) -> str:
 # connecting
 # --------------------------------------------------------------------------
 
+def _dbname() -> str:
+    """The current tenant's database name, for messages. Never another's."""
+    try:
+        where = settings()
+    except Exception:  # noqa: BLE001
+        where = None
+    return where["dbname"] if where else "the customer"
+
+
+def settings() -> dict | None:
+    """Which database belongs to the tenant making this request?
+
+    Two sources, and no third:
+
+    1. What the control plane stores for this tenant.
+    2. The DB_* values in .env, which belong to the BOOTSTRAP TENANT and to
+       nobody else. This is the same bridge as APP_TOKEN in app/main.py: it
+       keeps the install that existed before tenancy working, and it is the
+       reason a second tenant does not silently inherit the first one's
+       database.
+
+    Returns None when this tenant has no database. None is not a licence to use
+    someone else's.
+    """
+    tenant = current_tenant()
+
+    stored = tenancy.database_for(tenant)
+    if stored:
+        return stored
+
+    if tenant == config.BOOTSTRAP_TENANT and config.DB_HOST and config.DB_DATABASE \
+            and config.DB_USER:
+        return {
+            "host": config.DB_HOST,
+            "port": config.DB_PORT,
+            "dbname": config.DB_DATABASE,
+            "username": config.DB_USER,
+            "password": config.DB_PASSWORD,
+            "sslmode": config.DB_SSLMODE,
+        }
+    return None
+
+
 def is_configured() -> bool:
-    return bool(DB_HOST and DB_DATABASE and DB_USER)
+    """Does the CURRENT TENANT have a database? Not: does this server have one."""
+    try:
+        return settings() is not None
+    except Exception:  # noqa: BLE001 - a broken control plane is not a database
+        return False
 
 
 def _connect(statement_timeout_ms: int | None = None):
-    if not is_configured():
+    where = settings()
+    if where is None:
+        if current_tenant() == config.BOOTSTRAP_TENANT:
+            # The operator's own install. Name the setting, because they can fix it.
+            raise DatabaseError(
+                "No database is configured. Set DB_HOST, DB_DATABASE, DB_USER and "
+                "DB_PASSWORD in .env, then restart the app."
+            )
+        # A customer. Naming this machine's .env would be both useless to them
+        # and a detail of somebody else's server.
         raise DatabaseError(
-            "No database is configured. Set DB_HOST, DB_DATABASE, DB_USER and "
-            "DB_PASSWORD in .env, then restart the app."
+            "No database is configured for this account. Nothing was read, and no "
+            "other account's database was used instead. If this account should "
+            "have one, it has to be set up for this account specifically."
         )
     try:
         import psycopg
@@ -153,17 +206,25 @@ def _connect(statement_timeout_ms: int | None = None):
         f"-c statement_timeout={statement_timeout_ms or DB_STATEMENT_TIMEOUT_MS} "
         f"-c idle_in_transaction_session_timeout=30000"
     )
+    password = where.get("password") or ""
     try:
+        # A fresh connection per call, deliberately. A pooled one would have to
+        # be keyed by tenant, and a pool key that is wrong once is one customer
+        # running queries on another customer's database.
         return psycopg.connect(
-            host=DB_HOST, port=DB_PORT, dbname=DB_DATABASE,
-            user=DB_USER, password=DB_PASSWORD, sslmode=DB_SSLMODE,
+            host=where["host"], port=where["port"], dbname=where["dbname"],
+            user=where["username"], password=password,
+            sslmode=where.get("sslmode") or "require",
             connect_timeout=DB_CONNECT_TIMEOUT, options=options,
             application_name="syslab-server",
         )
     except Exception as exc:  # noqa: BLE001
         # Never let a connection string with a password reach a log or the model.
-        message = str(exc).replace(DB_PASSWORD or "\0", "***") if DB_PASSWORD else str(exc)
-        raise DatabaseError(f"Could not connect to {DB_HOST}:{DB_PORT}/{DB_DATABASE}: {message}") from exc
+        message = str(exc).replace(password, "***") if password else str(exc)
+        raise DatabaseError(
+            f"Could not connect to {where['host']}:{where['port']}/{where['dbname']}: "
+            f"{message}"
+        ) from exc
 
 
 def _explain(exc: Exception, statement: str, exporting: bool = False) -> str:
@@ -313,7 +374,7 @@ def list_tables() -> dict:
         entry["query_as"] = _quoted(entry["schema_name"], entry["table_name"])
         tables.append(entry)
     return {
-        "database": DB_DATABASE,
+        "database": _dbname(),
         "count": len(tables),
         "tables": tables,
         "note": "Write the table into your SQL exactly as query_as gives it, "
@@ -697,7 +758,7 @@ def table_hint(name: str) -> str | None:
     if not match:
         return None
     return (
-        f"{stem!r} is not a file -- it is a TABLE in the {DB_DATABASE} database, "
+        f"{stem!r} is not a file -- it is a TABLE in the {_dbname()} database, "
         f"written in SQL as {match}. Tables and files are two separate places "
         "and no file tool can reach a table. To put this table into a "
         f"spreadsheet call query_to_excel with sql='SELECT * FROM {match}'. "

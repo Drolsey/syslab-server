@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from app import db
+from tests.conftest import TEST_TENANT
+
+from app import config, context, db
 
 
 # --- things that must be allowed ------------------------------------------
@@ -89,22 +91,53 @@ def test_the_error_says_what_would_have_worked():
 
 # --- configuration --------------------------------------------------------
 
-def test_the_tools_report_clearly_when_no_database_is_configured(monkeypatch):
-    monkeypatch.setattr(db, "DB_HOST", "")
-    monkeypatch.setattr(db, "DB_DATABASE", "")
-    monkeypatch.setattr(db, "DB_USER", "")
+def test_the_operator_is_told_which_setting_to_fill_in(tenant_storage, monkeypatch):
+    monkeypatch.setattr(db, "settings", lambda: None)
+    monkeypatch.setattr(config, "BOOTSTRAP_TENANT", TEST_TENANT)
     assert db.is_configured() is False
     with pytest.raises(db.DatabaseError, match="DB_HOST"):
         db.run_sql("SELECT 1")
 
 
-def test_the_password_never_appears_in_a_connection_error(monkeypatch):
+def test_a_customer_is_not_told_about_this_machines_env_file(tenant_storage, monkeypatch):
+    """The same condition, a different audience.
+
+    The operator can act on "set DB_HOST in .env". To a customer it is useless
+    and it is a detail of somebody else's server. What both need to know is that
+    nothing was read and no other account's database was used instead.
+    """
+    monkeypatch.setattr(db, "settings", lambda: None)
+    monkeypatch.setattr(config, "BOOTSTRAP_TENANT", "somebody-else")
+    with pytest.raises(db.DatabaseError) as caught:
+        db.run_sql("SELECT 1")
+    message = str(caught.value)
+    assert "DB_HOST" not in message and ".env" not in message
+    assert "no other account" in message
+
+
+def test_a_tenant_without_a_database_never_borrows_anothers(monkeypatch):
+    """settings() returns None rather than falling back, and None is not a
+    licence to use somebody else's connection."""
+    monkeypatch.setattr(config, "BOOTSTRAP_TENANT", "the-operator")
+    monkeypatch.setattr(config, "DB_HOST", "10.0.0.1")
+    monkeypatch.setattr(config, "DB_DATABASE", "operator_db")
+    monkeypatch.setattr(config, "DB_USER", "operator")
+    monkeypatch.setattr(config, "DB_PASSWORD", "operator-secret")
+
+    with context.use_tenant("the-operator"):
+        assert db.settings()["dbname"] == "operator_db"
+
+    with context.use_tenant("a-customer"):
+        assert db.settings() is None
+
+
+def test_the_password_never_appears_in_a_connection_error(tenant_storage, monkeypatch):
     """An error message goes to the model, the browser and the log."""
     secret = "hunter2-do-not-leak"
-    monkeypatch.setattr(db, "DB_HOST", "203.0.113.1")
-    monkeypatch.setattr(db, "DB_DATABASE", "nope")
-    monkeypatch.setattr(db, "DB_USER", "nobody")
-    monkeypatch.setattr(db, "DB_PASSWORD", secret)
+    monkeypatch.setattr(db, "settings", lambda: {
+        "host": "203.0.113.1", "port": 5432, "dbname": "nope",
+        "username": "nobody", "password": secret, "sslmode": "require",
+    })
     monkeypatch.setattr(db, "DB_CONNECT_TIMEOUT", 1)
 
     class Boom(Exception):
