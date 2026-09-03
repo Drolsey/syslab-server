@@ -385,10 +385,16 @@ Two things it found while being written, both worth keeping:
 - A symlink inside a tenant's folder DOES appear in that tenant's listing, because `list_files`
   reads the directory. It cannot be opened. Names are not content, and the check that matters is
   the read, so the gate now asserts both halves.
-- Hard deletion of a tenant is NOT built and this plan promised it. `set_disabled` is a soft
-  delete: the tokens stop working instantly and nothing on disk is touched. Removing a tenant's
-  folder, index and rows is a destructive operation that deserves its own dry-run-first design,
-  the way the migration got one. It is the first thing after Step 1.
+- Hard deletion of a tenant was NOT built when this section was first written, and the plan had
+  promised it. **NOW BUILT**, and it is the one place this plan's list of seven refusals is now
+  fully covered. `tenancy.delete_tenant` removes rows and refuses an ACTIVE tenant: disabling
+  first is a deliberate two-step, because the first act is instant and reversible and the second
+  is neither, and the moment you decide is rarely the moment you should act. `scripts/tenant.py
+  delete` adds the rest: a dry run by default, `--confirm` that must repeat the id, a refusal to
+  delete the bootstrap tenant at all (it holds this install's own documents), a refusal while the
+  service is listening, and documents MOVED to `data/_removed/<id>-<stamp>/` rather than
+  destroyed unless `--purge-files` is given. Deciding what happens to a customer's documents is a
+  separate judgement from removing their access, so the two are separate operations.
 
 This is the gate for Step 1 as a whole, and the reason the step exists.
 `scripts/check_isolation.py`, two tenants, every one of these must hold:

@@ -17,13 +17,16 @@ If it is lost, revoke it and issue another.
 from __future__ import annotations
 
 import argparse
+import shutil
+import socket
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import tenancy  # noqa: E402
-from app.config import CONTROL_PATH  # noqa: E402
+from app.config import BOOTSTRAP_TENANT, CONTROL_PATH, DATA_ROOT, INDEX_ROOT  # noqa: E402
 
 LINE = "-" * 62
 
@@ -135,6 +138,111 @@ def cmd_token_revoke(args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# deleting, which is the one thing here that cannot be undone
+# --------------------------------------------------------------------------
+
+REMOVED = "_removed"
+
+
+def _app_is_running() -> bool:
+    from app.config import APP_PORT
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(1.0)
+        return probe.connect_ex(("127.0.0.1", APP_PORT)) == 0
+
+
+def _count_files(folder: Path) -> tuple[int, int]:
+    if not folder.exists():
+        return 0, 0
+    files = [p for p in folder.rglob("*") if p.is_file()]
+    return len(files), sum(p.stat().st_size for p in files)
+
+
+def cmd_delete(args) -> int:
+    tenant = tenancy.get_tenant(args.id)
+    if tenant is None:
+        print(f"\n  No tenant with id {args.id!r}.\n")
+        return 1
+
+    folder = DATA_ROOT / tenant["id"]
+    index = INDEX_ROOT / f"{tenant['id']}.sqlite3"
+    count, size = _count_files(folder)
+    tokens = tenancy.list_tokens(tenant["id"])
+
+    print(f"\n  Tenant   {tenant['id']}  ({tenant['name']})")
+    print(f"  State    {'ACTIVE' if tenant['active'] else 'disabled ' + _short(tenant['disabled_at'])}")
+    print(f"  Files    {count} file(s), {size / 1048576:.1f} MB in {folder}")
+    print(f"  Index    {'present' if index.exists() else 'absent'}  {index}")
+    print(f"  Tokens   {len(tokens)}")
+
+    if not args.apply:
+        print("\n  This is a dry run. Nothing has changed.")
+        print("  To do it:")
+        print(f"    py scripts\\tenant.py delete {tenant['id']} --apply --confirm {tenant['id']}")
+        print("  The files are MOVED aside by default, not destroyed. Add --purge-files")
+        print("  to remove them for good.\n")
+        return 0
+
+    # ---- the refusals ----------------------------------------------------
+    if args.confirm != tenant["id"]:
+        print(f"\n  REFUSING: --confirm must repeat the tenant id exactly. Naming it "
+              f"twice is the point; deleting the wrong customer is not a mistake "
+              f"worth being efficient about.\n")
+        return 1
+
+    if tenant["id"] == BOOTSTRAP_TENANT:
+        print(f"\n  REFUSING: {tenant['id']!r} is the bootstrap tenant, which holds this")
+        print("  install's own documents and is what your .env APP_TOKEN signs in as.")
+        print("  Deleting it would empty your own assistant. If you genuinely mean to,")
+        print("  point BOOTSTRAP_TENANT in .env at something else first.\n")
+        return 1
+
+    if tenant["active"]:
+        print("\n  REFUSING: this tenant is still active. Disable it first, check that")
+        print("  nothing broke, then delete it:")
+        print(f"    py scripts\\tenant.py disable {tenant['id']}")
+        print("  Two steps on purpose: the first can be undone and this one cannot.\n")
+        return 1
+
+    if _app_is_running():
+        print("\n  REFUSING: something is listening on the app's port, so the service is")
+        print("  probably running and may hold a file open. Stop it first:")
+        print("    powershell -ExecutionPolicy Bypass -File "
+              "scripts\\service\\control_windows.ps1 -Action stop\n")
+        return 1
+
+    # ---- do it -----------------------------------------------------------
+    print("\n  Removing")
+    print("  " + LINE)
+
+    removed = tenancy.delete_tenant(tenant["id"])
+    print(f"  control plane: {removed['tokens']} token(s), {removed['users']} user(s), "
+          f"{removed['tenant_database']} database row(s), and the tenant itself")
+
+    if index.exists():
+        index.unlink()
+        print(f"  index:         deleted {index.name} (derived, rebuildable)")
+
+    if not folder.exists():
+        print("  files:         none on disk")
+    elif args.purge_files:
+        shutil.rmtree(folder)
+        print(f"  files:         DELETED {count} file(s) permanently")
+    else:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        destination = DATA_ROOT / REMOVED / f"{tenant['id']}-{stamp}"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(folder), str(destination))
+        print(f"  files:         moved {count} file(s) to {destination}")
+        print("                 access is gone; the documents are not. Delete that")
+        print("                 folder by hand when you are sure.")
+
+    print("\n  Done. The tenant cannot sign in, and nothing of theirs is reachable")
+    print("  through the app.\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage syslab tenants and their tokens.")
     subs = parser.add_subparsers(dest="command", required=True)
@@ -163,6 +271,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("enable", help="undo disable")
     p.add_argument("id")
     p.set_defaults(func=cmd_enable)
+
+    p = subs.add_parser("delete", help="remove a disabled tenant for good")
+    p.add_argument("id")
+    p.add_argument("--apply", action="store_true", help="actually do it")
+    p.add_argument("--confirm", default="", help="repeat the tenant id to confirm")
+    p.add_argument("--purge-files", action="store_true",
+                   help="delete the documents too, instead of moving them aside")
+    p.set_defaults(func=cmd_delete)
 
     token = subs.add_parser("token", help="issue, list and revoke tokens")
     token_subs = token.add_subparsers(dest="token_command", required=True)

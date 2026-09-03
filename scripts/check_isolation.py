@@ -349,6 +349,45 @@ def run(root: Path) -> int:
               "the token stops working; nothing on disk is touched",
           ))
 
+    # ---- 9. removing one ------------------------------------------------
+    section("9. Removing a tenant")
+    check("An active tenant cannot be deleted",
+          lambda: (
+              refused(lambda: tenancy.delete_tenant(A, connection=connection),
+                      tenancy.TenancyError),
+              "disable first is a deliberate two-step: one is reversible, this is not",
+          ))
+
+    removed = step("Delete the disabled tenant",
+                   lambda: tenancy.delete_tenant(B, connection=connection))
+    if removed is None:
+        for name in ("Deleting one tenant takes its access with it",
+                     "Deleting one tenant leaves the other entirely alone"):
+            skip(name, "the delete did not complete")
+    else:
+        record("Delete the disabled tenant", PASSED,
+               f"{removed['tokens']} token(s) and the tenant row")
+        check("Deleting one tenant takes its access with it",
+              lambda: (
+                  tenancy.get_tenant(B, connection=connection) is None
+                  and tenancy.resolve_token(b_token, connection=connection) is None,
+                  "no tenant, no token",
+              ))
+        check("Deleting one tenant leaves the other entirely alone",
+              lambda: (
+                  tenancy.get_tenant(A, connection=connection) is not None
+                  and tenancy.resolve_token(a_token, connection=connection) is not None
+                  and (config.DATA_ROOT / A / "alpha_only.pdf").is_file()
+                  and (config.INDEX_ROOT / f"{A}.sqlite3").exists(),
+                  "Alpha's rows, token, files and index are all still there",
+              ))
+        check("The deleted tenant's documents are still on disk",
+              lambda: (
+                  (config.DATA_ROOT / B / "shared.pdf").is_file(),
+                  "delete_tenant removes ROWS. What happens to a customer's documents "
+                  "is a separate judgement, made by scripts/tenant.py",
+              ))
+
     try:
         connection.close()
     except Exception:  # noqa: BLE001

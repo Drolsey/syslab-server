@@ -305,6 +305,53 @@ def set_disabled(tenant_id: str, disabled: bool,
             conn.close()
 
 
+def delete_tenant(tenant_id: str, connection: sqlite3.Connection | None = None) -> dict:
+    """Remove a tenant and everything the control plane knows about it.
+
+    REFUSES AN ACTIVE TENANT. Disabling first is a deliberate two step: the
+    first is instant and reversible and takes access away immediately, the
+    second is not reversible at all. Making one act do both would mean the
+    moment you decide is the moment it is gone, and those are rarely the same
+    moment.
+
+    This removes ROWS. It does not touch the tenant's folder or index file:
+    deciding what happens to a customer's documents is a separate judgement,
+    made by scripts/tenant.py, which moves them aside by default rather than
+    destroying them.
+    """
+    conn, owned = _with(connection)
+    try:
+        tenant = get_tenant(tenant_id, connection=conn)
+        if tenant is None:
+            raise TenancyError(f"No tenant with id {tenant_id!r}.")
+        if tenant["active"]:
+            raise TenancyError(
+                f"Tenant {tenant_id!r} is still active. Disable it first, check that "
+                "nothing broke, then delete it. Two steps on purpose: the first one "
+                "can be undone and this one cannot."
+            )
+
+        counts = {}
+        for table in ("tokens", "users", "tenant_database"):
+            cursor = conn.execute(f"DELETE FROM {table} WHERE tenant_id = ?", (tenant_id,))
+            counts[table] = cursor.rowcount
+        conn.execute("DELETE FROM tenants WHERE id = ?", (tenant_id,))
+        conn.commit()
+
+        left = conn.execute(
+            "SELECT count(*) AS n FROM tokens WHERE tenant_id = ?", (tenant_id,)
+        ).fetchone()["n"]
+        if left:
+            raise TenancyError(
+                f"{left} token(s) for {tenant_id!r} survived the delete. Refusing to "
+                "report success."
+            )
+        return {"tenant": tenant_id, "name": tenant["name"], **counts}
+    finally:
+        if owned:
+            conn.close()
+
+
 # --------------------------------------------------------------------------
 # tokens
 # --------------------------------------------------------------------------
