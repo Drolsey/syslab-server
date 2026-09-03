@@ -34,6 +34,13 @@ TASKS = ["syslab-ollama", "syslab-server"]
 _active_token: str = APP_TOKEN or ""
 
 results: list[tuple[str, bool, str]] = []
+
+# Findings that are real and worth shouting about, but are NOT this gate's
+# subject. Phase 05 asks one question: does the service come back on its own?
+# A stale variable in the shell you happen to be typing in does not change the
+# answer, and counting it as a gate failure told Amro he had not passed when he
+# had. Warnings print loudly and are excluded from the verdict.
+warnings: list[tuple[str, str]] = []
 app_started_at: datetime | None = None
 app_answered = False
 app_code_is_current: bool | None = None
@@ -77,6 +84,12 @@ def section(title: str) -> None:
 def record(name: str, ok: bool, detail: str) -> None:
     results.append((name, ok, detail))
     print(f"  {'PASS' if ok else 'FAIL'}  {name}{'  ' + detail if detail else ''}")
+
+
+def warn(name: str, detail: str) -> None:
+    """A real finding that is not about the thing this gate measures."""
+    warnings.append((name, detail))
+    print(f"  WARN  {name}{'  ' + detail if detail else ''}")
 
 
 def get(url: str, timeout: int = 10):
@@ -216,9 +229,9 @@ def check_app() -> None:
                        "it is up but refused the token this check sent; the cause is "
                        "named above")
                 return
-            record("Token this check sent", False,
-                   "an environment variable shadowed .env; the app itself accepted "
-                   "the file's token")
+            warn("Token this check sent",
+                 "an environment variable shadowed .env; the app itself accepted "
+                 "the file's token, so this is your shell, not the service")
         elif exc.code == 503:
             record("App is answering", False,
                    "it is up but APP_TOKEN is not set. Run: py scripts\\new_token.py")
@@ -332,7 +345,13 @@ def main() -> int:
     passed = sum(1 for _, ok, _ in results if ok)
     for name, ok, detail in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    for name, detail in warnings:
+        print(f"  WARN  {name}")
     print(f"\n  {passed} of {len(results)} checks passed")
+    if warnings:
+        print(f"  {len(warnings)} warning(s), none of them about the service itself:")
+        for name, detail in warnings:
+            print(f"    - {name}: {detail}")
 
     # Worth answering even if something else failed: knowing whether it started
     # itself is the actual point of this phase.
