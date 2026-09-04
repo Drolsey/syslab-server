@@ -1,6 +1,10 @@
 # Step 2: The Ingestion Contract
 
-Status: PLANNED, NOT STARTED. Needs Amro's sign-off on the five decisions in section 4.
+Status: SHELVED, 4 September 2026, superseded by pivot-inference-provider.md.
+
+Not wrong, and not deleted. It plans a document pipeline, and the product moved to being an
+inference provider for database-agent, which never sees a document. If syslab-server ever
+carries documents again, start here rather than from scratch.
 Written 3 September 2026, after Step 1 completed.
 
 ---

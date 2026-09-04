@@ -1,0 +1,735 @@
+{
+  "_about": "Input data for scripts/build_hardware_report.py. Every figure carries a source and a date. Nothing in the report is typed twice; change a value here and re-run the generator. Confidence: 'tracked' = a named seller's listed price, 'range' = a spread across reputable UAE sellers, 'estimated' = derived or interpolated by the author, 'measured' = measured on a test machine.",
+  "compiled": "2026-09-04",
+  "prepared_for": "Amro - syslab-server project",
+  "locale": {
+    "city": "Dubai, UAE",
+    "currency": "AED",
+    "aed_per_usd": 3.6725,
+    "note": "All prices are AED as listed by UAE sellers, VAT-inclusive. USD appears only where the vendor bills in USD - token APIs and international GPU rental - converted at the 3.6725 peg."
+  },
+  "market_context": {
+    "headline": "A DRAM and GDDR shortage driven by AI datacentre buildout is the governing condition on every price in this report.",
+    "dram_share_of_supply": {
+      "value": "~20% of global DRAM capacity absorbed by AI",
+      "source_url": "https://tech-insider.org/gpu-prices-2026/",
+      "as_of": "2026",
+      "confidence": "range"
+    },
+    "relief_timeline": {
+      "value": "No meaningful relief forecast before 2028 (Micron HBM capacity)",
+      "source_url": "https://tech-insider.org/gpu-prices-2026/",
+      "as_of": "2026",
+      "confidence": "range"
+    },
+    "supply_cuts": {
+      "value": "NVIDIA reportedly considering 30-40% output cuts on mid-range parts to prioritise higher-margin AI silicon",
+      "source_url": "https://www.astutegroup.com/news/general/gpu-pricing-set-for-reset-as-ai-driven-memory-shortages-push-costs-sharply-higher/",
+      "as_of": "2026",
+      "confidence": "range"
+    },
+    "global_street": {
+      "value": "RTX 5090 street pricing USD 4,300-5,000 against a USD 1,999 MSRP; RTX PRO 6000 listed at USD 16,000, up from USD 8,565 at launch",
+      "source_url": "https://www.tomshardware.com/pc-components/gpus/nvidia-doubles-rtx-pro-6000-blackwells-msrp-to-a-staggering-usd16-000-96gb-card-started-pre-orders-below-usd8-000-last-year",
+      "as_of": "2026-08",
+      "confidence": "tracked"
+    },
+    "uae_markup": {
+      "value": "UAE retail on an RTX 5090 Founders Edition runs above AED 12,000 against a USD 1,999 (~AED 7,340) MSRP",
+      "source_url": "https://www.comgateway.com/blogs/is-an-rtx-5090-founders-edition-worth-aed-12-000-when-the-us-msrp-is-1-999/",
+      "as_of": "2026",
+      "confidence": "tracked"
+    },
+    "uae_used_market": {
+      "value": "Dubizzle UAE lists roughly 290 used graphics cards nationally, with a further 91 in Abu Dhabi - a real market, not a handful of listings",
+      "source_url": "https://uae.dubizzle.com/classified/computers-networking/computer-components/graphics-video-cards/",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    }
+  },
+  "gpus": {
+    "rtx_3090_used": {
+      "label": "RTX 3090 24 GB, used",
+      "vram_gb": 24,
+      "bandwidth_gbs": 936,
+      "tdp_w": 350,
+      "price_aed": 2400,
+      "price_range": [
+        2000,
+        2900
+      ],
+      "cuda": true,
+      "ecc": false,
+      "condition": "used",
+      "seller": "Dubizzle",
+      "source_url": "https://uae.dubizzle.com/classified/computers-networking/computer-components/graphics-video-cards/",
+      "as_of": "2026-09",
+      "confidence": "range",
+      "note": "Listings seen at AED 2,000 (PNY XLR8) and AED 2,300 (GamingPro). The single AED 9,900 listing is a stale outlier and is excluded."
+    },
+    "rtx_4090_used": {
+      "label": "RTX 4090 24 GB, used or renewed",
+      "vram_gb": 24,
+      "bandwidth_gbs": 1008,
+      "tdp_w": 450,
+      "price_aed": 9500,
+      "price_range": [
+        8300,
+        12000
+      ],
+      "cuda": true,
+      "ecc": false,
+      "condition": "used",
+      "seller": "Microless",
+      "source_url": "https://uae.microless.com/graphic_cards/rtx-4090/326/l/",
+      "as_of": "2026-09",
+      "confidence": "range",
+      "note": "AED 8,300 for a sealed ROG Strix on Dubizzle; AED 11,999 for a Gigabyte Gaming OC renewed with warranty at retail. The planning figure sits between the two."
+    },
+    "rtx_5080": {
+      "label": "RTX 5080 16 GB, new",
+      "vram_gb": 16,
+      "bandwidth_gbs": 960,
+      "tdp_w": 360,
+      "price_aed": 5575,
+      "price_range": [
+        5480,
+        10055
+      ],
+      "cuda": true,
+      "ecc": false,
+      "condition": "new",
+      "seller": "Amazon.ae",
+      "source_url": "https://www.amazon.ae/PNY-GeForce-RTXTM-Triple-Graphics/dp/B0DTJDR3V9",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    },
+    "rtx_5090": {
+      "label": "RTX 5090 32 GB, new",
+      "vram_gb": 32,
+      "bandwidth_gbs": 1792,
+      "tdp_w": 575,
+      "price_aed": 15000,
+      "price_range": [
+        13839,
+        22000
+      ],
+      "cuda": true,
+      "ecc": false,
+      "condition": "new",
+      "seller": "GCC Gamers",
+      "source_url": "https://gccgamers.com/computer-parts-compnents/graphic-cards/rtx-5090.html",
+      "as_of": "2026-09",
+      "confidence": "range",
+      "note": "AED 13,839 (Gigabyte AORUS special) to AED 22,000 (Founders Edition). ASUS TUF at AED 16,500 is the typical shelf price."
+    },
+    "rtx_pro_5000": {
+      "label": "RTX PRO 5000 Blackwell 48 GB ECC, new",
+      "vram_gb": 48,
+      "bandwidth_gbs": 1344,
+      "tdp_w": 300,
+      "price_aed": 17500,
+      "price_range": [
+        15500,
+        20800
+      ],
+      "cuda": true,
+      "ecc": true,
+      "condition": "new",
+      "seller": "GCC Gamers",
+      "source_url": "https://gccgamers.com/computer-parts-compnents/nvidia-rtx-pro-5000-blackwell-48gb-gddr7-ecc-graphics-card.html",
+      "as_of": "2026-09",
+      "confidence": "range",
+      "note": "Get a written quote. Promise Gulf's own product page says AED 15,500 while its price-list page says AED 31,943 for the same card."
+    },
+    "rtx_pro_6000": {
+      "label": "RTX PRO 6000 Blackwell 96 GB ECC, new",
+      "vram_gb": 96,
+      "bandwidth_gbs": 1792,
+      "tdp_w": 600,
+      "price_aed": 52000,
+      "price_range": [
+        48825,
+        77032
+      ],
+      "cuda": true,
+      "ecc": true,
+      "condition": "new",
+      "seller": "GCC Gamers",
+      "source_url": "https://gccgamers.com/top-selling-products/pny-nvidia-rtx-pro-6000-96gb-blackwell-workstation-edition-oem-graphics-card-dlss-4.html",
+      "as_of": "2026-09",
+      "confidence": "range",
+      "note": "Adarc AED 48,825, GCC Gamers AED 52,000, Microless AED 58,275, Promise Gulf AED 67,000, Amazon.ae AED 77,032. A 58% spread on one part number."
+    }
+  },
+  "platform_parts": {
+    "cpu_am5": {
+      "label": "AMD Ryzen 9 9950X (16C, AM5)",
+      "price_aed": 2200,
+      "price_range": [
+        1890,
+        2350
+      ],
+      "seller": "GCC Gamers",
+      "source_url": "https://gccgamers.com/computer-parts-compnents/amd-ryzen-9-9950x-16-cores-32-threads-desktop-processor-100-100001277wof.html",
+      "as_of": "2026-09",
+      "confidence": "range"
+    },
+    "cpu_trx": {
+      "label": "AMD Ryzen Threadripper 7960X (24C, sTR5, 88 lanes)",
+      "price_aed": 6150,
+      "seller": "GCC Gamers",
+      "source_url": "https://gccgamers.com/computer-parts-compnents/amd-ryzen-threadripper-7960x-24cores-48threads-4-2-ghz-processor-100-100001352wof.html",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    },
+    "board_am5": {
+      "label": "X870E ATX, dual x16 slots (x8/x8)",
+      "price_aed": 1900,
+      "seller": "Microless",
+      "source_url": "https://uae.microless.com/motherboards/am5/340/l/",
+      "as_of": "2026-09",
+      "confidence": "range",
+      "note": "GIGABYTE X870 class at AED 1,935; entry AM5 boards start near AED 800 but lack the second x16 slot."
+    },
+    "board_trx50": {
+      "label": "Gigabyte TRX50 AERO D, sTR5, 4x x16",
+      "price_aed": 2600,
+      "confidence": "estimated",
+      "note": "USD 595 at Microless Global plus local margin. Confirm with a UAE quote; sTR5 boards are a special-order item here."
+    },
+    "ram_64gb": {
+      "label": "64 GB DDR5 (2x32)",
+      "price_aed": 2400,
+      "price_range": [
+        1924,
+        4241
+      ],
+      "seller": "CostToCost",
+      "source_url": "https://costtocost.ae/ram-memory/",
+      "as_of": "2026-09",
+      "confidence": "range",
+      "note": "Kingston Fury Beast RGB 64 GB at AED 1,924 (CostToCost) to AED 4,241 (Microless). Notably cheaper than the global street price for the same shortage."
+    },
+    "ram_128gb": {
+      "label": "128 GB DDR5 RDIMM (TRX50, quad channel)",
+      "price_aed": 6000,
+      "confidence": "estimated",
+      "note": "Interpolated from the tracked 64 GB figure with an RDIMM premium. The least certain line in this report - price it before committing to any TRX50 build."
+    },
+    "ssd_2tb": {
+      "label": "2 TB NVMe Gen4",
+      "price_aed": 1070,
+      "seller": "Microless",
+      "source_url": "https://uae.microless.com/ssd/m-2/329/l/",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    },
+    "ssd_4tb": {
+      "label": "4 TB NVMe Gen4",
+      "price_aed": 2020,
+      "seller": "Microless",
+      "source_url": "https://uae.microless.com/ssd/m-2/329/l/",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    },
+    "psu_850": {
+      "label": "850 W 80+ Gold",
+      "price_aed": 450,
+      "confidence": "estimated"
+    },
+    "psu_1200": {
+      "label": "1200 W 80+ Gold/Platinum",
+      "price_aed": 899,
+      "seller": "Alershad",
+      "source_url": "https://www.alershadonline.com/collections/1200w-1650w-power-supplies",
+      "as_of": "2026-09",
+      "confidence": "tracked",
+      "note": "Thermaltake Toughpower GT 1200 W listed as low as AED 459."
+    },
+    "psu_1600": {
+      "label": "1600 W 80+ Titanium",
+      "price_aed": 1819,
+      "seller": "Alershad",
+      "source_url": "https://www.alershadonline.com/collections/1200w-1650w-power-supplies",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    },
+    "case": {
+      "label": "Full-tower case + fans",
+      "price_aed": 500,
+      "confidence": "estimated"
+    },
+    "cooler_aio": {
+      "label": "360 mm AIO",
+      "price_aed": 550,
+      "confidence": "estimated"
+    },
+    "cooler_tr": {
+      "label": "sTR5 air cooler",
+      "price_aed": 500,
+      "confidence": "estimated"
+    },
+    "risers": {
+      "label": "PCIe 4.0 risers + GPU mounts",
+      "price_aed": 650,
+      "confidence": "estimated"
+    },
+    "ups_1500": {
+      "label": "1500 VA line-interactive UPS",
+      "price_aed": 1100,
+      "confidence": "estimated"
+    }
+  },
+  "local_purchase": {
+    "uae_vat_pct": 5.0,
+    "customs_duty_pct": 0.0,
+    "local_delivery_aed": 150,
+    "source_url": "https://www.cleartax.com/ae/vat-charges-on-electronics-in-dubai",
+    "as_of": "2026",
+    "confidence": "tracked",
+    "note": "Buying from a UAE seller means the 5% customs duty on CIF has already been paid by the importer and is inside the shelf price. The buyer pays 5% VAT, which is shown separately on the tax invoice and is recoverable by a VAT-registered business. There is no international freight and no Mirsal 2 clearance to arrange."
+  },
+  "rental": {
+    "global": [
+      {
+        "gpu": "RTX PRO 5000 48 GB",
+        "usd_hr": 0.64,
+        "provider": "RunPod / Vast.ai",
+        "source_url": "https://getdeploying.com/gpus/nvidia-rtx-pro-5000",
+        "as_of": "2026-09",
+        "confidence": "tracked"
+      },
+      {
+        "gpu": "RTX 5090 32 GB",
+        "usd_hr": 0.33,
+        "provider": "Vast.ai (cheapest verified in stock)",
+        "source_url": "https://getdeploying.com/gpus/nvidia-rtx-5090",
+        "as_of": "2026-09-02",
+        "confidence": "tracked"
+      },
+      {
+        "gpu": "RTX PRO 6000 96 GB",
+        "usd_hr": 2.2,
+        "provider": "33-provider median",
+        "source_url": "https://getdeploying.com/gpus/nvidia-rtx-pro-6000",
+        "as_of": "2026-09-03",
+        "confidence": "tracked"
+      },
+      {
+        "gpu": "A100 80 GB",
+        "usd_hr": 0.56,
+        "provider": "Vast.ai",
+        "source_url": "https://getdeploying.com/gpus/nvidia-a100",
+        "as_of": "2026-09-03",
+        "confidence": "tracked"
+      },
+      {
+        "gpu": "H100 80 GB",
+        "usd_hr": 1.49,
+        "provider": "Vast.ai marketplace",
+        "source_url": "https://intuitionlabs.ai/articles/h100-rental-prices-cloud-comparison",
+        "as_of": "2026",
+        "confidence": "tracked"
+      }
+    ],
+    "in_region": [
+      {
+        "gpu": "H100 80 GB",
+        "usd_hr": 2.48,
+        "provider": "GPU.ai (UAE-based)",
+        "source_url": "https://www.spheron.network/blog/gpu-cloud-middle-east-2026/",
+        "as_of": "2026",
+        "confidence": "tracked"
+      },
+      {
+        "gpu": "H100 80 GB bare metal",
+        "usd_hr": 2.94,
+        "provider": "Edgevana, UAE",
+        "source_url": "https://nodes.edgevana.com/gpu-servers/h100/uae",
+        "as_of": "2026",
+        "confidence": "tracked"
+      },
+      {
+        "gpu": "H100 SXM",
+        "usd_hr": 12.3,
+        "provider": "AWS me-central-1 (UAE)",
+        "source_url": "https://www.spheron.network/blog/gpu-cloud-middle-east-2026/",
+        "as_of": "2026",
+        "confidence": "tracked"
+      },
+      {
+        "gpu": "H100 SXM",
+        "usd_hr": 14.0,
+        "provider": "Azure UAE North",
+        "source_url": "https://www.spheron.network/blog/gpu-cloud-middle-east-2026/",
+        "as_of": "2026",
+        "confidence": "tracked"
+      }
+    ],
+    "design_point_global_usd_hr": 0.64,
+    "design_point_in_region_usd_hr": 2.48,
+    "note": "There is no in-region rental of a 48 GB consumer-class card. The cheapest UAE-hosted option capable of the design point is a datacentre H100, which is why the in-region line is both over-specified and roughly four times the global price."
+  },
+  "api_prices_usd_per_mtok": [
+    {
+      "model": "Claude Opus 4.8",
+      "input": 5.0,
+      "output": 25.0,
+      "class": "frontier",
+      "source_url": "https://benchlm.ai/llm-pricing",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    },
+    {
+      "model": "GPT-5.6",
+      "input": 5.0,
+      "output": 30.0,
+      "class": "frontier",
+      "source_url": "https://benchlm.ai/llm-pricing",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    },
+    {
+      "model": "Claude Sonnet 5",
+      "input": 3.0,
+      "output": 15.0,
+      "class": "frontier",
+      "source_url": "https://benchlm.ai/llm-pricing",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    },
+    {
+      "model": "Gemini 3.1 Pro",
+      "input": 2.0,
+      "output": 12.0,
+      "class": "frontier",
+      "source_url": "https://benchlm.ai/llm-pricing",
+      "as_of": "2026-09",
+      "confidence": "tracked"
+    },
+    {
+      "model": "GLM-5.2 (DeepInfra)",
+      "input": 0.75,
+      "output": 2.4,
+      "class": "open-hosted",
+      "source_url": "https://www.morphllm.com/comparisons/together-vs-deepinfra",
+      "as_of": "2026",
+      "confidence": "tracked"
+    },
+    {
+      "model": "Qwen3.5-397B-A17B (Together)",
+      "input": 0.6,
+      "output": 3.6,
+      "class": "open-hosted",
+      "source_url": "https://www.morphllm.com/llm-api-pricing",
+      "as_of": "2026",
+      "confidence": "tracked",
+      "note": "USD 0.35/M cached input - relevant, because an agent loop re-sends its history every turn."
+    },
+    {
+      "model": "DeepSeek V4 Flash",
+      "input": 0.099,
+      "output": 0.4,
+      "class": "open-hosted",
+      "source_url": "https://www.spheron.network/blog/llm-api-pricing-comparison-gpt-claude-gemini-deepseek-2026/",
+      "as_of": "2026",
+      "confidence": "range",
+      "note": "Input price tracked; output price estimated from the class."
+    }
+  ],
+  "energy": {
+    "dewa_tiers_aed_per_kwh": [
+      0.23,
+      0.28,
+      0.32,
+      0.38
+    ],
+    "dewa_top_slab_aed_per_kwh": 0.38,
+    "fuel_surcharge_aed_per_kwh": 0.06,
+    "aed_per_kwh": 0.44,
+    "cooling_multiplier": 1.333,
+    "source_url": "https://utilitybilluae.com/business-electricity-tariffs-uae/",
+    "as_of": "2026-07",
+    "confidence": "tracked",
+    "note": "DEWA publishes the same progressive slabs for residential and commercial accounts: 0.230 AED/kWh to 2,000 kWh, then 0.280, 0.320 and 0.380 above 6,000 kWh, plus a 0.060 AED/kWh fuel surcharge. A server running continuously sits in the top slab, so 0.440 AED/kWh is the right marginal rate. Cooling adds about a third: a split unit moves roughly three watts of heat per watt it draws."
+  },
+  "measured_baseline": {
+    "_source": "bench_results.json, measured 2026-09-02 on a temporary RTX 3060 12 GB test machine. That machine is not part of any build in this report and is not counted as an asset; these numbers appear only to check the memory formula against real hardware.",
+    "gpu": "NVIDIA GeForce RTX 3060, 12288 MB (temporary test box)",
+    "system_ram_mb": 16269.9,
+    "models": [
+      {
+        "model": "qwen3:8b",
+        "quant": "Q4_K_M",
+        "params": "8.2B",
+        "layers": 36,
+        "kv_heads": 8,
+        "heads": 32,
+        "embedding": 4096,
+        "weights_vram_mb": 5167,
+        "points": [
+          {
+            "ctx": 2048,
+            "tps": 58.4,
+            "kv_mb": 9,
+            "peak_mb": 5801
+          },
+          {
+            "ctx": 8192,
+            "tps": 52.3,
+            "kv_mb": 986,
+            "peak_mb": 6778
+          },
+          {
+            "ctx": 16384,
+            "tps": 46.0,
+            "kv_mb": 2157,
+            "peak_mb": 7949
+          }
+        ]
+      },
+      {
+        "model": "qwen3:14b",
+        "quant": "Q4_K_M",
+        "params": "14.8B",
+        "layers": 40,
+        "kv_heads": 8,
+        "heads": 40,
+        "embedding": 5120,
+        "weights_vram_mb": 9006,
+        "points": [
+          {
+            "ctx": 2048,
+            "tps": 34.2,
+            "kv_mb": 14,
+            "peak_mb": 9651
+          },
+          {
+            "ctx": 8192,
+            "tps": 31.7,
+            "kv_mb": 982,
+            "peak_mb": 10619
+          },
+          {
+            "ctx": 16384,
+            "tps": 8.25,
+            "kv_mb": 1236,
+            "peak_mb": 10873
+          }
+        ]
+      }
+    ],
+    "caveat": "Every one of these numbers is a single request at a time on Ollama, which does not batch. They validate the memory model; they do not measure concurrency."
+  },
+  "serving": {
+    "vllm_vs_ollama_single": {
+      "vllm_tps": 197,
+      "ollama_tps": 178,
+      "model": "Q4_K_M on RTX 5090",
+      "source_url": "https://markaicode.com/benchmarks/rtx-5090-inference-benchmark/",
+      "as_of": "2026",
+      "confidence": "range"
+    },
+    "vllm_batched": {
+      "batch": 32,
+      "aggregate_tps": 850,
+      "concurrent_users": 30,
+      "per_user_tps": 25,
+      "model": "Llama 3 8B FP16 on RTX 5090",
+      "source_url": "https://gigagpu.com/vllm-on-rtx-5090-max-throughput/",
+      "as_of": "2026",
+      "confidence": "range"
+    },
+    "vllm_5090_vs_4090": {
+      "value": "+46% throughput at batch 32",
+      "source_url": "https://markaicode.com/benchmarks/rtx-5090-ai-benchmark/",
+      "as_of": "2026",
+      "confidence": "range"
+    },
+    "cold_start": {
+      "ollama_s": 2.1,
+      "vllm_s": 4.8,
+      "source_url": "https://markaicode.com/benchmarks/home-ai-server-benchmark/",
+      "as_of": "2026",
+      "confidence": "range"
+    },
+    "windows": {
+      "value": "vLLM has no native Windows support. The GPU host must run Linux; WSL2 works for development but adds a virtualised memory boundary under load.",
+      "source_url": "https://docs.vllm.ai/en/latest/getting_started/installation.html",
+      "as_of": "2026",
+      "confidence": "tracked"
+    }
+  },
+  "models": {
+    "agent": [
+      {
+        "name": "Qwen3-Coder-30B-A3B-Instruct",
+        "total_b": 30,
+        "active_b": 3,
+        "arch": "MoE",
+        "vram_int4_gb": 18,
+        "vram_fp8_gb": 32,
+        "licence": "Apache 2.0",
+        "tool_score": "92% BFCL",
+        "note": "The recommended agent. MoE means it reads about 3B of weights per token, so it decodes at the speed of a small model while reasoning like a large one - which is the whole game on a bandwidth-bound machine."
+      },
+      {
+        "name": "GLM-4.7-Flash",
+        "total_b": 31,
+        "active_b": null,
+        "arch": "dense/hybrid",
+        "vram_int4_gb": 17,
+        "vram_fp8_gb": 34,
+        "licence": "Apache 2.0",
+        "tool_score": "strong, reasoning + tool use",
+        "note": "68 GB at FP16, 34 GB at INT8, 17 GB at INT4. Listed among the strongest models that fit inside 32 GB."
+      },
+      {
+        "name": "Qwen3-32B",
+        "total_b": 32,
+        "active_b": 32,
+        "arch": "dense",
+        "vram_int4_gb": 16,
+        "vram_fp8_gb": 32,
+        "licence": "Apache 2.0",
+        "tool_score": "good",
+        "note": "Dense: every parameter is read per token, so it decodes roughly ten times slower than the 30B-A3B on the same card. Included as the counter-example that makes the MoE case."
+      },
+      {
+        "name": "Nemotron Nano 9B",
+        "total_b": 9,
+        "active_b": 9,
+        "arch": "dense",
+        "vram_int4_gb": 6,
+        "vram_fp8_gb": 10,
+        "licence": "NVIDIA Open Model",
+        "tool_score": "95% on a local tool-calling suite",
+        "note": "The fallback lane. Fits beside everything else and scores well on tool calling for its size."
+      },
+      {
+        "name": "qwen3:8b",
+        "total_b": 8.2,
+        "active_b": 8.2,
+        "arch": "dense",
+        "vram_int4_gb": 5,
+        "vram_fp8_gb": 9,
+        "licence": "Apache 2.0",
+        "tool_score": "adequate with the loop's guardrails",
+        "note": "What the project runs today on the test box. HANDOVER.md: 'We are near the edge of what an 8B holds.'"
+      }
+    ],
+    "vision": [
+      {
+        "name": "Qwen3-VL-8B",
+        "vram_gb": 9,
+        "licence": "Apache 2.0",
+        "note": "The practical single-GPU choice. Native-resolution vision encoder, strong document OCR and table extraction."
+      },
+      {
+        "name": "Qwen3-VL-30B-A3B",
+        "vram_gb": 18,
+        "licence": "Apache 2.0",
+        "note": "MoE vision model. Worth the slot only if invoice-field extraction becomes the product."
+      },
+      {
+        "name": "Qwen3-VL-4B",
+        "vram_gb": 3,
+        "licence": "Apache 2.0",
+        "note": "Fits anywhere. The right first VLM to ship."
+      },
+      {
+        "name": "GLM-4.5V",
+        "vram_gb": 24,
+        "licence": "commercial-friendly",
+        "note": "Thinking modes for deep document analysis; heavier than the workload warrants."
+      }
+    ],
+    "asr": [
+      {
+        "name": "Whisper Large V3 Turbo (809M)",
+        "vram_gb": 3,
+        "licence": "MIT",
+        "note": "Decoder pruned from 32 layers to 4; about 216x real time, WER 7.75% against 7.4% for full large-v3. Runs in 2-3 GB under faster-whisper rather than the 6 GB a naive load costs."
+      },
+      {
+        "name": "NVIDIA Parakeet TDT",
+        "vram_gb": 2,
+        "licence": "NVIDIA open",
+        "note": "2,728x RTFx - the fastest self-hostable option for batch throughput. English-first."
+      },
+      {
+        "name": "Voxtral Transcribe 2",
+        "vram_gb": 5,
+        "licence": "open",
+        "note": "5.9% average WER against Whisper's 7.4% - the accuracy leader if transcription quality becomes contractual."
+      }
+    ],
+    "tts": [
+      {
+        "name": "Kokoro-82M",
+        "vram_gb": 1,
+        "licence": "Apache 2.0",
+        "note": "Runs on CPU. At 82M parameters this is the cheapest slot in the stack and should not be given a GPU until measurement says otherwise."
+      },
+      {
+        "name": "Chatterbox",
+        "vram_gb": 5,
+        "licence": "open",
+        "note": "Better prosody, five times the memory. Only if voice quality is a selling point."
+      }
+    ],
+    "charts": [
+      {
+        "name": "matplotlib / reportlab",
+        "vram_gb": 0,
+        "licence": "BSD / BSD",
+        "note": "Graph generation is a CPU tool. It belongs in app/tools.py next to write_excel as an ordinary Python function, not as a model."
+      }
+    ]
+  },
+  "workload_model": {
+    "_about": "How 10-20 client organisations becomes a number of in-flight requests. Organisations are not concurrency, and the gap between the two is large enough to change which tier gets bought.",
+    "orgs_low": 10,
+    "orgs_design": 15,
+    "orgs_high": 20,
+    "active_users_per_org": 4,
+    "sessions_per_user_per_day": 12,
+    "turns_per_session": 4,
+    "prompt_tokens_per_turn": 6000,
+    "output_tokens_per_turn": 400,
+    "working_hours_per_day": 9,
+    "working_days_per_month": 22,
+    "peak_hour_share": 0.2,
+    "target_decode_tps_per_user": 25,
+    "context_per_session": 16384,
+    "notes": [
+      "6,000 prompt tokens per turn is high on purpose: app/agent.py re-sends the whole conversation plus every tool result each step, and TOOL_RESULT_BUDGET is 12,000 characters.",
+      "peak_hour_share of 0.20 means a fifth of the day's traffic lands in its busiest hour - a normal office shape, and deliberately pessimistic.",
+      "Prefix caching is modelled separately because vLLM's automatic prefix caching maps almost perfectly onto this agent loop's re-send behaviour."
+    ]
+  },
+  "assumptions": {
+    "amortisation_months": 36,
+    "ops_hours_per_month": 4,
+    "ops_rate_aed_per_hour": 185,
+    "duty_cycle_hours_per_day": [
+      8,
+      12,
+      24
+    ],
+    "used_card_failure_reserve_pct": 12,
+    "new_card_failure_reserve_pct": 3,
+    "kv_dtype_bytes_fp16": 2,
+    "kv_dtype_bytes_fp8": 1,
+    "vllm_gpu_memory_utilization": 0.9,
+    "activation_overhead_gb": 2.0,
+    "budget_ceiling_aed": 80000,
+    "notes": [
+      "36 months is the amortisation window a finance function will expect for compute hardware, and roughly how long a consumer card stays relevant for inference.",
+      "AED 185/hour is a mid-market UAE contract rate for a systems engineer. Operations is charged identically to owning and to renting.",
+      "The used-card failure reserve is a real line, not a hedge: there is no warranty on a Dubizzle purchase, so 12% of card cost is set aside per build.",
+      "vLLM does not give you the whole card. gpu_memory_utilization of 0.90 is the practical default."
+    ]
+  }
+}
