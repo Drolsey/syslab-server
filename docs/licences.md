@@ -1,0 +1,171 @@
+# Licences
+
+What this project depends on, under what terms, and whether those terms allow a commercial
+product to be built on it and hosted for other people.
+
+**How to use this file.** Every row carries either the date its licence was read from a
+primary source and the source itself, or the word `unverified`. A primary source is the
+project's own repository, documentation, model card or terms page. It is not a blog post, a
+search result, or a summary written by someone else, including one written by an assistant.
+
+`unverified` does not mean wrong. Most of the rows below are widely known and almost
+certainly correct. It means nobody has looked, so the row is not yet evidence. Verifying one
+takes a minute and the result is permanent, so clear them as you touch each component rather
+than in one sitting.
+
+**Adding a dependency without adding a row here is incomplete work.**
+
+**Three different things get called "the licence" and they are not the same.** The *software
+licence* covers the code that runs a model. The *model licence* covers the weights and can be
+stricter than the code that loads them. *Commercial API terms* cover a hosted service, and
+are irrelevant here because nothing in the default architecture calls one. Where the code and
+the weights differ, both are listed.
+
+---
+
+## Verified against a primary source
+
+Read on the date shown, at the URL shown.
+
+| Component | Licence | Commercial | Source | Read |
+|---|---|---|---|---|
+| **PyMuPDF** | **AGPL-3.0 or commercial** | **Conditional — see below** | `pymupdf.readthedocs.io/en/latest/about.html` | 2026-09-07 |
+| vLLM | Apache-2.0 | Yes | `github.com/vllm-project/vllm` | 2026-09-07 |
+| Qwen3-Embedding-0.6B | Apache-2.0 | Yes | `huggingface.co/Qwen/Qwen3-Embedding-0.6B` | 2026-09-07 |
+| Gemma 4 | Apache-2.0 | Yes | `ai.google.dev/gemma/terms` | 2026-09-07 |
+| Gemma 1–3 | Gemma Terms of Use, not open source | Yes, with conditions | `ai.google.dev/gemma/terms` | 2026-09-07 |
+| Piper, active fork | GPL-3.0 | Yes, copyleft | `github.com/OHF-Voice/piper1-gpl` | 2026-09-07 |
+| Tailscale, free plan | Client BSD-3; plan terms are non-commercial | **No, on the free plan** | `tailscale.com/pricing` | 2026-09-07 |
+
+---
+
+## In use today, unverified
+
+Pinned in `requirements.txt`, plus the runtime. The licence shown is the commonly understood
+one and has not been read from source for this project.
+
+| Component | Version | Licence believed | Status |
+|---|---|---|---|
+| Ollama | 0.33.3 | MIT | unverified |
+| FastAPI | 0.115.4 | MIT | unverified |
+| uvicorn | 0.32.0 | BSD-3-Clause | unverified |
+| python-multipart | 0.0.12 | Apache-2.0 | unverified |
+| python-dotenv | 1.0.1 | BSD-3-Clause | unverified |
+| openpyxl | 3.1.5 | MIT | unverified |
+| reportlab | 4.2.5 | BSD-3-Clause | unverified |
+| psycopg (binary) | 3.2.3 | LGPL-3.0 | unverified, see note |
+| pytest | 8.3.3 | MIT | unverified |
+| httpx | 0.27.2 | BSD-3-Clause | unverified |
+| Qwen3 chat weights | `qwen3:8b` | Apache-2.0 | unverified for this exact tag |
+| SQLite and FTS5 | stdlib | Public domain | unverified |
+
+**psycopg note.** If LGPL is correct, it means the library may be used by software under a
+different licence as long as it stays a separately replaceable component. Importing it, which
+is all this project does, is fine. Statically embedding a modified copy into a distributed
+binary is where LGPL begins to ask something, and that is not something this project does.
+
+**On the Qwen row.** The family is Apache-2.0 and that is well established, but a family is
+not a model. Check the card for the exact tag being served, because a quantised or fine-tuned
+republish can carry different terms from the original.
+
+---
+
+## The one that needs a decision: PyMuPDF
+
+**This is the largest licensing exposure in the codebase and it predates the AI work.**
+
+PyMuPDF is dual-licensed: AGPL-3.0, or a commercial licence sold by Artifex. The project's
+own documentation says so, and directs anyone who cannot meet the AGPL's terms to buy the
+commercial licence instead.
+
+AGPL differs from GPL in one way that matters here. It reaches software offered to users over
+a network, not only software distributed as files. A hosted product built on an AGPL
+component can therefore be asked to offer its own source. Whether it actually is, in this
+architecture, depends on how the pieces are separated and distributed, and that is a question
+for a lawyer rather than an engineer.
+
+It is not a hypothetical dependency. `app/search.py` and `app/tools.py` both use it, and it
+is the PDF reader for the entire search path.
+
+Three options, none urgent, all cheaper now than after launch:
+
+1. **Keep it and accept the obligation.** Reasonable if the product is open source anyway.
+2. **Buy the commercial licence from Artifex.** A real recurring cost, to be priced rather
+   than assumed.
+3. **Move the read path to `pypdfium2`** (Apache-2.0 / BSD). A different library with
+   different text extraction behaviour, so the swap must be gated: `check_search` at 9 of 9
+   and `check_tools` at 12 of 12 on the same documents, before and after.
+
+**Status: undecided.** Record it in an ADR when decided. It blocks selling to a third party,
+not any step of the build.
+
+---
+
+## Chosen for the build, not yet installed
+
+| Component | Licence believed | Commercial | Status |
+|---|---|---|---|
+| vLLM | Apache-2.0 | Yes | **verified**, see first table |
+| Qwen3-Embedding-0.6B | Apache-2.0 | Yes | **verified**, see first table |
+| Qwen3-Reranker-0.6B | Apache-2.0 | Yes | unverified; optional component |
+| faster-whisper | MIT | Yes | unverified |
+| Kokoro-82M | Apache-2.0 | Yes | unverified — **verify before Step 6**, it is the default |
+| Silero VAD | MIT | Yes | unverified |
+| sqlite-vec | permissive | Yes | unverified — **verify before Step 5** |
+| cloudflared | Apache-2.0 | Yes | unverified |
+| Docker Engine | Apache-2.0 | Yes | unverified |
+| NVIDIA Container Toolkit | Apache-2.0 | Yes | unverified; the driver itself is proprietary but freely redistributable |
+
+---
+
+## Rejected, and why
+
+Keeping this list is the point of the file. Each of these looks free until the terms are read.
+
+**Coqui XTTS-v2.** Reported to carry the Coqui Public Model Licence, which is
+**non-commercial**. The code being open source does not help; the weights are the product.
+Rejected. *Unverified, and deliberately so: nothing is gained by confirming the terms of
+something already ruled out on a first reading.*
+
+**pyannote speaker diarisation.** Pulled in by WhisperX, which is otherwise attractive. The
+weights are gated behind accepting terms on a model hub. A dependency that requires a human
+to click an agreement cannot be part of a reproducible server build. Avoided for the first
+version.
+
+**NVIDIA Parakeet.** Reported as CC-BY-4.0, so commercial use is permitted but **attribution
+is required**. That is a product decision as much as an engineering one, because something
+has to carry the credit. faster-whisper asks nothing, which is why it is the default.
+Parakeet stays a real option if its accuracy or speed turns out to matter more, at which
+point its licence gets verified properly.
+
+**Piper — a licence that changed under the project.** The original `rhasspy/piper` was MIT
+and is archived. Development moved to a GPL-3.0 fork under the Open Home Foundation, which is
+verified above. GPL-3.0 run as a separate process is usable commercially and carries no
+network clause, so this is not a rejection. It is the reason Kokoro is the default: Apache-2.0
+asks nothing at all, and the two are close enough in quality that the licence decides.
+
+**Gemma 1 to 3.** Google's custom Gemma Terms of Use, not an open-source licence. They permit
+commercial use but require passing the use restrictions down to anyone you distribute to,
+which is an obligation Apache-2.0 does not create. **Gemma 4 switched to Apache-2.0** under
+terms effective 1 April 2026. So a Gemma model is a safe default only if it is Gemma 4 or
+later. Check the specific model, never the family name. This is the clearest example in the
+file of why a family name is not a licence.
+
+**Tailscale on the free plan.** Not a software licence problem; the client is BSD-3-Clause.
+The free plan's own terms state it is suitable only for non-commercial use, with the cheapest
+commercial plan at 8 USD per user per month. Tailscale stays for operator access to this
+machine. It is not the production request path, and Cloudflare Tunnel is the free alternative
+that is.
+
+---
+
+## The rule this file exists to enforce
+
+**Free to download is not free to use.** A model on a public hub with a one-click download can
+still carry a non-commercial licence, an attribution requirement, or terms binding everyone
+you sell to. The download button does not tell you which. Gemma is the proof: same name, same
+publisher, two different licences depending on the version number.
+
+So: no model, library or service enters this project without a row here and a named licence.
+If it cannot be established from a primary source, the answer is not "probably fine". Either
+someone looks, or the component is not used.
