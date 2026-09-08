@@ -28,10 +28,10 @@ from app.config import (
     APP_HOST,
     APP_PORT,
     DATA_ROOT,
+    LLM_MODEL,
     LOOPBACK,
     MAX_UPLOAD_BYTES,
     MIN_TOKEN_LENGTH,
-    OLLAMA_MODEL,
     WEAK_TOKENS,
     UnsafePathError,
     code_fingerprint,
@@ -281,7 +281,7 @@ def logout(response: Response) -> dict:
 def health() -> dict:
     return {
         "ok": True,
-        "model": OLLAMA_MODEL,
+        "model": LLM_MODEL,
         "data_dir": str(data_dir()),
         "started_at": datetime.fromtimestamp(STARTED_AT).isoformat(timespec="seconds"),
         "job_kinds": jobs.lane.kinds,
@@ -438,7 +438,7 @@ def main() -> None:
         print("  Or set:   APP_HOST=127.0.0.1\n")
         raise SystemExit(2)
 
-    print(f"syslab-server: model {OLLAMA_MODEL}, files under {DATA_ROOT}")
+    print(f"syslab-server: model {LLM_MODEL}, files under {DATA_ROOT}")
     if APP_HOST in LOOPBACK:
         print("Listening on this machine only. Phase 06 opens it to your tailnet.")
     else:

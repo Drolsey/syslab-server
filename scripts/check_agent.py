@@ -24,7 +24,7 @@ require("pymupdf", "openpyxl", "reportlab")
 
 from app import agent, tools  # noqa: E402
 from app import context  # noqa: E402
-from app.config import BOOTSTRAP_TENANT, OLLAMA_MODEL, data_dir, ensure_data_dir  # noqa: E402
+from app.config import BOOTSTRAP_TENANT, LLM_MODEL, data_dir, ensure_data_dir  # noqa: E402
 from app.llm import LlmError  # noqa: E402
 
 LINE = "-" * 62
@@ -119,14 +119,14 @@ def main() -> int:
     VERBOSE = args.verbose
 
     print("\nsyslab-server / Phase 03 tool-calling check")
-    print(f"Model: {OLLAMA_MODEL}   Data folder: {data_dir()}")
+    print(f"Model: {LLM_MODEL}   Data folder: {data_dir()}")
     try:
         from app import llm
 
         llm.chat([{"role": "user", "content": "ping"}], timeout=20)
     except LlmError as exc:
         print(f"\n  {exc}")
-        print("  Start Ollama and re-run scripts/check_ollama.py first.\n")
+        print("  Check that the model server (vLLM/Ollama) is running and LLM_BASE_URL is correct.\n")
         return 1
 
     print("\nBuilding test files with facts invented for this run...")

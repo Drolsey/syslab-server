@@ -27,14 +27,25 @@ def _env(key: str, default: str) -> str:
 
 
 # --- model ---
-OLLAMA_MODEL = _env("OLLAMA_MODEL", "qwen3:8b")
-OLLAMA_HOST = _env("OLLAMA_HOST", "http://127.0.0.1:11434")
-OLLAMA_TIMEOUT = int(_env("OLLAMA_TIMEOUT", "300"))
+# The OpenAI-compatible endpoint app/llm.py actually talks to. vLLM in
+# production (Step 3 of the architecture plan), Ollama's own /v1 shim on a
+# dev laptop -- either way this is the only backend the running app uses.
+LLM_BASE_URL = _env("LLM_BASE_URL", "http://127.0.0.1:8000/v1")
+LLM_MODEL = _env("LLM_MODEL", "Qwen/Qwen3-8B-AWQ")
+LLM_TIMEOUT = int(_env("LLM_TIMEOUT", "300"))
 # Qwen3 can "think" before answering. Off by default: it roughly triples the
 # wait for a marginal gain on these tools, and keeps the transcript readable.
-OLLAMA_THINK = _env("OLLAMA_THINK", "false").lower() in {"1", "true", "yes", "on"}
+LLM_THINK = _env("LLM_THINK", "false").lower() in {"1", "true", "yes", "on"}
 # How many tool calls the model may make before we stop it, per question.
 MAX_TOOL_STEPS = int(_env("MAX_TOOL_STEPS", "10"))
+
+# --- Ollama, dev-only ---
+# Not what the running app talks to (see LLM_BASE_URL above). Kept so
+# scripts/check_services.py and scripts/bench_models.py can still probe a
+# dev laptop's Ollama install directly, per the dev-laptop profile in
+# Section 13 of the architecture plan.
+OLLAMA_HOST = _env("OLLAMA_HOST", "http://127.0.0.1:11434")
+OLLAMA_MODEL = _env("OLLAMA_MODEL", "qwen3:8b")
 
 def _path(key: str, default: Path) -> Path:
     """A path from the environment, relative ones anchored to the project.
