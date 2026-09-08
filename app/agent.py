@@ -180,7 +180,12 @@ TOOL_SCHEMAS: list[dict] = [
                 "count and the column names and nothing else, which is all you need to "
                 "tell the user the file is ready. Never try to reach a table with "
                 "read_excel, read_pdf, list_files or search_files: those see only the "
-                "data folder and a table is not in the data folder."
+                "data folder and a table is not in the data folder. Conversely, if what "
+                "the user wants turned into a spreadsheet is already a file in the data "
+                "folder -- a PDF, an existing .xlsx, anything list_files or search_files "
+                "would find -- that is NOT this tool: there is no database table involved, "
+                "so read the file with read_pdf or read_excel and write the result with "
+                "write_excel instead."
             ),
             "parameters": {
                 "type": "object",
