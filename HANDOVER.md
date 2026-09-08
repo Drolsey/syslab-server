@@ -5,6 +5,105 @@ Rewritten 8 September 2026. A portable copy of the session notes, so a new chat
 The previous version described a Windows laptop with an RTX 3060 and is
 superseded; the commit history has it if you want it.
 
+## Session log — 8 September 2026, evening
+
+Stopped mid-way through a local end-to-end test. Everything on the server side
+is done and verified; what is unfinished is a test harness on the laptop.
+
+**Shipped and verified today** (`022761a`, `ac88908`, `837e22e`, `1f3fab4`):
+
+- Step 3.5 built: frozen `/v1` contract + `check_api_compat.py`, `cloudflared`
+  in compose behind an `.env` profile, `TRUST_CLIENT_IP_HEADER`,
+  `docs/runbook.md`, the systemd template unit.
+- **The `max_tokens` clamp**, which was a hard blocker nobody had seen. The
+  website sends `max_tokens: 32000`; the server runs an 8192 window; vLLM
+  rejects that outright. Every message from the website would have been an
+  HTTP 400. Verified through the whole path on the box: alias preserved, real
+  model name never returned, `finish_reason: stop`.
+- **`--gpu-memory-utilization` 0.70 → 0.85.** Concurrency 1.50x → **2.58x**,
+  KV cache 3.0 → 5.16 GiB. Less than projected because vLLM's overhead scales
+  with the budget; see `docs/models.md` for the numbers and what it means for
+  Step 5's headroom.
+- **The app now runs under systemd**, `syslab-server@syslab`. Confirmed
+  serving from another machine: `/v1/models` 401, `/api/health` 401, `/` 404
+  (`PUBLIC_MODE=true` is already set in the box's `.env`).
+
+**Not yet done: the reboot test.** `sudo reboot`, then both `:8000` and `:8080`
+should answer with nothing typed. vLLM's persistence is proven; the app's
+is not.
+
+### The local website test — what it is and where it stopped
+
+The point: `database-agent` can run on the laptop and talk to the box over the
+LAN at `http://192.168.1.185:8080/v1`. That exercises the real UI, real
+multi-turn tool calling and the real clamp — everything the Step 3 gate asks
+for except "from Cloud Run", which needs the tunnel. Worth doing first because
+it separates "does the integration work" from "does the network path work".
+
+Done on the laptop: `npm install`, `npx prisma generate`. The dev server is up
+and serving (`GET / -> 200`).
+
+Two traps hit, both worth knowing before repeating this:
+
+1. **npm 11 blocks package install scripts by default.** `npm install`
+   succeeds with exit 0 and a warning, then `next dev` dies with
+   `Cannot find module '.prisma/client/default'`. The fix is
+   `npx prisma generate`. The warning names five packages; Prisma is the one
+   that matters.
+2. **`next dev` survives having its shell killed.** It leaves an orphan node
+   process holding Next's lock file, so the next start says "Another next dev
+   server is already running" and picks port 3001 while nothing listens on
+   3000. `taskkill /PID <pid> /F`, and delete `.next/dev`.
+
+**Next action, and it needs a value only the operator has:** create
+`database-agent/.env.local` —
+
+```
+MODEL_PROVIDER=custom
+MODEL_BASE_URL=http://192.168.1.185:8080/v1
+MODEL_API_KEY=<one of the box's GATEWAY_TOKENS>
+AGENT_MODEL=syslab-default
+```
+
+Deliberately no `AGENT_MAX_TOKENS`, so it keeps its 32000 default and the run
+proves the clamp through the website's own code. Restart `npm run dev` after
+writing it — Next reads env at boot. Then chat (proves alias, token, clamp,
+streaming), then attach the Postgres connection and ask something real
+(proves multi-turn tool calling).
+
+### One decision still open, before the tunnel
+
+**Cloudflare Access cannot be used in front of `/v1` as the plan assumed.**
+Access service tokens travel as `CF-Access-Client-Id` / `CF-Access-Client-Secret`
+headers, and the website's `ModelClientConfig` is `{apiKey, baseUrl, model}` —
+three fields, no way to add a header (`lib/agent/providers/types.ts`). Access
+would 403 every request before it reached the box.
+
+Recommended instead: no Access on the AI hostname, and a **WAF custom rule**
+blocking everything that is not `/v1` —
+
+```
+(http.host eq "ai.<domain>" and not starts_with(http.request.uri.path, "/v1"))
+```
+
+That gives the property Section 8 wanted from Access — a scan never reaches the
+app — without a header the website cannot send. `/v1` stays defended by
+`GATEWAY_TOKENS` and the per-token rate limit, as designed. A second hostname
+with real Access on it covers browser admin access if that is ever wanted;
+Tailscale already covers it today.
+
+The alternative is adding a headers field to the website's provider config.
+About twenty lines, but it ends "unmodified provider code" as the step gate and
+puts an Access secret into a config surface that holds one credential today.
+
+### Also corrected today
+
+An earlier instruction in this session said to bind the app to `127.0.0.1` to
+protect port 8080. **That would break the tunnel** — `host-gateway` resolves to
+the Docker bridge address, not loopback, so cloudflared could not reach a
+loopback-only app. The right move is a firewall rule scoped to the bridge
+subnet, and it belongs after the tunnel works, not before.
+
 ## Where it stands
 
 The 5090 box is real and serving. `syslab-server` is now three planes in one
@@ -23,7 +122,7 @@ section all passing, `check_agent` 6 of 8 against the live 32B model.
 | Box | Ubuntu, RTX 5090 32 GB, Ryzen 9950X, 60 GB RAM, `192.168.1.185` on the LAN |
 | Model | `Qwen/Qwen3-32B-AWQ` under vLLM `v0.28.0`, pinned by digest in `docker-compose.yml` |
 | vLLM | container, port 8000, `restart: unless-stopped`, survives reboot |
-| The app | port 8080, from `.venv` on the host, **started by hand — the systemd unit is written but not yet installed** |
+| The app | port 8080, from `.venv` on the host, under systemd as `syslab-server@syslab` |
 | Alias | callers ask for `syslab-default`; the real model name never leaves the box |
 
 `docs/runbook.md` is the operational half of this file: start, stop, roll back,
@@ -62,9 +161,9 @@ the short version:
    Trust, then `COMPOSE_PROFILES=public` and the token in `.env`, then Access
    with a service token in front, and only then `PUBLIC_MODE=true` and
    `TRUST_CLIENT_IP_HEADER=true`.
-3. **Install the systemd unit** (`scripts/service/syslab-server@.service`, as
-   `syslab-server@syslab`) so the app comes back on its own like vLLM does.
-   Today a reboot brings back the model and not the thing in front of it.
+3. **Prove the reboot.** The systemd unit is installed and running; nothing has
+   yet confirmed the app actually returns on its own. `sudo reboot`, then both
+   ports answer untouched.
 4. **Step 2, the ingestion contract.** Designed in full in
    `docs/plans/step-02-ingestion-contract.md` and **waiting on your sign-off of
    its five decisions**, which is the thing actually blocking it. The plan's
