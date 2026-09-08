@@ -63,6 +63,14 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   unchanged, `--gpu-memory-utilization 0.70`. On `scripts/check_agent.py`'s real
   tool-calling transcripts this moved 5 of 8 scenarios to 6 of 8, including one the small
   model failed by inventing a SQL query against a database that was never configured.
+- **`--gpu-memory-utilization` 0.70 → 0.85.** A behavioural change, so it is recorded here
+  with its numbers. At 0.70 vLLM reported 3.0 GiB of KV cache, 12,272 tokens, and maximum
+  concurrency of **1.50x** at 8192 tokens per request — one conversation at a time, on a
+  machine bought for concurrency. The weights take 18.62 GiB of the 21.95 GiB that 0.70
+  allowed, so almost all of the increase becomes cache. The reserved headroom was for
+  embeddings (Step 5) and speech (Step 6); 0.85 still leaves ~4.7 GiB against the ~3.5 GiB
+  those three are budgeted at. `--max-model-len` stayed at 8192 deliberately: context and
+  concurrency spend the same cache, and the window is not what hurts.
 - `app/llm.py` speaks OpenAI rather than Ollama's native API. `app/agent.py` was not
   touched: the call signature and return shape were preserved deliberately, and an empty
   `git diff app/agent.py` was the gate for that sub-step.

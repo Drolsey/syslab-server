@@ -64,20 +64,41 @@ docker compose logs vllm | grep -i "kv cache\|maximum concurrency"
 | **KV cache** | **3.0 GiB = 12,272 tokens** |
 | **Concurrency at 8192 tokens per request** | **1.50x** |
 
-**1.5x is the number to argue with.** It means one conversation at a time and a
+**1.5x was the number to argue with.** It means one conversation at a time and a
 second one queueing, on a machine bought for concurrency — which is the reason
 the plan chose vLLM over Ollama in the first place. Everything else about the
-card is fine; the KV cache is the whole constraint, and it is small because the
+card is fine; the KV cache is the whole constraint, and it was small because the
 weights take 18.62 GiB of a 21.95 GiB budget.
 
-vLLM prints what the alternative would be, in the same log line: raising the
-budget to the full card would give **10.95 GiB of KV cache**, roughly 44,800
-tokens, about 5.5x concurrency at the same context length. Some of that has to
-stay unspent — Step 5 wants ~1.5 GB for embeddings and Step 6 ~2 GB for speech
-— but reserving nine gigabytes today for three services that do not exist, while
-the one service that does exist runs at 1.5x, is the wrong side of the trade.
-`0.85` is the number worth trying: it leaves about 4.7 GiB for everything else
-and roughly triples concurrency.
+Two things stop 1.50x being as bad as it reads. A request occupies what it
+actually uses, not `max_model_len` — one observed request held 38% of the pool,
+about 4,660 tokens, so roughly 2.6 of that size fit. And the prefix cache ran at
+**92.9% hit rate**: every conversation opens with the same system prompt, schema
+and tool definitions, and vLLM stores that once rather than per request. When
+the pool does fill, vLLM queues (`Waiting: N reqs`) rather than failing, so the
+symptom is latency, not errors.
+
+### Raised to 0.85 on 8 September 2026
+
+vLLM printed the alternative in the same log line: the full card would give
+**10.95 GiB of KV cache**, roughly 44,800 tokens, about 5.5x. `0.85` takes most
+of that while leaving about 4.7 GiB — which still covers the ~3.5 GiB Section 13
+budgets for embeddings, STT and TTS combined. The 0.70 was reserving nine
+gigabytes for six weeks on behalf of three services that do not exist, while the
+one that does exist ran at 1.50x.
+
+`--max-model-len` deliberately stayed at 8192 in the same change. Context length
+and concurrency spend the same cache, so doubling the window would have given
+back most of what the utilization gained. The window is not what hurts: callers
+never have to know it, because `app/gateway.py` clamps `max_tokens` to what is
+left after the prompt.
+
+**Re-read the startup log after any change to either flag** — the numbers above
+are the whole basis for both, and they are one `grep` away:
+
+```
+docker compose logs vllm | grep -i "kv cache\|maximum concurrency"
+```
 
 Not free, though, and the same log shows why. **One boot of this container
 failed outright**:
@@ -119,9 +140,9 @@ Launch flags that are not optional, and why (see
   this number: `app/gateway.py` reads it from `/v1/models` and clamps
   `max_tokens` to what is left after the prompt. Without that the website's
   `max_tokens: 32000` is an HTTP 400 on every single request.
-- `--gpu-memory-utilization 0.70` — leaves room for embeddings, STT and TTS,
-  and costs concurrency to do it. See the measured numbers above before
-  treating 0.70 as settled.
+- `--gpu-memory-utilization 0.85` — everything left after the weights becomes
+  KV cache, which is what concurrency is made of. Raised from 0.70; the
+  measurements and the trade are above.
 
 ## Currently running
 

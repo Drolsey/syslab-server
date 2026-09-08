@@ -36,14 +36,36 @@ services:
     command:
       - --model
       - Qwen/Qwen3-32B-AWQ
-      # 8192, not the model's full context: at 32k this measured 27.9 GB
-      # under Ollama (docs/models.md), which blows the ~22 GB chat budget
-      # Section 13 of the architecture plan reserves for embeddings/STT/TTS
-      # on the same card. Revisit once those services actually exist.
+      # 8192, not the model's full context, and deliberately NOT raised at the
+      # same time as the utilization below. Context length and concurrency
+      # spend the same KV cache: doubling the window halves how many
+      # conversations fit. The window is not what hurts today -- callers do not
+      # even have to know it, since app/gateway.py clamps max_tokens to what
+      # is left after the prompt -- so the extra cache goes to concurrency.
       - --max-model-len
       - "8192"
+      # 0.85, raised from 0.70 on 2026-09-08 after reading what the card was
+      # actually doing rather than what the Ollama benchmark predicted. At 0.70
+      # vLLM reported 3.0 GiB of KV cache, 12,272 tokens, and a maximum
+      # concurrency of 1.50x at 8192 tokens per request -- one conversation at
+      # a time on a machine bought for concurrency, which is the whole reason
+      # the plan chose vLLM over Ollama. The weights are 18.62 GiB of the 21.95
+      # GiB that 0.70 allowed, so nearly all of the increase becomes cache.
+      #
+      # The 0.70 was reserving room for embeddings (Step 5) and speech (Step 6).
+      # 0.85 still leaves about 4.7 GiB for them, which covers the ~3.5 GiB
+      # those three services are budgeted at in Section 13, and stops nine
+      # gigabytes sitting idle for six weeks on behalf of services that do not
+      # exist while the one that does runs at 1.50x.
+      #
+      # The cost is slack. One boot of this container has already failed with
+      # "Available KV cache memory: 0.45 GiB" -- a compose recreate racing the
+      # previous container's VRAM release -- and the higher this goes the
+      # narrower that race gets. restart:unless-stopped is what makes it heal;
+      # docs/runbook.md names the symptom. Do not raise this further without
+      # re-reading the startup log.
       - --gpu-memory-utilization
-      - "0.70"
+      - "0.85"
       - --enable-auto-tool-choice
       - --tool-call-parser
       - hermes
