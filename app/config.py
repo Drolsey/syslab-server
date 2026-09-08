@@ -96,6 +96,19 @@ APP_PORT = int(_env("APP_PORT", "8000"))
 # is the one a forgotten setting produces.
 PUBLIC_MODE = _env("PUBLIC_MODE", "false").lower() in {"1", "true", "yes", "on"}
 
+# Is there a reverse proxy in front that sets CF-Connecting-IP itself?
+# Separate from PUBLIC_MODE on purpose: PUBLIC_MODE says "strangers can reach
+# this", while this says "and they can only reach it THROUGH the tunnel". Only
+# the second one makes the header trustworthy, and getting it wrong is
+# dangerous in both directions -- trusting the header with the port also open
+# lets anyone evade the login throttle by varying one string, and not trusting
+# it behind the tunnel collapses every caller into one bucket so eight wrong
+# guesses from anybody lock out everybody. Off by default: that failure is the
+# loud one.
+TRUST_CLIENT_IP_HEADER = _env("TRUST_CLIENT_IP_HEADER", "false").lower() in {
+    "1", "true", "yes", "on"
+}
+
 # --- the search index ---
 # Deliberately outside DATA_DIR: it is a derived cache, not user data, and
 # deleting it must be obviously safe.

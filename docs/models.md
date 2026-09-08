@@ -4,8 +4,8 @@ Benchmarked on the production box (RTX 5090, 32 GB VRAM, Ryzen 9950X, 60 GB RAM)
 on 2026-09-08, via `scripts/bench_models.py` against Ollama. Numbers are a
 relative-sizing reference, not the production figure: vLLM's PagedAttention
 manages KV cache more efficiently than Ollama's allocator, so real footprint
-under vLLM should be re-measured once a model is chosen for the profile in
-Section 13 of the architecture plan.
+under vLLM should be re-measured against concurrent load before anyone plans a
+second service onto the same card.
 
 ## Candidates measured
 
@@ -18,7 +18,7 @@ Section 13 of the architecture plan.
 Full raw output: `bench_results.json` on the server (not committed — regenerate
 with `scripts/bench_models.py` any time).
 
-## Decision: qwen3:32b, 8192 context, pending Step 3.4 confirmation
+## Decision: qwen3:32b, 8192 context
 
 Chosen over gemma3:27b despite being slower, because Section 14 of the
 architecture plan picked the Qwen3 family specifically for tool-calling
@@ -37,9 +37,18 @@ qwen3:14b stays the documented fallback for concurrency: 14.5 GB even at 32k
 context, more than double the tok/s, and much more headroom for multiple
 simultaneous users once Step 3's continuous batching is in play.
 
-**Open, blocking Step 3.4:** re-measure the chosen model under vLLM directly
-(not Ollama) with a realistic multi-turn tool-calling transcript, per the
-plan's own instruction not to trust a benchmark prompt over a real one.
+Confirmed under vLLM, not inferred: `scripts/check_agent.py` runs real
+multi-turn tool-calling transcripts against the live server, and the 32B model
+passes 6 of 8 where the 8B smoke-test model passed 5 of 8 — including a
+scenario the 8B model failed by hallucinating SQL. That is the "realistic
+transcript, not a benchmark prompt" the plan asks for. See
+`docs/plans/step-03-model-gateway.md` §3.1 for the two remaining failures and
+why they are test strictness rather than model quality.
+
+Still not measured under vLLM: throughput under **concurrent** requests, which
+is the number continuous batching exists for and which a one-request-at-a-time
+harness cannot show. Worth having before Step 7's measurement window; it is
+not a blocker for anything in Step 3.
 
 ## Serving stack, pinned
 
@@ -75,11 +84,11 @@ that was never configured when asked to sum a spreadsheet it had already read.
 The 32B model does that scenario correctly. See
 `docs/plans/step-03-model-gateway.md`.
 
-Still to confirm under vLLM rather than inferred from the Ollama benchmark
-above: actual VRAM headroom at `--max-model-len 8192` with
-`--gpu-memory-utilization 0.70`, and throughput under concurrent requests,
-which is the number continuous batching exists for and which a
-one-request-at-a-time benchmark cannot show.
+Section 13's `models.toml` profile file does not exist and is not missing: it
+is folded into Step 5, where a second model finally gives it a second row.
+Until then the alias table is `MODEL_ALIASES` in `app/config.py` and the served
+model is the `--model` flag in `docker-compose.yml`. Reasoning in
+`docs/plans/step-03-model-gateway.md` §3.4.
 
 ## Licence
 

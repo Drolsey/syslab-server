@@ -18,6 +18,36 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 ## [Unreleased]
 
 ### Added
+- **The inference plane** (`app/gateway.py`), mounted on the same process: an
+  OpenAI-compatible `/v1/chat/completions` and `/v1/models`, authenticated by its own
+  `GATEWAY_TOKENS` and carrying no tenant at all, by design. A leaked gateway token costs
+  GPU time, not documents — asserted on the source by
+  `scripts/check_gateway_isolation.py`, which was verified by breaking the property first.
+- **Model aliasing.** Callers ask for `syslab-default`; the real model name never leaves
+  this machine, in the response or in any streamed chunk. Changing the served model is now
+  a one-line edit here and no change at all in the website's Secret Manager.
+- `PUBLIC_MODE` (default off), which withdraws the admin page, the interactive docs and
+  the OpenAPI schema behind them. The admin page returns 404 rather than 401: "there is
+  nothing here" discloses less than "there is something here that needs a password".
+- `scripts/check_gateway.py` — probes what vLLM will actually do with `tool_choice`,
+  streaming and usage before any code depends on it. It earned itself immediately; see
+  Fixed.
+- **A frozen `/v1` contract** (`docs/api/gateway-v1.released.json`) and
+  `scripts/check_api_compat.py` to enforce it. The website deploys straight to production
+  on a push, so a narrowing here would be found by a customer rather than by a test. Only
+  `/v1` is frozen: it is the one surface whose caller deploys separately.
+- **Cloudflare Tunnel** as a `cloudflared` service, pinned by digest, behind a compose
+  profile activated from `.env` rather than a `--profile` flag — the machine that is meant
+  to be public is the one that brings up the tunnel, including on the reboot nobody typed a
+  flag on. Outbound only: no port forwarded, no inbound firewall rule, no static address.
+- `TRUST_CLIENT_IP_HEADER`, and `docs/runbook.md` — start, stop, roll back, read logs,
+  publish it, and the failures that have actually happened on this box.
+- `docs/models.md`, the benchmark numbers and the reasoning behind the model choice.
+- `docker-compose.yml`, pinning vLLM **by digest**, not by tag.
+- A test fixture pinning `PUBLIC_MODE` off for the whole suite. Two tests had started
+  failing on one machine and not another, because config reads `.env` at import and `.env`
+  is not in the repository. The defect was never those two tests; it was that a test
+  result depended on an untracked file.
 - `docs/architecture.md` — system overview for an engineer who did not build this. Keeps
   what exists and what is planned deliberately separate.
 - `docs/licences.md` — the licence inventory. Every component carries either a primary
@@ -26,13 +56,58 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 - `BOOTSTRAP_TENANT` documented in `.env.example`. It was read by `app/config.py` and
   documented nowhere, despite deciding which tenant owns this install's data.
 
+### Changed
+- **The served model is now `Qwen/Qwen3-32B-AWQ` under vLLM**, replacing `qwen3:8b` under
+  Ollama. Per this changelog's own rule, the values: backend Ollama → vLLM v0.28.0
+  (pinned `sha256:61fc8a89…`), model `qwen3:8b` → `Qwen/Qwen3-32B-AWQ`, context 8192
+  unchanged, `--gpu-memory-utilization 0.70`. On `scripts/check_agent.py`'s real
+  tool-calling transcripts this moved 5 of 8 scenarios to 6 of 8, including one the small
+  model failed by inventing a SQL query against a database that was never configured.
+- `app/llm.py` speaks OpenAI rather than Ollama's native API. `app/agent.py` was not
+  touched: the call signature and return shape were preserved deliberately, and an empty
+  `git diff app/agent.py` was the gate for that sub-step.
+- `config.OLLAMA_*` split into `LLM_*` (what the app talks to) and `OLLAMA_*` (dev tooling
+  only). They had been one setting doing two jobs.
+- **Model profiles (`models.toml`) moved from Step 3.4 to Step 5.** The file names five
+  model roles and only one exists until embeddings land, so the rule that justifies it —
+  an empty value means unavailable, never a silent fallback — has nothing to guard yet.
+  Reasoning in `docs/plans/step-03-model-gateway.md` §3.4.
+
+### Fixed
+- **The vLLM container could not call a tool at all.** It was started without
+  `--enable-auto-tool-choice --tool-call-parser hermes`, and every `tool_choice` value
+  except `"none"` returned HTTP 400 — which is the entire feature the website's agent
+  depends on. Found by `scripts/check_gateway.py` before any application code trusted it.
+- **Qwen3 thinks by default and will spend a whole token budget doing it**, returning
+  `finish_reason: "length"` with no answer. Requests now send
+  `chat_template_kwargs: {"enable_thinking": false}` unless a caller asks otherwise.
+- **The systemd unit could not have started.** `scripts/service/syslab-server.service` used
+  `%i` for the user and the home directory, and `%i` is the *instance* name, which a
+  non-template unit does not have — every one of those paths expanded to nothing. It is now
+  `syslab-server@.service`, installed as `syslab-server@syslab`. Its `After=ollama.service`
+  was stale too; the model is a container now.
+- `query_to_excel`'s tool description claimed to be "THE ONLY WAY" to turn anything into a
+  file, with nothing saying that a file already in the data folder is not a database
+  table. Both models tested hit it. Pre-existing, not introduced by this work.
+
 ### Security
-- **Recorded, not yet fixed:** `GET /` and `GET /api/docs` are unauthenticated. Safe behind
-  Tailscale, not safe once the server is publicly reachable. Fix scheduled with the public
-  network path.
-- **Recorded, not yet fixed:** the login throttle in `app/main.py` keeps an in-memory
-  dictionary keyed by client IP, pruned by timestamp within a key but never by key. Bounded
-  on a private tailnet, unbounded behind a public tunnel.
+- **Fixed:** the two exposures this section previously carried as "recorded, not yet fixed"
+  are both closed — unauthenticated `GET /` and `GET /api/docs`, and the unbounded login
+  throttle. The page and the docs are withdrawn under `PUBLIC_MODE`, and the throttle is no
+  longer a `defaultdict` — merely *reading* an entry created one, so every address that
+  ever attempted a sign-in left a key behind forever. It is now a plain dict, swept of
+  aged-out clients on each use and capped at `MAX_TRACKED_CLIENTS`, so varying the source
+  address cannot grow it without limit.
+- **The login throttle would have collapsed into a single bucket behind the tunnel.** Every
+  request arrives from the cloudflared container, so eight wrong tokens from anyone would
+  have locked out everyone — a rate limit turned into a denial of service against the
+  operator, silently, on the day the tunnel went up. `CF-Connecting-IP` is now read, but
+  only when `TRUST_CLIENT_IP_HEADER` is on, because trusting it while the port is also open
+  lets anyone evade the throttle by varying one header. `X-Forwarded-For` is deliberately
+  not read: it is caller-appended.
+- `GATEWAY_TOKENS` are deliberately separate from `APP_TOKEN` and from the tenant token
+  system: the inference plane is meant to be the cheap credential, and it can only be
+  cheap if it is a different value.
 
 ### Licence findings
 - **PyMuPDF 1.24.10 is AGPL-3.0** or a commercial licence from Artifex. It is the PDF reader

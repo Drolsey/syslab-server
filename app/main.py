@@ -223,6 +223,34 @@ def _sweep_failures(cutoff: float) -> None:
             del _failures[client]
 
 
+def client_address(request: Request) -> str:
+    """Who to hold the login throttle against.
+
+    Behind Cloudflare Tunnel every request arrives from the cloudflared
+    container, so `request.client.host` is one address for the whole internet.
+    The throttle then counts the world's wrong guesses into a single bucket:
+    eight from anybody locks out everybody, which turns a rate limit into a
+    denial of service against the operator. Cloudflare puts the real address in
+    CF-Connecting-IP, and it sets that header itself, discarding whatever the
+    caller sent.
+
+    Guarded by a setting rather than always trusted, because the danger runs
+    the other way round when nothing is in front: a header anyone may set is a
+    throttle anyone may evade by varying one string. TRUST_CLIENT_IP_HEADER is
+    therefore off by default and is only true when the app is genuinely
+    unreachable except through the tunnel -- which is the same condition
+    docs/runbook.md makes the operator assert when they publish it.
+    """
+    if config.TRUST_CLIENT_IP_HEADER:
+        forwarded = request.headers.get("cf-connecting-ip", "").strip()
+        if forwarded:
+            # One address, never a list: CF-Connecting-IP is a single value.
+            # X-Forwarded-For is deliberately not read -- it is caller-appended
+            # and the left-most entry is whatever an attacker typed.
+            return forwarded[:64]
+    return request.client.host if request.client else "unknown"
+
+
 def _recent_failures(client: str) -> list[float]:
     cutoff = time.time() - FAILURE_WINDOW_SECONDS
     _sweep_failures(cutoff)
@@ -299,7 +327,7 @@ def login(request: Request, response: Response, body: LoginRequest = Body(...)) 
             "py scripts/new_token.py or py scripts/tenant.py new \"Name\"",
         )
 
-    client = request.client.host if request.client else "unknown"
+    client = client_address(request)
     if len(_recent_failures(client)) >= MAX_FAILURES:
         raise HTTPException(429, "Too many wrong tokens. Wait fifteen minutes.")
 

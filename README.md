@@ -73,22 +73,30 @@ plan document, sub-steps and gate:
 |---|---|---|
 | 0 | Clean baseline | Complete |
 | 1 | The ownership boundary: every byte has an owner | Complete, `scripts/check_isolation.py` is its gate |
+| 3 | The model gateway: serve `/v1` from our own hardware | Built. Its gate belongs to the website — see below |
 | 2 | The ingestion contract | Designed, not started, awaiting sign-off |
+
+Step 3 comes before Step 2 on purpose: that is the plan's own dependency order, and Step 3
+is the one that stops the per-request model bill. Its gate is the website's own provider
+code, unmodified, completing a multi-turn tool-calling conversation against `/v1` from Cloud
+Run — not a curl. `HANDOVER.md` has the current state and what is next.
 
 ## Target machine
 
-Current, verified 31 Aug 2026 by `scripts/check_env.py`:
+Current, as of 8 Sep 2026:
 
 | | |
 |---|---|
-| OS | Windows 11 (x64) |
-| GPU | NVIDIA GeForce RTX 3060, 12 GB VRAM, driver 595.71 |
-| Model | `qwen3:8b` |
+| OS | Ubuntu, on a dedicated box |
+| GPU | NVIDIA GeForce RTX 5090, 32 GB VRAM |
+| Model | `Qwen/Qwen3-32B-AWQ`, served by vLLM `v0.28.0` in a container, pinned by digest |
 
-Planned: a dedicated Ubuntu server on an RTX 5090 with 32 GB of VRAM, serving with vLLM
-rather than Ollama, deployed as containers. Nothing in the code assumes either machine.
-Every path goes through `pathlib` and every setting comes from `.env`, which is what makes
-that move a configuration change rather than a rewrite.
+The move from the original Windows laptop (RTX 3060, `qwen3:8b` under Ollama) was a
+configuration change rather than a rewrite, which was the point of routing every path
+through `pathlib` and every setting through `.env`. A laptop still runs the whole suite and
+the offline gates; set `LLM_BASE_URL` at Ollama's own `/v1` shim and nothing else changes.
+`docs/models.md` has the benchmark numbers behind the model choice and the digest it is
+pinned to.
 
 ## Setup
 
@@ -605,6 +613,9 @@ any untested check*.
 | `check_services.py` | It came back on its own, running the code that is on disk |
 | `check_remote.py` | The door is shut to everyone without a token |
 | `check_endtoend.py` | The whole thing, over HTTP, from another machine |
+| `check_gateway.py` | What vLLM will really do with `tool_choice` and streaming |
+| `check_gateway_isolation.py` | The inference plane cannot reach any tenant's files |
+| `check_api_compat.py` | The `/v1` contract the website deploys against has not broken |
 
 Three habits run through all of it and are worth keeping:
 
@@ -619,6 +630,9 @@ Three habits run through all of it and are worth keeping:
 | File | What it is for |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | The system, for someone who did not build it. Start here |
+| [`docs/runbook.md`](docs/runbook.md) | Start, stop, roll back, read logs, publish it, and what breaks |
+| [`docs/models.md`](docs/models.md) | What is served, what it was measured against, and what it is pinned to |
+| [`docs/api/gateway-v1.released.json`](docs/api/gateway-v1.released.json) | The frozen `/v1` contract. Do not edit by hand |
 | [`docs/licences.md`](docs/licences.md) | Every dependency's licence, its source, and the date it was read |
 | [`docs/plans/`](docs/plans/) | What was decided, what was rejected, and what it cost |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed, including model changes and licence findings |

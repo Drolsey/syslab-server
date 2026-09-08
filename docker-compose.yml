@@ -1,10 +1,22 @@
-# Step 1 (provisioning): only the vllm service is real today. syslab-server,
-# voice and cloudflared are added by the steps that build them (Section 5 of
-# the architecture plan).
+# vllm (Step 1) and cloudflared (Step 3.5). The syslab-server app itself still
+# runs from a virtualenv on the host rather than a container here; voice is
+# Step 6. Section 5 of the architecture plan has the full picture.
 #
 #   docker compose up -d
 #   docker compose logs -f vllm
 #   docker compose down            # stops it; add -v only if you mean to drop the cache too
+#
+# cloudflared only starts when the "public" profile is active. Set that in
+# .env, next to the token it needs:
+#
+#   COMPOSE_PROFILES=public
+#
+# in .env rather than as a --profile flag on purpose. A flag has to be
+# remembered on every invocation, including the one after a reboot at 2am, and
+# a rule enforced by remembering is not enforced. Putting it in .env makes the
+# machine that is meant to be public the machine that brings up the tunnel,
+# and leaves a laptop that clones this repo unable to publish anything by
+# accident.
 
 services:
   vllm:
@@ -42,6 +54,33 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  # Step 3.5: the network path. Outbound only -- this dials Cloudflare and
+  # keeps the connection open, so the box needs no port forwarded, no static
+  # address and no inbound firewall rule at all. That is the whole reason
+  # Section 7 chose a tunnel over a VPN: the website's change is a secret
+  # value, not a container change.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.8.3@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339
+    profiles: ["public"]
+    restart: unless-stopped
+    # The token identifies a tunnel created in the Cloudflare dashboard, which
+    # is also where its ingress rule lives.
+    #
+    # NOT "${CLOUDFLARE_TUNNEL_TOKEN:?...}", which is the obvious way to write
+    # this and is wrong. Compose interpolates the whole file before it filters
+    # by profile, so the strict form makes `docker compose up -d vllm` fail on
+    # every machine without a tunnel token -- a dev box, and this box before
+    # the tunnel exists. Verified, not assumed: it fails at `compose config`.
+    # An unset token therefore reaches cloudflared empty and the container
+    # restarts in a loop, which docs/runbook.md names as the symptom.
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    # The app is on the host, not in this network, because it still runs from a
+    # virtualenv. The dashboard's ingress rule therefore points at
+    # http://host.docker.internal:8080 -- see docs/runbook.md. When the app is
+    # containerised this becomes http://syslab-server:8080 and this line goes.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   huggingface-cache:

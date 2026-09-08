@@ -88,7 +88,7 @@ def never_the_real_control_plane(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def a_private_network_unless_a_test_says_otherwise(monkeypatch):
-    """PUBLIC_MODE is pinned off, whatever the developer's .env says.
+    """The network-shape settings are pinned off, whatever the developer's .env says.
 
     Found the way these things are found. PUBLIC_MODE arrived in Step 3.3 and
     changes what GET / returns; the operator set PUBLIC_MODE=true in .env to
@@ -104,8 +104,14 @@ def a_private_network_unless_a_test_says_otherwise(monkeypatch):
 
     A test that is ABOUT public mode overrides this with its own monkeypatch,
     which wins for the duration of that test. See tests/test_public_mode.py.
+
+    TRUST_CLIENT_IP_HEADER (Step 3.5) is pinned here for the same reason and
+    not a different one: it decides whether a request header can name the
+    client, so a suite that inherited it from .env would test a different
+    throttle on the server than on a laptop.
     """
     monkeypatch.setattr(config, "PUBLIC_MODE", False)
+    monkeypatch.setattr(config, "TRUST_CLIENT_IP_HEADER", False)
 
 
 @pytest.fixture()
