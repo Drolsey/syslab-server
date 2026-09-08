@@ -264,6 +264,40 @@ def _finish(lane, job_id, seconds=3.0):
     raise AssertionError(f"job {job_id} never finished")
 
 
+def _drain(lane, seconds=5.0):
+    """Wait for every job to finish before this test's redirects come down.
+
+    A Lane's workers are daemon threads with no stop(), so a job submitted and
+    not waited for keeps running after the test body returns. If it is still
+    going when tenant_storage's monkeypatch unwinds, the handler writes into
+    this install's REAL data and index folders -- and the conftest guard then
+    blames whichever test happened to be running at that moment, which is a
+    different one.
+
+    Found exactly that way: test_another_tenant_cannot_cancel_the_job submits
+    a "write" job and never waits for it, because what it asserts is about the
+    cancel refusal. write_pdf indexes what it writes, so index/testtenant.sqlite3
+    appeared in the repository and the failure was reported against the next
+    test in the file. The guard was right; it just could not see across a
+    thread boundary.
+    """
+    import time
+
+    from app import jobs as jobs_module
+
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        with lane._lock:
+            unfinished = [j for j in lane._jobs.values() if j.status not in jobs_module.FINISHED]
+        if not unfinished:
+            return
+        time.sleep(0.02)
+    raise AssertionError(
+        f"jobs still running after {seconds}s: {[j.id for j in unfinished]}. "
+        "They would have written into the real folders after teardown."
+    )
+
+
 @pytest.fixture()
 def writing_lane(tenant_storage):
     """A lane whose handler writes a file, so where it lands is visible."""
@@ -273,7 +307,8 @@ def writing_lane(tenant_storage):
     made.handler("write", lambda report, name="x.pdf", body="hello":
                  tools.write_pdf(name, title="from a job", body=body))
     made.handler("whoami", lambda report: {"tenant": context.current_tenant()})
-    return made
+    yield made
+    _drain(made)
 
 
 def test_a_job_runs_as_the_tenant_that_submitted_it(writing_lane):

@@ -182,6 +182,21 @@ returns 400 for every value except `"none"`, which is the entire feature the
 website's agent depends on. They are in `docker-compose.yml`; confirm they
 survived whatever edit came last.
 
+**vLLM will not start, `Available KV cache memory: 0.45 GiB`.** Not the same as
+out of memory: the model loaded and there was nothing left for the KV cache.
+The usual cause is a `docker compose up -d` recreating the container while the
+previous one is still releasing VRAM — it fails once and the next restart
+succeeds, which is what `restart: unless-stopped` is for. If it keeps failing,
+something else is holding the card (`nvidia-smi`), or
+`--gpu-memory-utilization` has been raised past what the weights leave room
+for. The error names the largest `--max-model-len` that would have fitted.
+
+**Answers cut off mid-sentence.** Check `finish_reason` before assuming a bug.
+The gateway clamps `max_tokens` to what is left of the model's window after the
+prompt, so a very long conversation leaves little room for the reply. That is
+the window being genuinely full, not the clamp misbehaving; the fix is a bigger
+`--max-model-len`, which costs KV cache — see `docs/models.md`.
+
 **Answers are slow and end mid-sentence, `finish_reason: "length"`.** Qwen3 is
 thinking, and spent the token budget on it. Requests from this app send
 `chat_template_kwargs: {"enable_thinking": false}`; a caller reaching vLLM

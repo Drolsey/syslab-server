@@ -78,6 +78,43 @@ def _post(payload: dict[str, Any], timeout: int) -> Any:
         raise LlmError(f"The model server did not answer within {timeout}s.") from exc
 
 
+# Answered once per model and kept, because it cannot change without the
+# server restarting -- max_model_len is an engine launch flag. Only successful
+# answers are cached: a lookup that failed because the model server was still
+# starting must be asked again, not remembered as "unknown" forever.
+_windows: dict[str, int] = {}
+
+
+def model_window(model: str) -> int | None:
+    """How many tokens this model holds for one request, or None if unknown.
+
+    Asked of the server rather than configured here, and that is the point.
+    The window is set by --max-model-len in docker-compose.yml; a copy of it
+    in .env would be a second place to remember, and the two would disagree
+    on the first day somebody changed one. The server already publishes it on
+    /v1/models, so this reads it from the thing that decides it.
+
+    None means genuinely unknown -- the server is down, or does not publish
+    max_model_len. Callers must not invent a number in that case: an assumed
+    window is worse than no window, because it silently truncates answers on
+    a server that would have accepted them.
+    """
+    cached = _windows.get(model)
+    if cached is not None:
+        return cached
+    try:
+        with urllib.request.urlopen(f"{LLM_BASE_URL}/models", timeout=10) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+    for entry in body.get("data") or []:
+        length = entry.get("max_model_len")
+        if entry.get("id") == model and isinstance(length, int) and length > 0:
+            _windows[model] = length
+            return length
+    return None
+
+
 def raw_request(payload: dict[str, Any], timeout: int | None = None):
     """POST an arbitrary OpenAI-shaped payload, unmodified, and return the open response.
 

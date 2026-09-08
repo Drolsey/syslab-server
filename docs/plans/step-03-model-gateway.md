@@ -43,6 +43,52 @@ The second is the one worth having. `extra="allow"` is what makes an ordinary
 OpenAI client work untouched, and nothing about reading the field list would
 tell you that turning it off breaks tool calling.
 
+### The output budget, found by reading the caller
+
+Reading the website's provider code before asking it to point at us turned up
+something no gate here would have caught. `lib/agent/index.ts` sends
+`max_tokens: 32000` on every request; this server runs `--max-model-len 8192`.
+Confirmed against the live box rather than inferred:
+
+```
+max_tokens=32000 cannot be greater than max_model_len=max_total_tokens=8192.
+```
+
+HTTP 400, every message, before a token is generated. The step gate would have
+failed on its first attempt with an error that looks like a misconfiguration
+and is actually an incompatibility.
+
+`max_tokens` is a *reservation* out of a budget the prompt shares, made before
+generation starts. A generic OpenAI client sets it from what hosted models
+allow and has no way to know what this machine serves — which is the same
+argument as the model alias sitting next to it in `app/gateway.py`. The caller
+pins `syslab-default` precisely so it does not have to know what is behind it;
+a context window it must track is that knowledge coming back in through
+another door, and it would have to change again the day `--max-model-len`
+does.
+
+So the gateway clamps: `llm.model_window()` reads `max_model_len` from
+`/v1/models` — from the server that decides it, not from a copy in `.env` that
+would disagree the first time somebody changed one — and `max_tokens` comes
+down to what is left after the prompt. Verified end to end against the live
+server: `32000 -> 7827`, `finish_reason: tool_calls`, the tool actually called.
+
+Two cases are deliberately left alone, and both are the "never a silent
+fallback" rule:
+
+- **No window known** (server down, or it does not publish one). Pass through
+  unchanged. Guessing a limit would truncate answers on a server that would
+  have finished them.
+- **The prompt alone does not fit.** A real failure the caller must see. A
+  clamp to zero would turn vLLM's precise error into an empty answer.
+
+The prompt estimate is characters over three, deliberately pessimistic —
+prose runs nearer four, but what fills these prompts is JSON: tool schemas,
+tool results, database rows. Over-estimating costs a slightly shorter answer;
+under-estimating costs the 400 and no answer at all. Measured against the live
+server the estimate ran about 2.5x conservative (365 estimated, 145 actual),
+which is the intended direction.
+
 ### The tunnel
 
 `cloudflared` in `docker-compose.yml`, pinned by digest like vLLM, behind a

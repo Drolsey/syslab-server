@@ -74,6 +74,15 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Reasoning in `docs/plans/step-03-model-gateway.md` §3.4.
 
 ### Fixed
+- **Every request from the website would have returned HTTP 400.** It sends
+  `max_tokens: 32000`; this server runs `--max-model-len 8192`, and vLLM rejects that
+  outright before generating anything. `max_tokens` is a reservation out of a budget the
+  prompt shares, and a generic OpenAI client has no way to know what this machine serves.
+  The gateway now reads `max_model_len` from `/v1/models` and clamps `max_tokens` to what
+  is left after the prompt — the same argument as the model alias beside it: the caller
+  pins a name so it does not have to track what is behind it. Nothing is clamped when the
+  window is unknown or the prompt alone does not fit; both are errors the caller needs to
+  see rather than have papered over.
 - **The vLLM container could not call a tool at all.** It was started without
   `--enable-auto-tool-choice --tool-call-parser hermes`, and every `tool_choice` value
   except `"none"` returned HTTP 400 — which is the entire feature the website's agent
@@ -81,6 +90,15 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 - **Qwen3 thinks by default and will spend a whole token budget doing it**, returning
   `finish_reason: "length"` with no answer. Requests now send
   `chat_template_kwargs: {"enable_thinking": false}` unless a caller asks otherwise.
+- **A test was writing into this install's real search index**, intermittently.
+  `test_another_tenant_cannot_cancel_the_job` submits a job and never waits for it, because
+  what it asserts is about the cancel refusal — but a `Lane`'s workers are daemon threads
+  with no `stop()`, so the handler ran on after the test body returned and sometimes landed
+  after the tenant redirects had unwound. `write_pdf` indexes what it writes, so
+  `index/testtenant.sqlite3` appeared in the repository. The conftest guard caught it and
+  blamed the *next* test in the file, which is the one thing its docstring says it is
+  designed not to do: it cannot see across a thread boundary. The lane fixture now drains
+  before teardown.
 - **The systemd unit could not have started.** `scripts/service/syslab-server.service` used
   `%i` for the user and the home directory, and `%i` is the *instance* name, which a
   non-template unit does not have — every one of those paths expanded to nothing. It is now

@@ -87,6 +87,70 @@ def require_gateway_token(request: Request) -> str:
     return candidate
 
 
+# Estimating a token count without a tokenizer. Three characters per token is
+# deliberately pessimistic -- English prose runs closer to four, but what
+# actually fills this plane's prompts is JSON: tool definitions, tool results,
+# and rows out of a database, where punctuation and quoting push the ratio
+# down. Over-estimating the prompt costs a slightly shorter answer.
+# Under-estimating costs an HTTP 400 and no answer at all, so the error is
+# taken in the direction that still works.
+CHARS_PER_TOKEN = 3
+# The chat template wraps every message in role markers the payload does not
+# contain, and the estimate above cannot see them.
+TEMPLATE_OVERHEAD_TOKENS = 256
+
+
+def _estimate_prompt_tokens(payload: dict[str, Any]) -> int:
+    material = json.dumps(
+        {"messages": payload.get("messages") or [], "tools": payload.get("tools") or []}
+    )
+    return len(material) // CHARS_PER_TOKEN + TEMPLATE_OVERHEAD_TOKENS
+
+
+def _clamp_output_budget(payload: dict[str, Any], real_model: str) -> None:
+    """Cap max_tokens at what is actually left of the model's window.
+
+    max_tokens is a RESERVATION, made before generation starts, out of a
+    budget the prompt shares. An OpenAI client sets it from what the hosted
+    models allow and has no way to know what this machine serves -- the
+    website sends 32000 against a window of 8192, and vLLM rejects that
+    outright: "max_tokens=32000 cannot be greater than max_model_len=8192".
+    Every request, before a token is generated.
+
+    Clamping here rather than asking the website to change is the same
+    argument as the model alias next to it. The caller pins `syslab-default`
+    precisely so it does not have to know what is behind it; a context window
+    it must track is that knowledge coming back in through another door, and
+    it would have to change again the day --max-model-len does.
+
+    Two cases are deliberately left alone:
+
+    - No window known (the server is down, or does not publish it). Passing
+      the request through unchanged lets vLLM give its own precise error
+      rather than this guessing at a limit and truncating answers a working
+      server would have finished.
+    - The prompt alone does not fit. That is a real failure and the caller
+      needs to see it, not a silently empty answer. vLLM says so exactly.
+
+    A clamped request is not a degraded one in the way a truncated PROMPT
+    would be: nothing the caller sent is dropped. Only the ceiling on the
+    reply comes down, and it comes down to the largest value that can work.
+    """
+    window = llm.model_window(real_model)
+    if window is None:
+        return
+    room = window - _estimate_prompt_tokens(payload)
+    if room <= 0:
+        return
+    # max_completion_tokens is the newer OpenAI spelling of the same field.
+    # Both are honoured because a client may send either, and a clamp that
+    # only knew one name would leave the other to fail exactly as before.
+    for field in ("max_tokens", "max_completion_tokens"):
+        requested = payload.get(field)
+        if isinstance(requested, int) and requested > room:
+            payload[field] = room
+
+
 def _resolve_model(alias: str) -> str:
     real = MODEL_ALIASES.get(alias)
     if real is None:
@@ -154,6 +218,7 @@ def chat_completions(body: ChatCompletionRequest):
     # caller that wants thinking on can still set chat_template_kwargs
     # itself; this only supplies the default when they did not.
     payload.setdefault("chat_template_kwargs", {"enable_thinking": False})
+    _clamp_output_budget(payload, real_model)
     if payload.get("stream"):
         payload.setdefault("stream_options", {"include_usage": True})
 

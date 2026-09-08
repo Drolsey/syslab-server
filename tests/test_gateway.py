@@ -27,6 +27,12 @@ def gateway_config(monkeypatch):
     monkeypatch.setattr(gateway, "GATEWAY_TOKENS", {GATEWAY_TOKEN})
     monkeypatch.setattr(gateway, "MODEL_ALIASES", {ALIAS: REAL_MODEL})
     monkeypatch.setattr(gateway, "GATEWAY_RATE_LIMIT_PER_MINUTE", 60)
+    # The context window is asked of the live model server, which no test may
+    # reach. None is the honest default here and it is also the safe one: an
+    # unknown window means the gateway clamps nothing, so every test below
+    # sees the payload it actually sent. The tests that are ABOUT clamping
+    # set a window of their own.
+    monkeypatch.setattr(llm, "model_window", lambda model: None)
     gateway._requests.clear()
     yield
 
@@ -224,6 +230,93 @@ def test_streaming_asks_for_usage(client, monkeypatch):
     seen = capture_payload(monkeypatch, FakeResponse(lines=["data: [DONE]"]))
     client.post("/v1/chat/completions", json={**ASK, "stream": True})
     assert seen["stream_options"] == {"include_usage": True}
+
+
+# --- the output budget ----------------------------------------------------
+#
+# The website sends max_tokens: 32000 (lib/agent/index.ts) against a window of
+# 8192, and vLLM rejects that outright before generating anything. Confirmed
+# against the live server, not inferred: "max_tokens=32000 cannot be greater
+# than max_model_len=max_total_tokens=8192". Without the clamp, every message
+# from the website is an HTTP 400.
+
+def window(monkeypatch, tokens: int | None):
+    monkeypatch.setattr(llm, "model_window", lambda model: tokens)
+
+
+def test_an_impossible_max_tokens_is_brought_down_to_what_fits(client, monkeypatch):
+    window(monkeypatch, 8192)
+    seen = capture_payload(monkeypatch, FakeResponse(completion()))
+    client.post("/v1/chat/completions", json={**ASK, "max_tokens": 32000})
+    assert seen["max_tokens"] < 8192
+    assert seen["max_tokens"] > 0
+
+
+def test_a_max_tokens_that_already_fits_is_left_alone(client, monkeypatch):
+    """The clamp is a ceiling, not a policy. A caller asking for less than the
+    room available must get exactly what it asked for."""
+    window(monkeypatch, 8192)
+    seen = capture_payload(monkeypatch, FakeResponse(completion()))
+    client.post("/v1/chat/completions", json={**ASK, "max_tokens": 100})
+    assert seen["max_tokens"] == 100
+
+
+def test_a_caller_that_names_no_ceiling_is_still_given_none(client, monkeypatch):
+    """vLLM's own default is already "whatever is left", which is the right
+    answer. Filling the field in would be this plane inventing a limit."""
+    window(monkeypatch, 8192)
+    seen = capture_payload(monkeypatch, FakeResponse(completion()))
+    client.post("/v1/chat/completions", json=ASK)
+    assert "max_tokens" not in seen
+
+
+def test_a_long_conversation_leaves_less_room_than_a_short_one(client, monkeypatch):
+    """Why a fixed number would be wrong: the prompt and the answer share one
+    budget, so what fits depends on the conversation so far."""
+    window(monkeypatch, 8192)
+
+    short = capture_payload(monkeypatch, FakeResponse(completion()))
+    client.post("/v1/chat/completions", json={**ASK, "max_tokens": 32000})
+    after_short = short["max_tokens"]
+
+    long_history = [{"role": "user", "content": "x" * 6000}]
+    verbose = capture_payload(monkeypatch, FakeResponse(completion()))
+    client.post(
+        "/v1/chat/completions",
+        json={"model": ALIAS, "messages": long_history, "max_tokens": 32000},
+    )
+    assert verbose["max_tokens"] < after_short
+
+
+def test_the_newer_field_name_is_clamped_too(client, monkeypatch):
+    window(monkeypatch, 8192)
+    seen = capture_payload(monkeypatch, FakeResponse(completion()))
+    client.post("/v1/chat/completions", json={**ASK, "max_completion_tokens": 32000})
+    assert seen["max_completion_tokens"] < 8192
+
+
+def test_an_unknown_window_clamps_nothing(client, monkeypatch):
+    """The model server is down or does not publish max_model_len. Guessing a
+    window here would truncate answers on a server that would have finished
+    them; passing through lets vLLM give its own precise error instead."""
+    window(monkeypatch, None)
+    seen = capture_payload(monkeypatch, FakeResponse(completion()))
+    client.post("/v1/chat/completions", json={**ASK, "max_tokens": 32000})
+    assert seen["max_tokens"] == 32000
+
+
+def test_a_prompt_too_big_for_the_window_is_not_papered_over(client, monkeypatch):
+    """A prompt that does not fit is a real failure the caller must see. The
+    clamp has nothing useful to say about it -- a max_tokens of zero or a
+    negative number would turn a clear error from vLLM into an empty answer."""
+    window(monkeypatch, 512)
+    seen = capture_payload(monkeypatch, FakeResponse(completion()))
+    client.post(
+        "/v1/chat/completions",
+        json={"model": ALIAS, "messages": [{"role": "user", "content": "x" * 9000}],
+              "max_tokens": 32000},
+    )
+    assert seen["max_tokens"] == 32000
 
 
 # --- rate limiting --------------------------------------------------------
