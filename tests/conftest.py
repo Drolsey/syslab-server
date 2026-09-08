@@ -86,6 +86,28 @@ def never_the_real_control_plane(tmp_path, monkeypatch):
     yield control
 
 
+@pytest.fixture(autouse=True)
+def a_private_network_unless_a_test_says_otherwise(monkeypatch):
+    """PUBLIC_MODE is pinned off, whatever the developer's .env says.
+
+    Found the way these things are found. PUBLIC_MODE arrived in Step 3.3 and
+    changes what GET / returns; the operator set PUBLIC_MODE=true in .env to
+    test the public surface on the real server, and two long-standing tests in
+    test_api.py started failing, because config reads .env at import and the
+    suite had quietly inherited it.
+
+    The bug was never those two tests. It is that a test result depended on a
+    file that is not in the repository, so the suite meant something different
+    on each machine. Pinned here rather than in the tests that noticed, for the
+    same reason the folder guards above are autouse: a test that has to
+    remember to pin an ambient setting is a test that will forget.
+
+    A test that is ABOUT public mode overrides this with its own monkeypatch,
+    which wins for the duration of that test. See tests/test_public_mode.py.
+    """
+    monkeypatch.setattr(config, "PUBLIC_MODE", False)
+
+
 @pytest.fixture()
 def tenant_storage(tmp_path, monkeypatch):
     """Throwaway DATA_ROOT and INDEX_ROOT, and a tenant to be. Yields the

@@ -37,6 +37,26 @@ from app.config import (  # noqa: E402
 LINE = "-" * 62
 LOCAL = f"http://127.0.0.1:{APP_PORT}"
 
+
+def restart_hint() -> str:
+    """How to restart the app ON THIS MACHINE.
+
+    This used to print a PowerShell path unconditionally, which was correct on
+    the development laptop and actively misleading on the Ubuntu server the
+    architecture plan moves production to: the advice named a file that is
+    documented as "not used on Windows"'s opposite -- a Windows-only script --
+    to an operator standing at a Linux box.
+    """
+    if platform.system() == "Windows":
+        return "powershell -ExecutionPolicy Bypass -File scripts\\service\\restart_windows.ps1"
+    return "sudo systemctl restart syslab-server   (or stop the foreground process and re-run: python -m app.main)"
+
+
+def port_owner_hint() -> str:
+    if platform.system() == "Windows":
+        return f"Get-NetTCPConnection -LocalPort {APP_PORT} -State Listen | Select OwningProcess"
+    return f"sudo ss -ltnp 'sport = :{APP_PORT}'"
+
 results: list[tuple[str, bool, str]] = []
 
 
@@ -142,12 +162,12 @@ def check_the_door() -> None:
             print("  real bug rather than a stale process. Report this output.")
 
         print("\n  Fix it now, before anything else:")
-        print("    powershell -ExecutionPolicy Bypass -File scripts\\service\\restart_windows.ps1")
-        print("    .\\run.cmd scripts\\check_remote.py")
+        print(f"    {restart_hint()}")
+        print("    python scripts/check_remote.py")
         print("\n  If you have already run that and this number has not changed, an old")
         print("  python is still holding the port and the new one could not start. See")
         print("  who owns it with:")
-        print(f"    Get-NetTCPConnection -LocalPort {APP_PORT} -State Listen | Select OwningProcess")
+        print(f"    {port_owner_hint()}")
         print("\n  APP_HOST is already 0.0.0.0 in .env, so the moment it restarts it will")
         print("  listen on your tailnet. It must be asking for a token by then.\n")
         record("Refuses a wrong token", False, "not tested: the door is open")
@@ -157,7 +177,7 @@ def check_the_door() -> None:
     record("Refuses a request with no token", code in (401, 503),
            f"HTTP {code}" + (" (APP_TOKEN unset)" if code == 503 else ""))
     record("Running app matches the code on disk", bool(running_code_is_current),
-           "" if running_code_is_current else "restart it: scripts\\service\\restart_windows.ps1")
+           "" if running_code_is_current else f"restart it: {restart_hint()}")
 
     code, _ = status_of(f"{LOCAL}/api/health", token="definitely-not-the-token")
     record("Refuses a wrong token", code == 401, f"HTTP {code}")
@@ -165,7 +185,7 @@ def check_the_door() -> None:
     record("Accepts the right token", with_token[0] == 200, f"HTTP {with_token[0]}")
     if with_token[0] == 401:
         print("\n  The running app is using a different token to the one in .env.")
-        print("  Restart it:  powershell -ExecutionPolicy Bypass -File scripts\\service\\restart_windows.ps1")
+        print(f"  Restart it:  {restart_hint()}")
 
     code, _ = status_of(f"{LOCAL}/api/files/../../.env", token=APP_TOKEN)
     record("Still refuses to serve files outside the data folder", code in (400, 404), f"HTTP {code}")
@@ -277,7 +297,7 @@ def check_reachable(ip: str | None) -> None:
         if running_code_is_current is False:
             print("    0. The running app has not been restarted since you changed .env,")
             print("       so it is still bound to whatever APP_HOST said when it started.")
-            print("       Run: powershell -ExecutionPolicy Bypass -File scripts\\service\\restart_windows.ps1")
+            print(f"       Run: {restart_hint()}")
         print("    1. APP_HOST is still 127.0.0.1. Set it to 0.0.0.0 and restart the app.")
         print("    2. Windows Firewall is blocking the port. Allow it with, in an")
         print("       Administrator PowerShell:")
