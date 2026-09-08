@@ -87,6 +87,15 @@ MAX_UPLOAD_BYTES = int(_env("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 APP_HOST = _env("APP_HOST", "127.0.0.1")
 APP_PORT = int(_env("APP_PORT", "8000"))
 
+# Is this reachable from the public internet rather than only a tailnet?
+# Two things are safe on a tailnet and not safe once anyone can reach them:
+# the interactive API docs, which publish the whole surface including the
+# routes that write files, and the admin page at "/". Both are hidden when
+# this is on. Off by default because the wrong default here is one-directional:
+# a server that is public while this says otherwise is the bad outcome, and it
+# is the one a forgotten setting produces.
+PUBLIC_MODE = _env("PUBLIC_MODE", "false").lower() in {"1", "true", "yes", "on"}
+
 # --- the search index ---
 # Deliberately outside DATA_DIR: it is a derived cache, not user data, and
 # deleting it must be obviously safe.

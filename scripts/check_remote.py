@@ -29,6 +29,7 @@ from app.config import (  # noqa: E402
     APP_TOKEN,
     LOOPBACK,
     MIN_TOKEN_LENGTH,
+    PUBLIC_MODE,
     WEAK_TOKENS,
     code_fingerprint,
 )
@@ -170,6 +171,50 @@ def check_the_door() -> None:
     record("Still refuses to serve files outside the data folder", code in (400, 404), f"HTTP {code}")
 
 
+def check_public_surface() -> None:
+    """Step 3.3's gate: what an unauthenticated stranger can reach.
+
+    Every check here is run with no token at all, because that is who this
+    section is about. On a tailnet these were fine and this section is
+    advisory; the moment PUBLIC_MODE is on, each one is a way of publishing
+    a server that writes files, and they are gates.
+    """
+    section("The public surface, with no token")
+
+    code, _ = status_of(f"{LOCAL}/v1/models", token=None)
+    record("Unauthenticated /v1/models is refused", code in (401, 503), f"HTTP {code}")
+
+    request = urllib.request.Request(
+        f"{LOCAL}/v1/chat/completions",
+        data=json.dumps({"model": "syslab-default", "messages": [{"role": "user", "content": "hi"}]}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            chat_code = response.status
+    except urllib.error.HTTPError as exc:
+        chat_code = exc.code
+    except (urllib.error.URLError, TimeoutError):
+        chat_code = 0
+    record("Unauthenticated chat is refused", chat_code in (401, 503), f"HTTP {chat_code}")
+
+    docs, _ = status_of(f"{LOCAL}/api/docs", token=None)
+    schema, _ = status_of(f"{LOCAL}/openapi.json", token=None)
+    page, _ = status_of(f"{LOCAL}/", token=None)
+
+    if PUBLIC_MODE:
+        # The schema matters as much as the docs page: the page is only a
+        # reader for it, and leaving it up publishes every route by name.
+        record("The docs page is unreachable in public mode", docs == 404, f"HTTP {docs}")
+        record("The API schema is unreachable in public mode", schema == 404, f"HTTP {schema}")
+        record("The admin page is unreachable in public mode", page == 404, f"HTTP {page}")
+    else:
+        print(f"  ....  PUBLIC_MODE is off: docs HTTP {docs}, schema HTTP {schema}, page HTTP {page}")
+        print("        Fine on a tailnet. Set PUBLIC_MODE=true in .env before this")
+        print("        server is reachable from the internet, and re-run this.")
+
+
 def check_binding() -> None:
     section("What it is listening on")
     if APP_HOST in LOOPBACK:
@@ -248,6 +293,7 @@ def main() -> int:
 
     check_token()
     check_the_door()
+    check_public_surface()
     check_binding()
     ip, name = check_tailscale()
     check_reachable(ip)

@@ -14,7 +14,6 @@ import hmac
 import re
 import time
 import unicodedata
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -44,7 +43,16 @@ from app.llm import LlmError
 WEB_DIR = Path(__file__).resolve().parent / "web"
 ALLOWED_SUFFIXES = {".pdf", ".xlsx", ".xlsm"}
 
-app = FastAPI(title="syslab-server", docs_url="/api/docs", redoc_url=None)
+# In public mode the interactive docs and the schema behind them are not
+# served at all. docs_url alone is not enough: the docs page is only a reader
+# for /openapi.json, and leaving that up publishes every route, including the
+# ones that write files, to anyone who asks. Both go, or neither does.
+app = FastAPI(
+    title="syslab-server",
+    docs_url=None if config.PUBLIC_MODE else "/api/docs",
+    redoc_url=None,
+    openapi_url=None if config.PUBLIC_MODE else "/openapi.json",
+)
 
 # The inference plane (Step 3.2). Its routes carry their own token check and
 # never resolve a tenant -- see app/gateway.py and the boundary in Section 2
@@ -89,8 +97,18 @@ class ChatRequest(BaseModel):
 TOKEN_COOKIE = "syslab_token"
 MAX_FAILURES = 8
 FAILURE_WINDOW_SECONDS = 900
+# The most client addresses whose recent failures are remembered at once.
+# There is no correct number; there is only "bounded" versus "not bounded".
+MAX_TRACKED_CLIENTS = 4096
 
-_failures: dict[str, list[float]] = defaultdict(list)
+# A plain dict, NOT a defaultdict, and that is the fix rather than a style
+# preference. Reading _failures[client] on a defaultdict CREATES the key, so
+# the old code grew an entry for every address that ever tried to sign in,
+# successful or not, and never removed one: the timestamps inside a key were
+# pruned, the keys themselves never were. On a tailnet that is a leak slow
+# enough never to matter. Facing the internet it is free memory exhaustion
+# from an attacker who only has to vary their source address.
+_failures: dict[str, list[float]] = {}
 
 
 def token_is_configured() -> bool:
@@ -188,10 +206,34 @@ async def require_auth(request: Request):
         context.reset_tenant(reset)
 
 
+def _sweep_failures(cutoff: float) -> None:
+    """Forget clients whose failures have all aged out, and cap what is left.
+
+    Forgetting a throttle entry is always the safe direction: it gives an
+    attacker nothing they did not already have by waiting out the window, and
+    it can never lock out someone who belongs here.
+    """
+    for client in [c for c, times in _failures.items() if not any(t > cutoff for t in times)]:
+        del _failures[client]
+    if len(_failures) > MAX_TRACKED_CLIENTS:
+        # Still over the cap, so somebody is deliberately varying their
+        # address. Drop the least recently failing first.
+        oldest_first = sorted(_failures.items(), key=lambda item: max(item[1]))
+        for client, _ in oldest_first[: len(_failures) - MAX_TRACKED_CLIENTS]:
+            del _failures[client]
+
+
 def _recent_failures(client: str) -> list[float]:
     cutoff = time.time() - FAILURE_WINDOW_SECONDS
-    _failures[client] = [t for t in _failures[client] if t > cutoff]
-    return _failures[client]
+    _sweep_failures(cutoff)
+    recent = [t for t in _failures.get(client, []) if t > cutoff]
+    # Only write back a key that has something in it. An empty list is the
+    # same information as no key at all, and one of the two is unbounded.
+    if recent:
+        _failures[client] = recent
+    else:
+        _failures.pop(client, None)
+    return recent
 
 
 # --------------------------------------------------------------------------
@@ -238,6 +280,13 @@ def unique_path(name: str) -> Path:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
+    # The page is an operator tool, not a product surface (Section 11 of the
+    # architecture plan). Unauthenticated it is harmless on a tailnet and it
+    # is an advertisement on the public internet, so in public mode there is
+    # nothing here. 404 rather than 401: "nothing to see" is a smaller
+    # disclosure than "something here needs a password".
+    if config.PUBLIC_MODE:
+        raise HTTPException(404, "Not found.")
     return HTMLResponse((WEB_DIR / "index.html").read_text(encoding="utf-8"))
 
 
@@ -256,7 +305,7 @@ def login(request: Request, response: Response, body: LoginRequest = Body(...)) 
 
     presented = body.token.strip()
     if tenant_for_token(presented) is None:
-        _failures[client].append(time.time())
+        _failures.setdefault(client, []).append(time.time())
         time.sleep(0.4)  # slow down anyone trying tokens in a loop
         remaining = MAX_FAILURES - len(_recent_failures(client))
         raise HTTPException(401, f"That token is not right. {remaining} attempts left.")
