@@ -20,6 +20,9 @@ services:
     command:
       - --model
       - Qwen/Qwen3-8B-AWQ
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - hermes
     deploy:
       resources:
         reservations:
