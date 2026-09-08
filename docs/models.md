@@ -78,14 +78,48 @@ and tool definitions, and vLLM stores that once rather than per request. When
 the pool does fill, vLLM queues (`Waiting: N reqs`) rather than failing, so the
 symptom is latency, not errors.
 
-### Raised to 0.85 on 8 September 2026
+### Raised to 0.85 on 8 September 2026, and what that actually bought
 
-vLLM printed the alternative in the same log line: the full card would give
-**10.95 GiB of KV cache**, roughly 44,800 tokens, about 5.5x. `0.85` takes most
-of that while leaving about 4.7 GiB — which still covers the ~3.5 GiB Section 13
-budgets for embeddings, STT and TTS combined. The 0.70 was reserving nine
-gigabytes for six weeks on behalf of three services that do not exist, while the
-one that does exist ran at 1.50x.
+Measured after the change, from the same log line:
+
+| | At 0.70 | At 0.85 |
+|---|---|---|
+| Budget | 21.95 GiB | 26.65 GiB |
+| Weights and non-torch | 18.62 GiB | **20.04 GiB** |
+| Peak activation | 0.33 GiB | **1.46 GiB** |
+| CUDA graphs | 0.81 GiB | 0.81 GiB |
+| KV cache | 3.0 GiB | **5.16 GiB** |
+| KV cache in tokens | 12,272 | **21,120** |
+| Concurrency at 8192 per request | 1.50x | **2.58x** |
+
+Concurrency up 72%. But the projection before the change was ~3.4x, and the
+gap is the thing worth writing down: **vLLM's own overhead scales with the
+budget you give it.** Weights and non-torch grew 1.42 GiB and peak activation
+grew 1.13 GiB, purely because the engine sized its batching to the larger
+allowance. Of 4.70 GiB of extra budget, only 2.16 GiB — about 46% — became
+cache. The estimate assumed the overhead was fixed. It is not, and this is the
+correction: **on this engine, budget a little under half of any increase to
+actually arrive as KV cache.**
+
+The same effect moved the ceiling. At 0.70 vLLM said the full card would give
+10.95 GiB of cache; at 0.85 it says 8.41 GiB, because the overhead it is
+measuring against is now larger. The "5.5x if you spent everything" figure from
+before was optimistic for the same reason — roughly 4.2x is the real ceiling,
+and it costs every gigabyte of headroom to reach.
+
+**Headroom is now the constraint, and it is tighter than planned.** Actual
+usage is 20.04 + 1.46 + 0.81 + 5.16 = **27.47 GiB**, leaving about **3.4 GiB**
+free, not the 4.7 projected. Section 13 budgets ~3.5 GiB for embeddings, STT
+and TTS together. That no longer fits with anything to spare. When Step 5
+lands, either this comes back down, or speech goes on the CPU — which Section
+13 already allows ("the 9950X has cores to spare") and which is now the
+expected answer rather than the fallback.
+
+Also visible: vLLM again allocated slightly more cache than the budget asked
+for (5.16 GiB where 4.2 would have fit inside 26.65), the same overshoot as at
+0.70. `--kv-cache-memory` sets the cache directly instead of inferring it from
+a fraction, and vLLM names it in that log line; it is the more precise flag if
+this ever needs to be exact.
 
 `--max-model-len` deliberately stayed at 8192 in the same change. Context length
 and concurrency spend the same cache, so doubling the window would have given

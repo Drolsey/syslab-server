@@ -67,10 +67,14 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   with its numbers. At 0.70 vLLM reported 3.0 GiB of KV cache, 12,272 tokens, and maximum
   concurrency of **1.50x** at 8192 tokens per request — one conversation at a time, on a
   machine bought for concurrency. The weights take 18.62 GiB of the 21.95 GiB that 0.70
-  allowed, so almost all of the increase becomes cache. The reserved headroom was for
-  embeddings (Step 5) and speech (Step 6); 0.85 still leaves ~4.7 GiB against the ~3.5 GiB
-  those three are budgeted at. `--max-model-len` stayed at 8192 deliberately: context and
-  concurrency spend the same cache, and the window is not what hurts.
+  allowed. Measured after the change: **5.16 GiB of cache, 21,120 tokens, 2.58x** — 72%
+  more concurrency. Less than the ~3.4x projected, because vLLM's own overhead scales with
+  the budget (weights and non-torch +1.42 GiB, peak activation +1.13 GiB), so only about
+  46% of an increase arrives as cache. `--max-model-len` stayed at 8192 deliberately:
+  context and concurrency spend the same cache, and the window is not what hurts.
+  Consequence to carry into Step 5: about 3.4 GiB is now free, against the ~3.5 GiB
+  Section 13 budgets for embeddings, STT and TTS together. Speech on the CPU is now the
+  expected answer rather than the fallback.
 - `app/llm.py` speaks OpenAI rather than Ollama's native API. `app/agent.py` was not
   touched: the call signature and return shape were preserved deliberately, and an empty
   `git diff app/agent.py` was the gate for that sub-step.
