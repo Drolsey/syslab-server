@@ -1,8 +1,6 @@
 # Step 1 (provisioning): only the vllm service is real today. syslab-server,
 # voice and cloudflared are added by the steps that build them (Section 5 of
-# the architecture plan) — app/llm.py still speaks Ollama's native API, not
-# OpenAI, until Step 3.1 lands, so containerising the app itself now would be
-# premature.
+# the architecture plan).
 #
 #   docker compose up -d
 #   docker compose logs -f vllm
@@ -19,7 +17,15 @@ services:
       - huggingface-cache:/root/.cache/huggingface
     command:
       - --model
-      - Qwen/Qwen3-8B-AWQ
+      - Qwen/Qwen3-32B-AWQ
+      # 8192, not the model's full context: at 32k this measured 27.9 GB
+      # under Ollama (docs/models.md), which blows the ~22 GB chat budget
+      # Section 13 of the architecture plan reserves for embeddings/STT/TTS
+      # on the same card. Revisit once those services actually exist.
+      - --max-model-len
+      - "8192"
+      - --gpu-memory-utilization
+      - "0.70"
       - --enable-auto-tool-choice
       - --tool-call-parser
       - hermes
