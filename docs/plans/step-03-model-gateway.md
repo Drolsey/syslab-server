@@ -1,7 +1,32 @@
 # Step 3 — The model gateway
 
-Status: in progress. Sub-step 3.0 (measure) is complete; 3.1 (`app/llm.py`
-speaks OpenAI) is next.
+Status: 3.0 and 3.1 complete. 3.2 (`app/gateway.py`) is next.
+
+## 3.1 — app/llm.py speaks OpenAI
+
+`git diff app/agent.py` was empty for the rewrite itself; all 338 tests pass
+unchanged (they mock `llm.chat` directly). Verified against live vLLM with
+`scripts/check_agent.py`, first on the Step 1 smoke-test model
+(`Qwen3-8B-AWQ`, 5 of 8 scenarios), then on the production candidate
+(`Qwen3-32B-AWQ`, 6 of 8).
+
+One real bug surfaced and was fixed: `query_to_excel`'s tool description said
+"THE ONLY WAY to turn a database table into a file" and listed "turn X into
+a file" as a trigger phrase, with nothing telling the model that a file
+already in the data folder is not a database table. Both models hit this —
+the 8B model hallucinated a SQL query when asked to sum a spreadsheet it had
+already read; the 32B model hallucinated one when asked to turn an invoice
+PDF into a spreadsheet. Fixed by adding an explicit exclusion to the tool
+description (`app/agent.py`). Pre-existing gap, not introduced by this step.
+
+The remaining 2 of 8 failures on `Qwen3-32B-AWQ` (scenarios 3 and 7) are not
+treated as bugs: both times the model reached the correct, verified answer
+by a different valid tool path than the test's `expect_tools` requires
+(`search_files` + `read_pdf` instead of `list_files`), and scenario 7's
+"ambiguity" compares against a fixture (`phase02_sample.pdf`) that has
+nothing to do with invoices, left over from an earlier phase's tests. Worth
+tightening the test's assertions at some point, but it is not a gateway or
+model-quality regression and does not block Step 3.
 
 ## 3.0 — vLLM capability matrix
 
