@@ -137,6 +137,25 @@ DB_EXPORT_TIMEOUT_MS = int(_env("DB_EXPORT_TIMEOUT_MS", "180000"))
 # --- auth (enforced from Phase 06) ---
 APP_TOKEN = _env("APP_TOKEN", "")
 
+# --- the inference plane (Step 3.2) ---
+# Deliberately separate from APP_TOKEN and the tenant token system: the
+# inference plane never learns what a conversation is and never resolves a
+# tenant (Section 2 of the architecture plan), so it has no business sharing
+# a credential with something that does. A comma-separated list because more
+# than one caller (the website, the operator testing by hand) needs its own
+# revocable value; the tenant-aware "kind" column on real tokens is Step 4.
+GATEWAY_TOKENS = {t.strip() for t in _env("GATEWAY_TOKENS", "").split(",") if t.strip()}
+# Requests allowed per token per rolling minute. Cheap and in-memory on
+# purpose: this is a courtesy limit against a misbehaving caller, not the
+# real capacity control -- that is vLLM's own queue and continuous batching.
+GATEWAY_RATE_LIMIT_PER_MINUTE = int(_env("GATEWAY_RATE_LIMIT_PER_MINUTE", "60"))
+# What /v1/models advertises, and the only names a request may ask for. The
+# website pins an alias, never a raw model name (Section 13): changing the
+# served model is this one line, not a change on the website's side. The
+# full TOML profile file is Step 3.4; one alias is enough until there is a
+# second model (embeddings) to alias alongside it.
+MODEL_ALIASES = {"syslab-default": LLM_MODEL}
+
 # Addresses that mean "this machine only", and tokens that are not tokens.
 # They live here rather than in main.py so the check scripts can read them
 # without importing the whole web framework.

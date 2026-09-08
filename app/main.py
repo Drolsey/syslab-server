@@ -23,7 +23,7 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Respon
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from app import agent, config, context, jobs, search, tenancy, tools
+from app import agent, config, context, gateway, jobs, search, tenancy, tools
 from app.config import (
     APP_HOST,
     APP_PORT,
@@ -45,6 +45,12 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 ALLOWED_SUFFIXES = {".pdf", ".xlsx", ".xlsm"}
 
 app = FastAPI(title="syslab-server", docs_url="/api/docs", redoc_url=None)
+
+# The inference plane (Step 3.2). Its routes carry their own token check and
+# never resolve a tenant -- see app/gateway.py and the boundary in Section 2
+# of the architecture plan. Mounted here so all three planes share one
+# process, as the plan's architecture diagram has them.
+app.include_router(gateway.router)
 
 # Recorded at import so the Phase 05 check can tell a process that started
 # itself at boot from one someone started by hand afterwards.

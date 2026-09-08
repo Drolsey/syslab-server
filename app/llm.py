@@ -78,6 +78,17 @@ def _post(payload: dict[str, Any], timeout: int) -> Any:
         raise LlmError(f"The model server did not answer within {timeout}s.") from exc
 
 
+def raw_request(payload: dict[str, Any], timeout: int | None = None):
+    """POST an arbitrary OpenAI-shaped payload, unmodified, and return the open response.
+
+    For app/gateway.py, which forwards a caller's own request body (built by
+    a real OpenAI client, carrying fields chat() never needed to know about)
+    rather than app/agent.py's narrower, reshaped {"message": ...} contract.
+    The caller reads and closes the response; this only opens the connection.
+    """
+    return _post(payload, timeout or LLM_TIMEOUT)
+
+
 def chat(
     messages: list[dict[str, Any]],
     tools: list[dict] | None = None,
