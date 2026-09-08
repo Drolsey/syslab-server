@@ -1,0 +1,37 @@
+# Step 1 (provisioning): only the vllm service is real today. syslab-server,
+# voice and cloudflared are added by the steps that build them (Section 5 of
+# the architecture plan) — app/llm.py still speaks Ollama's native API, not
+# OpenAI, until Step 3.1 lands, so containerising the app itself now would be
+# premature.
+#
+#   docker compose up -d
+#   docker compose logs -f vllm
+#   docker compose down            # stops it; add -v only if you mean to drop the cache too
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest   # TODO pin to a digest once Step 3.4 settles the model; see docs/models.md
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "8000:8000"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+    command:
+      - --model
+      - Qwen/Qwen3-8B-AWQ
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  huggingface-cache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/syslab/.cache/huggingface
