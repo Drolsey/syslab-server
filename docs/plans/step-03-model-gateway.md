@@ -1,6 +1,41 @@
 # Step 3 — The model gateway
 
-Status: 3.0, 3.1 and 3.2 complete. 3.3 (public exposure) is next.
+Status: 3.0, 3.1, 3.2 and 3.3 complete. 3.4 (model profiles) is next.
+
+## 3.3 — public exposure
+
+Finding 4.6, both halves.
+
+`PUBLIC_MODE` (off by default, because the wrong default here is
+one-directional) hides three things: the interactive docs, the OpenAPI schema
+behind them, and the admin page at `/`. Hiding the docs page alone would have
+been theatre — it is only a reader for `/openapi.json`, and serving that
+publishes every route by name, including the ones that write files. The admin
+page returns 404 rather than 401 in public mode: "there is nothing here"
+discloses less than "there is something here that needs a password".
+
+The login throttle was a `defaultdict` keyed by client address, pruned by
+timestamp within a key and never by key. The `defaultdict` was the sharp edge:
+merely *reading* an entry creates it, so every address that ever attempted a
+sign-in left a key behind permanently. It is now a plain dict, swept of
+aged-out clients on each use, and capped at `MAX_TRACKED_CLIENTS` so an
+attacker who varies their source address cannot grow it without limit.
+Forgetting an entry is always the safe direction: it gives an attacker nothing
+they could not get by waiting out the window, and can never lock out someone
+who belongs.
+
+`check_remote.py` gains a "public surface, with no token" section, which is
+this sub-step's gate.
+
+**Deferred to Step 4: token kinds.** Section 8's `kind` column on the `tokens`
+table is listed under 3.3, but nothing reads it until Step 4's service-token
+branch in `require_auth`, and adding a column to an existing table needs
+schema-migration machinery this repo does not have yet (`tenancy.py` runs
+`CREATE TABLE IF NOT EXISTS` and refuses only *newer* schema versions; there is
+no upgrade path). Step 4 needs that machinery anyway and is where the column is
+first used, so it lands there. The gateway's own credentials are `GATEWAY_TOKENS`
+in the environment, deliberately outside the control plane entirely, so nothing
+in Step 3 is waiting on this.
 
 ## 3.2 — the inference plane
 
