@@ -1,6 +1,32 @@
 # Step 3 — The model gateway
 
-Status: 3.0 and 3.1 complete. 3.2 (`app/gateway.py`) is next.
+Status: 3.0, 3.1 and 3.2 complete. 3.3 (public exposure) is next.
+
+## 3.2 — the inference plane
+
+`app/gateway.py`, mounted on the same FastAPI process, serving
+`/v1/chat/completions` and `/v1/models`. Verified against the live server on
+2026-09-08 (app on :8080, vLLM on :8000):
+
+| Check | Result |
+|---|---|
+| No token / wrong token | 401 both |
+| `/v1/models` | advertises `syslab-default` only, never the real model name |
+| Unknown model | 404 in OpenAI's error shape |
+| Non-streamed tool call | `finish_reason: tool_calls`, arguments as a JSON string |
+| Multi-turn: tool result fed back | correct final answer, `finish_reason: stop` |
+| Streamed tool call | 12 chunks, stable delta index `0`, arguments reassemble to valid JSON, `[DONE]` terminator, usage chunk present |
+| Model name in every streamed chunk | `syslab-default`; zero occurrences of the real name |
+
+The alias round trip is the part worth restating: the caller asks for
+`syslab-default`, vLLM is asked for `Qwen/Qwen3-32B-AWQ`, and every response
+and every streamed chunk says `syslab-default` on the way back. That is what
+makes "changing the served model changes nothing in Secret Manager" true.
+
+**Open follow-up, not blocking:** usage accounting is currently pass-through
+only — the `usage` block reaches the caller, but nothing on this side records
+per-token spend. Real accounting is worth having before Step 7's measurement
+window, which is when someone will actually ask what the hardware served.
 
 ## 3.1 — app/llm.py speaks OpenAI
 
