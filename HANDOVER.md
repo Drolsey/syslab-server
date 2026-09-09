@@ -283,11 +283,20 @@ the short version:
   | Weights | 18.00 GiB | 9.29 GiB |
   | Layers → KV per token | 64 → 256 KiB | 40 → 160 KiB |
   | `--gpu-memory-utilization` | 0.85 | **0.70** |
-  | KV cache budget | 5.16 GiB = 21,135 tokens | ~11.7 GiB = ~76,700 tokens |
+  | KV cache budget | 5.16 GiB = 21,135 tokens | **9.27 GiB = 60,768 tokens** |
   | `--max-model-len` | 8192 | **16384** |
-  | Conversation room after the 4,213 floor | 3,979 | **~12,171** |
-  | Concurrency at that window | 2.58x @ 8192 | **~4.68x** projected |
-  | Free VRAM for Steps 5 and 6 | ~3.4 GiB (did not fit) | **~8.6 GiB** |
+  | Conversation room after the 4,213 floor | 3,979 | **12,171** |
+  | Concurrency at that window | 2.58x @ 8192 | **3.71x @ 16384** |
+  | Free VRAM for Steps 5 and 6 | ~3.4 GiB (did not fit) | **~9.4 GiB** |
+
+  **Measured on the box 9 September, not projected — and the projection missed
+  by 21% (4.68x predicted, 3.71x delivered).** The KV arithmetic was right for
+  the third time; the estimate of how much memory would be *left* was not.
+  `--max-model-len` costs non-KV memory of its own, and this projection carried
+  overhead measured at 8192 into a 16384 run. `docs/models.md` has the full
+  post-mortem. The decision still holds comfortably: 2.88x the KV tokens, 1.44x
+  the concurrency, 2x the window, and the 4,506-token tool result that started
+  all this now sits inside 12,171 tokens of room with 7,665 to spare.
 
   **The utilization went back down in the same change, and that is not a
   reversal of 8 September.** 0.85 existed to buy concurrency out of the budget,

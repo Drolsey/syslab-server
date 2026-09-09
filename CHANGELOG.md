@@ -66,9 +66,13 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   system prompt and tool schemas occupy 4,213 tokens before anything is asked, leaving
   3,979 of an 8192 window — less than the 4,506 tokens of a single maximum-size tool
   result. Every fix inside the 32B was a trade; halving the weights was the only one that
-  bought back the window *and* the concurrency. Projected: KV cache 5.16 → ~11.7 GiB,
-  concurrency 2.58x → ~4.68x, free VRAM for Steps 5 and 6 ~3.4 → ~8.6 GiB, which un-does
-  the headroom squeeze the 0.85 change had created and takes speech back off the CPU.
+  bought back the window *and* the concurrency. Measured on the box: KV cache 5.16 →
+  **9.27 GiB**, KV tokens 21,135 → **60,768**, concurrency 2.58x → **3.71x**, free VRAM
+  for Steps 5 and 6 ~3.4 → ~9.4 GiB, which un-does the headroom squeeze the 0.85 change
+  had created and takes speech back off the CPU. The 4,506-token tool result that started
+  this now fits inside 12,171 tokens of room with 7,665 to spare. (The pre-flight
+  projection said 4.68x and missed by 21%: `--max-model-len` costs non-KV memory too, not
+  just cache — see `docs/models.md`.)
   **Not yet measured: capability.** The 8B failed 3 of 8 `check_agent` scenarios and that
   is why the 32B was chosen; the 32B scores 6 of 8 and `check_search` 8 of 8. Those are
   the gate for this swap and it has not been run against the 14B yet. `docs/models.md`

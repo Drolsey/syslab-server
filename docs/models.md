@@ -184,12 +184,20 @@ because the 32B's weights were what made a larger window unaffordable.
 | Layers | 64 | 40 |
 | KV per token | 256 KiB | 160 KiB |
 | `--gpu-memory-utilization` | 0.85 | 0.70 |
-| KV cache | 5.16 GiB | ~11.7 GiB projected |
-| KV cache in tokens | 21,135 | ~76,700 projected |
+| KV cache | 5.16 GiB | **9.27 GiB** |
+| KV cache in tokens | 21,135 | **60,768** |
 | `--max-model-len` | 8192 | 16384 |
-| Conversation room after the floor | 3,979 | ~12,171 |
-| Concurrency at that window | 2.58x | ~4.68x projected |
-| Free VRAM for Steps 5 and 6 | ~3.4 GiB | ~8.6 GiB |
+| Conversation room after the floor | 3,979 | **12,171** |
+| Concurrency at that window | 2.58x | **3.71x** |
+| Free VRAM for Steps 5 and 6 | ~3.4 GiB | **~9.4 GiB** |
+
+Those are measured, from the startup log on 9 September 2026:
+
+```
+Available KV cache memory: 9.27 GiB
+GPU KV cache size: 60,768 tokens,
+Maximum concurrency for 16,384 tokens per request: 3.71x
+```
 
 Same family, so the tokenizer is the same and the 4213-token floor does not
 move. 16384 rather than 32768 because context and concurrency still spend the
@@ -204,17 +212,37 @@ fallback". The 14B returns that concurrency for free, so the 4.7 GiB has no case
 left. Concurrency, window and headroom all improve at once, which is not a
 trade and did not need one.
 
-**These projections are sounder than the 0.85 one that missed, and still not
-measurements.** The 3.4x → 2.58x miss came from assuming vLLM's overhead was
-fixed while the budget grew. Here the budget does not grow: the freed weights
-become cache against the *same measured* overhead recorded above. The
-underlying KV arithmetic reproduces both existing measurements (0.70 → 12,288
-tokens against 12,272 recorded; 0.85 → 2.58x against 2.58x recorded). Read the
-startup log and replace every "projected" in the table above:
+### The projection missed by 21%, for a new reason — read this before projecting again
+
+Predicted 11.71 GiB of cache, 76,743 tokens, 4.68x. Measured 9.27 GiB, 60,768
+tokens, **3.71x**. The shortfall is 2.44 GiB, and the ratio (0.792) is
+uncomfortably close to the 0.759 of the previous miss.
+
+The KV arithmetic was not the problem and has now been right three times:
+9.27 GiB ÷ 160 KiB per token = 60,752 against 60,768 logged, after 0.70 →
+12,288 against 12,272 and 0.85 → 2.58x against 2.58x. What was wrong, both
+times, is the estimate of how much memory would be *left* for cache.
+
+The first miss came from assuming vLLM's overhead was fixed while the
+**budget** grew. This one holds the budget still and changes two things at
+once: the model *and* the window. The projection carried the overhead measured
+during an 8192 run straight into a 16384 one, and **`--max-model-len` costs
+non-KV memory of its own** — attention workspace, chunked-prefill buffers and
+peak activation all scale with sequence length, not just the cache does.
+
+So the lesson generalises rather than repeats: **vLLM's non-KV overhead scales
+with anything you give it — the budget and the window both.** The only number
+worth quoting is the one in the startup log:
 
 ```
 docker compose logs vllm | grep -i "kv cache\|maximum concurrency"
 ```
+
+**The decision holds comfortably even so.** Against the 32B it replaced: KV
+tokens 21,135 → 60,768 (2.88x), concurrency 2.58x → 3.71x (1.44x), window 8192
+→ 16384 (2x), and free VRAM ~3.4 → ~9.4 GiB. The failure that started this —
+one 4,506-token tool result not fitting in 3,979 tokens of room — is now a
+4,506-token result inside 12,171, with 7,665 to spare.
 
 **The unmeasured risk is capability, and this document already has evidence it
 is real.** The 8B failed 3 of 8 `check_agent` scenarios — including
