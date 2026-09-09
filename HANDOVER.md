@@ -209,6 +209,43 @@ the Docker bridge address, not loopback, so cloudflared could not reach a
 loopback-only app. The right move is a firewall rule scoped to the bridge
 subnet, and it belongs after the tunnel works, not before.
 
+## The retry works, and the fabrication moved somewhere it does not look
+
+9 September, after the `tool_choice` retry went into `database-agent`. The
+original failing turn now runs a real query and returns 100 real rows —
+verified in the query log, not by reading the screen. The next two turns then
+did this:
+
+```
+chart block   "data": [15, 20, 10]
+report        Free 15 · Pro 20 · Enterprise 10
+query log     no query ran for either
+```
+
+Invented, and they sum to 45 against the 100-row table the model had just
+displayed. The retry did not fire because it detects a bare ```sql fence, and
+these turns emitted a ```chart block and prose. **The dangerous form of this
+bug does not involve SQL at all** — a chart and a formatted report read as far
+more authoritative than a code block, and nothing in the app distinguishes a
+figure that came from a query result from one that did not.
+
+The general shape of the defect is "asserted a quantity without a query in this
+turn". `bareSqlFence` only covers the narrowest instance of it. Extending the
+detector to "no tool call, tools available, and the reply asserts figures" would
+cover the chart and the report, at the cost of false positives on answers that
+legitimately cite a result from earlier in the same conversation — which the
+prompt explicitly allows. That trade has not been made yet.
+
+Two smaller things from the same session: "create a graph" makes the model reach
+for ```mermaid `graph TD` and draw a diagram of the *column names*, because
+`OUTPUT_FORMAT` describes mermaid as "a diagram, for relationships and flows"
+and never says "not for data" — the following turn produced a correct ```chart,
+so the word "graph" is doing the steering. And `generate_esg_report` is wired
+unconditionally in `runs.ts` but is hard-bound to the ESG pipeline over this
+app's own Report/Inventory tables, so declining to build a PDF about customers
+is correct; only the model's stated reason ("I don't have the capability") is
+wrong.
+
 ## The website talks to the box — and did not call a single tool
 
 9 September. The local website test ran. Both halves matter.
