@@ -209,6 +209,76 @@ the Docker bridge address, not loopback, so cloudflared could not reach a
 loopback-only app. The right move is a firewall rule scoped to the bridge
 subnet, and it belongs after the tunnel works, not before.
 
+## The website talks to the box — and did not call a single tool
+
+9 September. The local website test ran. Both halves matter.
+
+**What worked, and it is most of the gate.** `database-agent` on the laptop,
+unmodified, reached the box over the LAN and held an eleven-turn conversation:
+provider added through Settings → Model provider (not an env file), `Test`
+green, alias `syslab-default` throughout, streaming, 0.3–1.4s per turn, and
+everything persisted to Postgres rather than memory. The key landed in the
+workspace secret store **encrypted** (`app_secrets.valueEnc`, 96 bytes) with
+only `"key_hint": "••••Z0PQ"` in the provider document — the property this
+design claimed, now observed.
+
+**What did not happen: any tool call at all.** Zero of ten runs have steps; no
+message contains a tool call in any spelling. Asked to "show me all public
+customers", the model replied with a markdown ```sql fence as *prose*, which
+the UI renders as a "Show query" widget — so it looks like a query ran. Asked
+for the data in text, it produced ten names, "Enterprise Customer A" through
+"J". **Those were invented.** No query ever executed.
+
+**syslab-server is not the cause, and this was checked rather than assumed:**
+
+| tested | result |
+|---|---|
+| 14B calls `run_sql`, non-streaming, direct to `:8000` | 4/4 |
+| 14B calls `run_sql`, **streaming** | 28 deltas, `finish_reason: tool_calls` |
+| Through the **gateway** (`:8080`), non-streaming, `max_tokens: 32000` | `tool_calls: 1` |
+| Through the **gateway**, streaming | 28 deltas, `finish_reason: tool_calls` |
+| With the website's full system prompt | 4/4 |
+
+Two hypotheses were tested and **both were wrong**: the prompt's "always show
+the SQL" instruction does not suppress tool calls (4/4 with it), and neither
+does the full `OUTPUT_FORMAT` block.
+
+**The cause is conversation history.** Replaying the real transcript from the
+website's own database:
+
+| context for "show me all public customers" | `run_sql` |
+|---|---|
+| that question alone | **4/4** |
+| with the real six prior turns | **0/4** — emits the identical ```sql fence |
+| same, minus the two "files" exchanges | 1/4 |
+| same, with `tool_choice: "required"` | **4/4** |
+
+The first turns are legitimately tool-free — a greeting, and two questions
+about *files*, which this product does not do, so it correctly answered in
+prose (the prompt even instructs this: "small talk is not a question ... do
+not run a query"). But once several prose turns are in the context the model
+imitates itself, and the tool stops being reached for. The degradation is
+gradual, not caused by one turn: removing the file exchanges recovers only
+1 of 4.
+
+**Not known: whether the 32B resisted this.** It cannot be tested without
+loading it again. This is exactly the class of capability difference the swap
+risked, and exactly the class `check_agent` cannot see: every scenario there
+opens with a question that demands a tool, so no scenario ever accumulates
+tool-free turns. **6 of 8 did not, and could not, cover this.**
+
+**What to do about it is a website decision, not a gateway one.**
+`tool_choice: "required"` fixes it completely but cannot be applied blanket —
+it would force a query for "hi", which the prompt deliberately prevents.
+Something adaptive is needed, and it lives in `lib/agent/index.ts`, not here.
+Worth measuring the 32B against the same replay before concluding the model
+swap caused it.
+
+**Also still not done:** the conversation ran against the built-in "Sample
+dataset" (`engine: demo`), not the client Postgres. Step 3 of the checkpoint —
+attach the real connection and ask something real, against 52,190 rows and 35
+column names that all need quoting — has not been attempted.
+
 ## Deploy verified end to end — 9 September 2026
 
 The 14B swap is live on the box and proven through the app, not just through
