@@ -100,6 +100,92 @@ are the whole contract; a header field is not part of it.
 
 **Still deferred:** the tunnel itself, and Step 2's five decisions.
 
+## The ESG tool: the model calls it reliably and fills the wrong parameter
+
+9 September, testing `generate_esg_report` — the first custom tool here that
+is not `run_sql`, and the question was whether the 14B can drive one.
+
+**It can. What it gets wrong is which argument.** Over 8 hospitals x 3 runs,
+asking for a single hospital by its full name:
+
+| | correct |
+|---|---|
+| tool description as written | **14 of 24** |
+| example group values replaced with a rule | **24 of 24** |
+
+The tool itself never failed — it was called every time, produced real PDF and
+Excel, handled `March 2026` correctly, and handled group scope correctly. The
+failure is entirely in parameter choice: asked for one hospital, it passed
+`hospital_group` instead.
+
+Failures were hospital-specific and stable, not sampling noise: Kloof,
+Midstream and Muelmed missed 3 of 3; Nelspruit, Morningside and both Life
+hospitals hit 3 of 3; Highveld 2 of 3. The pattern is familiarity — hospitals
+whose distinguishing word is less recognisable collapse onto the example.
+
+**The cause is the tool description, and it is lesson 3 again.** It read
+"real groups include values like 'Life Healthcare' and **'Mediclinic'**, not
+the hospital's own name". The model filled the parameter with the example it
+was handed. Replacing that with a rule — *a name containing the word
+"Hospital" is a hospital_name* — is 24 of 24, and group requests still route
+correctly. Same shape as the ```sql entry in `OUTPUT_FORMAT`: a concrete
+example reads as a slot to fill. That is now measured on two unrelated tools.
+
+**Every failure is silent**, which is what makes it worse than a wrong answer.
+The report generates, names itself `esg-report-Mediclinic-2026.pdf`, and the
+model's prose agrees with the filename. A request for one hospital returns a
+group report covering 854 items instead of 175, and nothing reports an error.
+
+### Two things about the deployment that this turned up
+
+**`Report` is not a Prisma model, and the app expects it to already exist.**
+`prisma/schema.prisma` has Company, User, AppDocument, ItemSustainability,
+Inventory, Hospital and AppSecret — no Report. `lib/services/esg-report.ts`
+joins `"Report"` to `"Inventory"` on `"ID"` through `prisma.$queryRaw`, against
+the app's own database, so ESG generation needs a table no migration creates.
+On a fresh local database it fails with `relation "Report" does not exist`,
+which is what "create an esg report" returns here. Not a bug — the table is
+externally managed — but nothing in the repo says so, and there is no seed
+script for it or for Inventory, Hospitals and item_sustainability, which exist
+locally but empty.
+
+**The production database is not the client database.** Generating the same
+report — Mediclinic Muelmed, March 2026 — from the deployed website and from a
+local copy of the client instance gives different totals:
+
+| source | Sale | Donation | Scrap | items |
+|---|---|---|---|---|
+| client `medi_merchant`, and a faithful local copy | 11 | 2 | 1 | 14 |
+| the deployed website's own database | 11 | 5 | 1 | 17 |
+
+Sale and Scrap agree exactly; production carries three Donation rows the client
+instance does not. So the deployment reads a fuller or newer dataset than the
+credentials handed over for this work reach, and any figure reconciled between
+the two will disagree for that reason before any other.
+
+### What the local test rig is, so nobody mistakes it for real
+
+A fixture: 2,436 real Report rows copied from the client instance (2026, eight
+hospitals), with Inventory, Hospitals and item_sustainability synthesised
+around them, since those exist in neither reachable database. The weights and
+emission factors are invented.
+
+The pipeline says so itself, which is worth recording as a point in its favour.
+`weight_source` is only credited as `ewaste_sheet` or `ai_estimated`
+(`lib/services/esg-report.ts:282`); the fixture's value falls through to
+`unmatched`, so the report renders "Unmatched item / Unacceptable" and a Carbon
+Data Quality Score of **0.0%** against production's 100%. It declined to vouch
+for numbers built on data it could not match rather than presenting them as
+sound.
+
+**Still not done: the Claude comparison.** This laptop has one provider, the
+box. The deployed site clearly has an Anthropic key, but that is the
+deployment's, not one available here, so the two are not yet comparable on
+equal footing. Comparing a report generated from production against one
+generated from the fixture compares two databases, not two models — both
+models made the same, correct tool call for that case. The 24-run harness is
+built and repeatable the moment a key is added here.
+
 ## The client database is attached, and the retry's trigger is narrower than recorded
 
 9 September. Checkpoint step 3 done: `public."Report"` attached as a real
