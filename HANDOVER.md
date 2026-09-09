@@ -53,10 +53,23 @@ Order, because each step proves something the next assumes: Test, then chat
 once (alias, token, clamp, streaming), then attach the Postgres connection and
 ask something real (multi-turn tool calling).
 
-**2. Prove the reboot.** `sudo reboot` on the box, then both `:8000` and
-`:8080` answer with nothing typed. The box being up right now proves the
-process runs; it does not prove it returns on its own, which is the open claim.
-Do this second — it costs the box's uptime, and the website test needs the box.
+**2. Prove the reboot — DONE, 9 September.** Both `:8000` and `:8080` came
+back with nothing typed, and the units are `enabled` rather than merely
+running, so it is configuration and not something started by hand:
+
+| | |
+|---|---|
+| Kernel boot | 11:33:27 +04 |
+| App (`syslab-server@syslab`, systemd) | active 11:33:42 — **15s after boot** |
+| vLLM (container, `restart: unless-stopped`) | serving ~11:34:21 — **~54s after boot** |
+| Serving on return | `Qwen/Qwen3-14B-AWQ`, `max_model_len` 16384 |
+
+It proves more than the version planned this morning would have, because it
+ran *after* the model swap: what returns unattended is the new config, not the
+one that had been running for a day. Verified against `uptime -s` rather than
+trusted — a watcher on the LAN saw the box drop at 07:33:19Z and the boot
+timestamp is 07:33:27Z, which rules out the failure mode where a network blip
+looks exactly like a reboot from outside.
 
 **The Access-vs-WAF decision is now settled, by this.** The box is integrated
 as an API token — base URL, key, model — because that is the shape the provider
@@ -95,7 +108,8 @@ is done and verified; what is unfinished is a test harness on the laptop.
 
 **Not yet done: the reboot test.** `sudo reboot`, then both `:8000` and `:8080`
 should answer with nothing typed. vLLM's persistence is proven; the app's
-is not.
+is not. *(Done 9 September — see the checkpoint above. The app returned in 15
+seconds.)*
 
 ### The local website test — what it is and where it stopped
 
@@ -255,9 +269,10 @@ the short version:
    Trust, then `COMPOSE_PROFILES=public` and the token in `.env`, then Access
    with a service token in front, and only then `PUBLIC_MODE=true` and
    `TRUST_CLIENT_IP_HEADER=true`.
-3. **Prove the reboot.** The systemd unit is installed and running; nothing has
-   yet confirmed the app actually returns on its own. `sudo reboot`, then both
-   ports answer untouched.
+3. ~~**Prove the reboot.**~~ **Done 9 September.** The app returned on its own
+   15 seconds after kernel boot, vLLM at ~54s, both units `enabled`, serving
+   the 14B at 16384. The claim this file used to make without proof is now
+   made with it.
 4. **Step 2, the ingestion contract.** Designed in full in
    `docs/plans/step-02-ingestion-contract.md` and **waiting on your sign-off of
    its five decisions**, which is the thing actually blocking it. The plan's
