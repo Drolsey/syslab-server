@@ -11,33 +11,64 @@ Today is scoped to two things, both of which close claims this file currently
 makes without proof. The tunnel and Step 2's sign-off are explicitly deferred;
 they are not blocked by anything done today.
 
-**1. Finish the local website test.** `database-agent/.env.local` is written and
-correct except for one value: `MODEL_API_KEY` is the literal placeholder
-`PASTE_A_GATEWAY_TOKEN_HERE`. Substitute one of the box's `GATEWAY_TOKENS`
-(`grep GATEWAY_TOKENS ~/syslab-server/.env` on the box), then `npm run dev` —
-Next reads env at boot, so it must be a restart, not a reload.
+**1. Finish the local website test, through the app's own provider settings.**
+Not `.env.local`. The box is added the way any other model provider is: Settings
+→ Model provider → **Custom (OpenAI-compatible)**, then
+
+| Field | Value |
+|---|---|
+| Base URL | `http://192.168.1.185:8080/v1` |
+| API key | one of the box's `GATEWAY_TOKENS` |
+| Model | `syslab-default` |
+
+This is the better path and is now the intended one. The key lands in the
+workspace secret store, referenced by handle and never returned by any
+endpoint — responses carry a four-character hint and nothing more
+(`lib/services/model-providers.ts`). It survives restarts, needs no dev-server
+bounce, and is the same path a real deployment uses. The env variables are only
+a fallback for env-only deployments, and are read **only when the workspace has
+no provider of its own** (`lib/services/model-providers.ts:359`), so a
+workspace provider wins regardless.
+
+The `custom` preset exists for exactly this: `requiresBaseUrl: true`,
+`keyOptional: false`, noted as "any endpoint implementing POST
+/chat/completions with tool calling" (`lib/agent/providers/presets.ts:129`).
+
+Press **Test** before chatting. It probes `GET /models` and never spends
+generation tokens, and it separates the three failures that look alike from the
+UI: wrong key (401/403 → "the provider rejected the API key"), unreachable host,
+and a model the provider does not list. It will come back green — the gateway's
+`/v1/models` returns the alias as its `id` (`app/gateway.py:171`), so
+`syslab-default` matches the catalogue.
+
+Leave `AGENT_MAX_TOKENS` unset so the agent keeps its 32000 default
+(`lib/agent/index.ts:29`) and the run proves the server-side clamp through the
+website's own code.
 
 Verified before starting, so these are not the cause if it fails: the box
 answers on the LAN (`:8080` 401, `:8000` 200), no orphan `node.exe` holds
 Next's lock, and nothing listens on 3000/3001.
 
-One trap not in yesterday's notes: `MODEL_PROVIDER` and friends are read
-**only when the workspace has no provider of its own**
-(`lib/services/model-providers.ts:359`). A fresh dev server has none, so the
-env file wins — but if a run returns the setup notice, the fix is Settings →
-Model provider in the app, not the env file.
-
-Order, because each step proves something the next assumes:
-chat once (alias, token, clamp, streaming), then attach the Postgres
-connection and ask something real (multi-turn tool calling).
+Order, because each step proves something the next assumes: Test, then chat
+once (alias, token, clamp, streaming), then attach the Postgres connection and
+ask something real (multi-turn tool calling).
 
 **2. Prove the reboot.** `sudo reboot` on the box, then both `:8000` and
 `:8080` answer with nothing typed. The box being up right now proves the
 process runs; it does not prove it returns on its own, which is the open claim.
 Do this second — it costs the box's uptime, and the website test needs the box.
 
-**Still deferred, and unblocked by neither:** the tunnel (waiting on the
-Access-vs-WAF decision below) and Step 2's five decisions.
+**The Access-vs-WAF decision is now settled, by this.** The box is integrated
+as an API token — base URL, key, model — because that is the shape the provider
+config has. Cloudflare Access authenticates with two extra HTTP headers, and
+neither the settings form nor `ModelClientConfig` has anywhere to put one, so
+Access in front of `/v1` would 403 the only caller this exists for. The tunnel
+therefore uses the **WAF custom rule** instead, blocking everything that is not
+`/v1` at the edge, with `/v1` defended by `GATEWAY_TOKENS` and the per-token
+rate limit as designed. `requiresBaseUrl`/`keyOptional` on the `custom` preset
+are the whole contract; a header field is not part of it.
+
+**Still deferred:** the tunnel itself, and Step 2's five decisions.
 
 ## Session log — 8 September 2026, evening
 
