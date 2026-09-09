@@ -304,10 +304,30 @@ That is lesson 3 of this file one level up: an example in a tool description is
 indistinguishable from an argument, and an example in a format spec is
 indistinguishable from a deliverable.
 
-**The fix is one line, and it is verified.** Removing only the ```sql line
-from `OUTPUT_FORMAT` — keeping ```table, ```chart, the playbook and the skills
-exactly as they are — restores `run_sql` to **5/5** against the same poisoned
-history that scores 0/5 as shipped.
+**No prompt edit fixes this reliably. Measured across three questions, six
+runs each, same poisoned history:**
+
+| change | `run_sql` |
+|---|---|
+| as shipped | **0/18** |
+| ```sql bullet moved to last in the list (text unchanged) | 11/18 |
+| ```sql line removed entirely | 12/18 |
+| as shipped + `tool_choice: "required"` | **18/18** |
+
+The one-line removal looked like a complete fix at 5/5 on a single question and
+is not: "show me the enterprise names" stays at 0/6 with the line gone. Position
+in the list matters too — moving the bullet last, changing no words at all,
+recovers most of it — which confirms the decoy is about salience rather than
+wording, and also shows why no wording is dependable.
+
+**The reliable fix is `tool_choice`, applied conditionally.** Blanket
+`"required"` is wrong: it would force a query on "hi", which `CORE_BEHAVIOR`
+deliberately prevents. The shape that works is a **retry on detection** — if a
+turn produced a ```sql fence and called no tool, re-issue that same turn with
+`tool_choice: "required"`. It costs nothing on the happy path, never fires on
+small talk (a greeting produces no SQL fence), is model-agnostic, and is 18/18
+when it does fire. `lib/agent/index.ts` already loops per turn, so it has the
+right shape for this.
 
 It needs a second, smaller change to not lose the query display, and that
 change is worth making on its own account. `Markdown.tsx` renders `SQLBlock`
