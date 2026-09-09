@@ -176,7 +176,7 @@ FastAPI process: the **inference plane** at `/v1` (no tenant, its own tokens),
 the **local plane** at `/api/...` (this install's own admin surface), and the
 retrieval plane, which is Step 4 and does not exist yet.
 
-Gated 8 September: **pytest 368 passed, 1 skipped**, `check_gateway_isolation`
+Gated 9 September: **pytest 381 passed, 1 skipped**, `check_gateway_isolation`
 pass, `check_api_compat` pass, `check_remote` 13 of 16 with the public-surface
 section all passing, `check_agent` 6 of 8 against the live 32B model.
 
@@ -185,7 +185,7 @@ section all passing, `check_agent` 6 of 8 against the live 32B model.
 | | |
 |---|---|
 | Box | Ubuntu, RTX 5090 32 GB, Ryzen 9950X, 60 GB RAM, `192.168.1.185` on the LAN |
-| Model | `Qwen/Qwen3-32B-AWQ` under vLLM `v0.28.0`, pinned by digest in `docker-compose.yml` |
+| Model | `Qwen/Qwen3-14B-AWQ` under vLLM `v0.28.0`; image pinned by digest, model by revision, both in `docker-compose.yml`. Was the 32B until 9 September — see the context-window entry below for why it changed |
 | vLLM | container, port 8000, `restart: unless-stopped`, survives reboot |
 | The app | port 8080, from `.venv` on the host, under systemd as `syslab-server@syslab` |
 | Alias | callers ask for `syslab-default`; the real model name never leaves the box |
@@ -237,21 +237,98 @@ the short version:
 
 ## Known and deliberately not fixed yet
 
-- **Nothing trims conversation history, and a full window is unrecoverable.**
-  Found 9 September in the operator UI: vLLM returned HTTP 400 with "you
-  requested 0 output tokens and your prompt contains at least 8193 input
-  tokens" against the 8192 window. The 0 is not a caller bug -- the internal
-  path sends no `max_tokens` (`app/llm.py:42`) so vLLM fills what remains, and
-  what remained was nothing. Yesterday's clamp does not cover it: it is on the
-  `/v1` path only (`app/gateway.py:139`), and it deliberately bails when
-  `room <= 0` rather than truncate a prompt (`app/gateway.py:142`). The history
-  itself is unbounded (`app/agent.py:754`). The failure is terminal for that
-  conversation -- every following message is larger than the one that just
-  failed -- and the only recovery is starting a new one. **The website will hit
-  this too**, on any long conversation, which puts it directly in front of the
-  Step 3 gate. The fix is a decision, not a patch: drop oldest turns, summarise
-  them, or refuse early with a clear message. Trimming silently is the one
-  option the gateway's existing reasoning already argues against.
+- **History trimming exists now; the tool-result budget is the part that does
+  not fit.** Fixed 9 September. `llm.trim_to_window` (`app/llm.py`) drops the
+  oldest whole exchanges before every model call until the prompt leaves
+  `MIN_REPLY_TOKENS` of room, and `app/agent.py` records each trim as a
+  `trim_history` step so a conversation never quietly forgets. Exchanges move
+  as a unit — an assistant turn and the `tool` messages answering it — because
+  an orphan tool result is rejected as hard as an overlong prompt. Unknown
+  window still changes nothing, and a prompt that cannot be trimmed is passed
+  through for vLLM to reject precisely, both matching the output clamp's
+  existing reasoning. One estimator now serves both paths
+  (`llm.estimate_prompt_tokens`), because two would drift apart about how full
+  the same window is.
+
+  **What that does not fix, measured on the box's own tokenizer (`/tokenize`,
+  9 September), not estimated:**
+
+  | | tokens |
+  |---|---|
+  | System prompt | 2069 |
+  | 12 tool schemas | ~2144 |
+  | **Undroppable floor** | **4213** |
+  | Window (`--max-model-len`) | 8192 |
+  | **Left for the whole conversation** | **3979** |
+  | One tool result clipped to `TOOL_RESULT_BUDGET` | **4506** |
+
+  A single maximum-size tool result is larger than everything the window has
+  left after the floor — 4213 + 4506 = 8719 against 8192, before the user's
+  question, the assistant's tool-call turn, or one token of reply. So
+  `TOOL_RESULT_BUDGET` (12,000 characters, `app/agent.py`) was chosen against a
+  window it cannot fit in. Trimming contains the damage — the failure is no
+  longer terminal for the conversation, because the oldest turns go and the
+  next question still works — but that one turn still fails.
+
+  **Decided the same day: serve a 14B instead, and spend the freed VRAM on the
+  window.** The three obvious fixes were all trades — cut `TOOL_RESULT_BUDGET`
+  and the model sees fewer rows; raise `--max-model-len` and it costs the 2.58x
+  concurrency bought on 8 September; cut the 2069-token system prompt and there
+  is not enough there to matter. Changing the model is the only one that buys
+  back both, because the 32B's weights were what made the window unaffordable
+  in the first place:
+
+  | | 32B-AWQ (was) | 14B-AWQ (now) |
+  |---|---|---|
+  | Weights | 18.00 GiB | 9.29 GiB |
+  | Layers → KV per token | 64 → 256 KiB | 40 → 160 KiB |
+  | `--gpu-memory-utilization` | 0.85 | **0.70** |
+  | KV cache budget | 5.16 GiB = 21,135 tokens | ~11.7 GiB = ~76,700 tokens |
+  | `--max-model-len` | 8192 | **16384** |
+  | Conversation room after the 4,213 floor | 3,979 | **~12,171** |
+  | Concurrency at that window | 2.58x @ 8192 | **~4.68x** projected |
+  | Free VRAM for Steps 5 and 6 | ~3.4 GiB (did not fit) | **~8.6 GiB** |
+
+  **The utilization went back down in the same change, and that is not a
+  reversal of 8 September.** 0.85 existed to buy concurrency out of the budget,
+  because the 32B's weights left nowhere else to get it — and it cost the
+  headroom, which `docs/models.md` then recorded as the new constraint, with
+  speech on the CPU as "the expected answer rather than the fallback". The 14B
+  gives that concurrency back for free, so the 4.7 GiB has no case left. Every
+  axis improves at once: concurrency 2.58x → ~4.68x, window 8192 → 16384,
+  free VRAM ~3.4 → ~8.6 GiB. Step 5 and Step 6 fit again, and speech does not
+  have to leave the GPU.
+
+  Same family, so the tokenizer and the 4,213-token floor do not move. 16384
+  rather than 32768 because concurrency and context still spend the same cache,
+  and 16384 is where both numbers beat what the 32B gave; 32768 would buy more
+  context than anything here asks for and hand back the concurrency for it. Going back to 0.70 also re-widens the boot race
+  behind "Available KV cache memory: 0.45 GiB", which 0.85 had narrowed.
+
+  **Projected, but not the way 0.85 was projected and missed.** That estimate
+  assumed vLLM's overhead stayed fixed while the budget grew, and it does not —
+  3.4x predicted, 2.58x delivered. This projection does not move the budget at
+  all: the 8.71 GiB the smaller weights hand back becomes cache against the
+  *same measured* overhead already in `docs/models.md` (weights-and-non-torch
+  18.62, peak activation 0.33, CUDA graphs 0.81 GiB at 0.70). The KV arithmetic behind
+  it reproduces both recorded measurements — 0.70 → 12,288 tokens against
+  12,272 recorded, 0.85 → 2.58x against 2.58x recorded. **Still read the
+  startup log and record the real numbers**, the way 8 September did.
+
+  **The open question is capability, not memory, and it is measurable.** A 14B
+  is a smaller model, and multi-turn tool calling over a 35-column table whose
+  every column name needs quoting is exactly the workload that shows the
+  difference. `check_agent` was 6 of 8 on the 32B (the two failures are
+  test-strictness, not the model) and `check_search` 8 of 8. Those are the
+  gate: run both after the swap and compare against those numbers, not against
+  an impression. If the 14B regresses, `--kv-cache-dtype fp8` on the 32B is the
+  fallback — it roughly halves KV memory, which would reach 16384 at about
+  today's concurrency while keeping the larger model.
+
+  Note the numbers above are the **internal** agent path (`/api/chat`, the
+  operator UI). The website reaches the model through `/v1` with its own system
+  prompt and its own tool schemas, so its floor is its own — but the same
+  arithmetic decides it.
 
 - **`check_agent` is 6 of 8.** Both remaining failures reach the correct,
   verified answer by a different valid tool path than the test requires, and

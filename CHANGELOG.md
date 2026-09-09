@@ -57,6 +57,22 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   documented nowhere, despite deciding which tenant owns this install's data.
 
 ### Changed
+- **The served model is now `Qwen/Qwen3-14B-AWQ` at a 16384 context**, replacing
+  `Qwen/Qwen3-32B-AWQ` at 8192. Per this changelog's own rule, the values: model
+  `Qwen/Qwen3-32B-AWQ` → `Qwen/Qwen3-14B-AWQ` (now pinned by revision `31c69efc`, not just
+  by repo name), quantisation AWQ 4-bit unchanged, context `--max-model-len` 8192 → 16384,
+  `--gpu-memory-utilization` 0.85 → 0.70.
+  **Why a smaller model is an upgrade here:** measured on the box's own tokenizer, the
+  system prompt and tool schemas occupy 4,213 tokens before anything is asked, leaving
+  3,979 of an 8192 window — less than the 4,506 tokens of a single maximum-size tool
+  result. Every fix inside the 32B was a trade; halving the weights was the only one that
+  bought back the window *and* the concurrency. Projected: KV cache 5.16 → ~11.7 GiB,
+  concurrency 2.58x → ~4.68x, free VRAM for Steps 5 and 6 ~3.4 → ~8.6 GiB, which un-does
+  the headroom squeeze the 0.85 change had created and takes speech back off the CPU.
+  **Not yet measured: capability.** The 8B failed 3 of 8 `check_agent` scenarios and that
+  is why the 32B was chosen; the 32B scores 6 of 8 and `check_search` 8 of 8. Those are
+  the gate for this swap and it has not been run against the 14B yet. `docs/models.md`
+  § "Down to 14B" has the full table and the `--kv-cache-dtype fp8` fallback.
 - **The served model is now `Qwen/Qwen3-32B-AWQ` under vLLM**, replacing `qwen3:8b` under
   Ollama. Per this changelog's own rule, the values: backend Ollama → vLLM v0.28.0
   (pinned `sha256:61fc8a89…`), model `qwen3:8b` → `Qwen/Qwen3-32B-AWQ`, context 8192
@@ -86,6 +102,19 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Reasoning in `docs/plans/step-03-model-gateway.md` §3.4.
 
 ### Fixed
+- **A conversation that filled the context window was unrecoverable.** Nothing trimmed
+  history, so a long chat eventually sent a prompt larger than the window and vLLM
+  refused it — and every following message was larger than the one that had just failed,
+  so the only recovery was starting over. The `max_tokens` clamp did not cover this: it
+  is on the `/v1` path only and bounds *output*, while this is *input*. `llm.trim_to_window`
+  now drops the oldest whole exchanges before every model call until the prompt leaves
+  `MIN_REPLY_TOKENS` of room, and `app/agent.py` records each trim as a `trim_history`
+  step so a conversation never silently forgets. Exchanges move as a unit — an assistant
+  turn with the `tool` messages answering it — because an orphaned tool result is rejected
+  as hard as an overlong prompt. An unknown window still changes nothing, and a prompt
+  that cannot be trimmed is passed through for the server to reject precisely.
+  The token estimator moved from `app/gateway.py` to `app/llm.py` so the trim and the
+  clamp cannot drift apart about how full one window is.
 - **Every request from the website would have returned HTTP 400.** It sends
   `max_tokens: 32000`; this server runs `--max-model-len 8192`, and vLLM rejects that
   outright before generating anything. `max_tokens` is a reservation out of a budget the

@@ -152,6 +152,89 @@ higher it goes, the less slack there is for exactly that race.
 Still not measured: sustained throughput with several conversations in flight.
 The concurrency figure above is what vLLM will *allow*, not what it delivers.
 
+### Down to 14B on 9 September 2026, and up to a 16384 window
+
+The window, not the weights, was the thing that broke. Measured on this box's
+own `/tokenize` endpoint rather than estimated:
+
+| | tokens |
+|---|---|
+| System prompt | 2069 |
+| 12 tool schemas | ~2144 |
+| **Floor, before anything is asked** | **4213** |
+| Window then (`--max-model-len 8192`) | 8192 |
+| Left for the whole conversation | 3979 |
+| One tool result at `TOOL_RESULT_BUDGET` | **4506** |
+
+A single maximum-size tool result did not fit in what the window had left —
+4213 + 4506 = 8719 against 8192, before the user's question, the assistant's
+tool-call turn, or one token of reply. History trimming (`llm.trim_to_window`,
+added the same day) stops that being *terminal* for a conversation, but it
+cannot make one oversized turn fit.
+
+Every fix inside the 32B was a trade: cut `TOOL_RESULT_BUDGET` and the model
+sees fewer rows per call; raise `--max-model-len` and it costs the 2.58x
+concurrency bought the day before; cut the system prompt and 2069 tokens is not
+enough to matter. Changing the model is the only move that buys back both,
+because the 32B's weights were what made a larger window unaffordable.
+
+| | 32B-AWQ | 14B-AWQ |
+|---|---|---|
+| Weights on disk | 18.00 GiB | 9.29 GiB |
+| Layers | 64 | 40 |
+| KV per token | 256 KiB | 160 KiB |
+| `--gpu-memory-utilization` | 0.85 | 0.70 |
+| KV cache | 5.16 GiB | ~11.7 GiB projected |
+| KV cache in tokens | 21,135 | ~76,700 projected |
+| `--max-model-len` | 8192 | 16384 |
+| Conversation room after the floor | 3,979 | ~12,171 |
+| Concurrency at that window | 2.58x | ~4.68x projected |
+| Free VRAM for Steps 5 and 6 | ~3.4 GiB | ~8.6 GiB |
+
+Same family, so the tokenizer is the same and the 4213-token floor does not
+move. 16384 rather than 32768 because context and concurrency still spend the
+same cache, and 16384 is the point where both numbers beat what the 32B gave.
+
+**Why the utilization went back to 0.70 the day after it went up to 0.85.** Not
+a reversal. 0.85 existed to buy concurrency out of the budget, because the 32B's
+weights left nowhere else to get it, and the section above records what it cost:
+3.4 GiB of headroom against the ~3.5 GiB Section 13 budgets for embeddings and
+speech, with speech-on-CPU becoming "the expected answer rather than the
+fallback". The 14B returns that concurrency for free, so the 4.7 GiB has no case
+left. Concurrency, window and headroom all improve at once, which is not a
+trade and did not need one.
+
+**These projections are sounder than the 0.85 one that missed, and still not
+measurements.** The 3.4x → 2.58x miss came from assuming vLLM's overhead was
+fixed while the budget grew. Here the budget does not grow: the freed weights
+become cache against the *same measured* overhead recorded above. The
+underlying KV arithmetic reproduces both existing measurements (0.70 → 12,288
+tokens against 12,272 recorded; 0.85 → 2.58x against 2.58x recorded). Read the
+startup log and replace every "projected" in the table above:
+
+```
+docker compose logs vllm | grep -i "kv cache\|maximum concurrency"
+```
+
+**The unmeasured risk is capability, and this document already has evidence it
+is real.** The 8B failed 3 of 8 `check_agent` scenarios — including
+hallucinating a SQL query against a database that was never configured — and
+that is precisely why the 32B was chosen. A 14B sits between the two, and
+nothing here yet says where. The 32B scored **6 of 8** on `check_agent` (the
+two failures are test-strictness, not the model: both reach the correct answer
+by a different valid tool path) and **8 of 8** on `check_search`. Those are the
+gate. Run both after the swap and compare against those numbers:
+
+```
+py scripts/check_agent.py
+py scripts/check_search.py
+```
+
+If the 14B regresses on tool calling, the fallback that keeps the larger model
+is `--kv-cache-dtype fp8` on the 32B, which roughly halves KV memory and would
+reach 16384 at around today's concurrency. It costs some KV precision, which is
+a much cheaper thing to lose than a tool call.
+
 ## Serving stack, pinned
 
 | Component | Version | Pin |
@@ -170,20 +253,26 @@ Launch flags that are not optional, and why (see
 - `--enable-auto-tool-choice --tool-call-parser hermes` — without both, every
   `tool_choice` value except `"none"` returns HTTP 400 and the website's agent
   cannot call a tool at all.
-- `--max-model-len 8192` — the VRAM budget above. Callers do not have to know
+- `--max-model-len 16384` — the VRAM budget above. Callers do not have to know
   this number: `app/gateway.py` reads it from `/v1/models` and clamps
   `max_tokens` to what is left after the prompt. Without that the website's
-  `max_tokens: 32000` is an HTTP 400 on every single request.
-- `--gpu-memory-utilization 0.85` — everything left after the weights becomes
-  KV cache, which is what concurrency is made of. Raised from 0.70; the
-  measurements and the trade are above.
+  `max_tokens: 32000` is an HTTP 400 on every single request. Raised from 8192
+  on 9 September; see the section below for why 8192 turned out to be too small
+  for a different reason than concurrency.
+- `--gpu-memory-utilization 0.70` — everything left after the weights becomes
+  KV cache, which is what concurrency is made of. Was 0.85 for one day; the 14B
+  made that spending unnecessary, and the section below has both trades.
+- `--revision <sha>` — a model repo moves like an image tag does. Pinned for
+  the same reason the digest above is pinned.
 
 ## Currently running
 
-`Qwen/Qwen3-32B-AWQ`, served by the `vllm` service in `docker-compose.yml` and
-advertised to callers only as the alias `syslab-default` (Step 3.2).
+`Qwen/Qwen3-14B-AWQ`, pinned to revision `31c69efc`, served by the `vllm`
+service in `docker-compose.yml` and advertised to callers only as the alias
+`syslab-default` (Step 3.2). It replaced `Qwen/Qwen3-32B-AWQ` on 9 September —
+see "Down to 14B" below, **including the part that is not yet measured.**
 
-It replaced `Qwen/Qwen3-8B-AWQ`, which was the Step 1 smoke-test model and
+The 32B replaced `Qwen/Qwen3-8B-AWQ`, which was the Step 1 smoke-test model and
 proved the container and the reboot-persistence gate. The swap was not
 cosmetic: on `scripts/check_agent.py` the 8B model failed 3 of 8 real
 tool-calling scenarios, including hallucinating a SQL query against a database

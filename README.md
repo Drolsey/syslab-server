@@ -89,7 +89,7 @@ Current, as of 8 Sep 2026:
 |---|---|
 | OS | Ubuntu, on a dedicated box |
 | GPU | NVIDIA GeForce RTX 5090, 32 GB VRAM |
-| Model | `Qwen/Qwen3-32B-AWQ`, served by vLLM `v0.28.0` in a container, pinned by digest |
+| Model | `Qwen/Qwen3-14B-AWQ` at a 16384 window, served by vLLM `v0.28.0` in a container; image pinned by digest, model by revision |
 
 The move from the original Windows laptop (RTX 3060, `qwen3:8b` under Ollama) was a
 configuration change rather than a rewrite, which was the point of routing every path
