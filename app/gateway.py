@@ -87,26 +87,6 @@ def require_gateway_token(request: Request) -> str:
     return candidate
 
 
-# Estimating a token count without a tokenizer. Three characters per token is
-# deliberately pessimistic -- English prose runs closer to four, but what
-# actually fills this plane's prompts is JSON: tool definitions, tool results,
-# and rows out of a database, where punctuation and quoting push the ratio
-# down. Over-estimating the prompt costs a slightly shorter answer.
-# Under-estimating costs an HTTP 400 and no answer at all, so the error is
-# taken in the direction that still works.
-CHARS_PER_TOKEN = 3
-# The chat template wraps every message in role markers the payload does not
-# contain, and the estimate above cannot see them.
-TEMPLATE_OVERHEAD_TOKENS = 256
-
-
-def _estimate_prompt_tokens(payload: dict[str, Any]) -> int:
-    material = json.dumps(
-        {"messages": payload.get("messages") or [], "tools": payload.get("tools") or []}
-    )
-    return len(material) // CHARS_PER_TOKEN + TEMPLATE_OVERHEAD_TOKENS
-
-
 def _clamp_output_budget(payload: dict[str, Any], real_model: str) -> None:
     """Cap max_tokens at what is actually left of the model's window.
 
@@ -139,7 +119,12 @@ def _clamp_output_budget(payload: dict[str, Any], real_model: str) -> None:
     window = llm.model_window(real_model)
     if window is None:
         return
-    room = window - _estimate_prompt_tokens(payload)
+    # llm.estimate_prompt_tokens, not a local copy: app/agent.py trims history
+    # against the same estimate this clamps against, and two of them would drift
+    # into disagreeing about how full one window is.
+    room = window - llm.estimate_prompt_tokens(
+        payload.get("messages"), payload.get("tools")
+    )
     if room <= 0:
         return
     # max_completion_tokens is the newer OpenAI spelling of the same field.

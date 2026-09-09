@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import config, context, tenancy
+from app import config, context, llm, tenancy
 
 TEST_TENANT = "testtenant"
 OTHER_TENANT = "othertenant"
@@ -112,6 +112,28 @@ def a_private_network_unless_a_test_says_otherwise(monkeypatch):
     """
     monkeypatch.setattr(config, "PUBLIC_MODE", False)
     monkeypatch.setattr(config, "TRUST_CLIENT_IP_HEADER", False)
+
+
+@pytest.fixture(autouse=True)
+def no_context_window_unless_a_test_says_otherwise(monkeypatch):
+    """llm.model_window answers None, instead of asking a server that may exist.
+
+    History trimming (app/agent.py) asks the model server how big its window is
+    before every model call. Left alone in the suite that is a real HTTP request
+    to LLM_BASE_URL, so the tests would mean one thing on a laptop with vLLM
+    running and another on a laptop without it -- the same defect the
+    PUBLIC_MODE fixture above exists to stop, arriving through a socket rather
+    than through .env.
+
+    None is the honest pin: it is what the function returns when the server is
+    unreachable, and app/llm.py's documented contract for None is to change
+    nothing. So every test that is not about trimming sees exactly the
+    behaviour it saw before trimming existed.
+
+    A test that IS about trimming overrides this with its own monkeypatch and
+    sets the window it wants. See tests/test_agent.py.
+    """
+    monkeypatch.setattr(llm, "model_window", lambda model: None)
 
 
 @pytest.fixture()

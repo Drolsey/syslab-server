@@ -468,3 +468,128 @@ def test_a_large_tool_result_still_reaches_the_model_as_json():
 
     small = {"ok": True}
     assert _json.loads(agent._tool_content("list_files", small)) == small
+
+
+# --- History trimming against the context window ---------------------------
+#
+# The failure these cover, seen 9 September 2026 in the operator UI: nothing
+# trimmed conversation history, so a long chat eventually sent a prompt larger
+# than the model's window and vLLM refused it -- "you requested 0 output tokens
+# and your prompt contains at least 8193 input tokens". Terminal, because every
+# following message is larger than the one that just failed.
+
+
+@pytest.fixture()
+def window(monkeypatch):
+    """Set the model's context window, the way a test that cares must."""
+
+    def set_to(size: int | None):
+        monkeypatch.setattr(llm, "model_window", lambda model: size)
+
+    return set_to
+
+
+def _long_history(turns: int) -> list[dict]:
+    return [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": "x" * 400}
+        for i in range(turns)
+    ]
+
+
+def test_an_unknown_window_changes_nothing(window):
+    # The documented contract for None: never invent a limit, because an
+    # assumed window silently discards conversation a working server accepts.
+    window(None)
+    messages = [{"role": "system", "content": "s"}] + _long_history(40)
+    before = [dict(m) for m in messages]
+
+    assert llm.trim_to_window(messages, None) == 0
+    assert messages == before
+
+
+def test_trimming_drops_the_oldest_and_keeps_system_and_newest(window):
+    window(2048)
+    messages = [{"role": "system", "content": "system prompt"}]
+    messages += _long_history(40)
+    messages.append({"role": "user", "content": "the question being asked now"})
+    newest = dict(messages[-1])
+
+    dropped = llm.trim_to_window(messages, None)
+
+    assert dropped > 0
+    assert messages[0]["role"] == "system"        # never dropped
+    assert messages[-1] == newest                 # never dropped
+    assert len(messages) == 42 - dropped
+    # It stopped as soon as there was room for a reply, not later.
+    assert llm.estimate_prompt_tokens(messages) + llm.MIN_REPLY_TOKENS <= 2048
+
+
+def test_trimming_never_leaves_an_orphan_tool_result(window):
+    # A `tool` message whose assistant turn was dropped is rejected outright,
+    # which would trade one HTTP 400 for a different one.
+    window(1024)
+    messages = [{"role": "system", "content": "s"}]
+    for _ in range(8):
+        messages.append({"role": "user", "content": "q" * 300})
+        messages.append(
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]}
+        )
+        messages.append({"role": "tool", "tool_name": "run_sql", "content": "r" * 300})
+    messages.append({"role": "user", "content": "now"})
+
+    llm.trim_to_window(messages, None)
+
+    assert messages[1]["role"] != "tool", "the conversation opens with an orphan"
+    for i, message in enumerate(messages):
+        if message.get("role") == "tool":
+            assert messages[i - 1].get("tool_calls"), (
+                "a tool result survived without the assistant turn that asked for it"
+            )
+
+
+def test_a_prompt_that_cannot_be_trimmed_is_left_for_the_server_to_reject(window):
+    # One enormous message with nothing droppable behind it. The model server
+    # states this precisely; guessing here replaces a precise error with a
+    # vaguer one.
+    window(512)
+    messages = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "x" * 100_000},
+    ]
+
+    assert llm.trim_to_window(messages, None) == 0
+    assert len(messages) == 2
+
+
+def test_the_loop_trims_and_says_so_in_the_steps(monkeypatch, window):
+    # 8192 because that is what the box actually serves (--max-model-len in
+    # docker-compose.yml). A smaller number here would not be a stricter test,
+    # it would be an impossible one: the system prompt and the twelve tool
+    # schemas are ~6000 estimated tokens before the conversation starts, and
+    # neither of them is droppable.
+    window(8192)
+    seen = scripted(monkeypatch, says("the answer"))
+
+    outcome = agent.ask("and now?", history=_long_history(40))
+
+    # It fitted by the time the model was called, which is the whole point.
+    sent = seen[0]
+    assert llm.estimate_prompt_tokens(sent, agent.TOOL_SCHEMAS) + llm.MIN_REPLY_TOKENS <= 8192
+    assert sent[0]["role"] == "system"
+    assert sent[-1]["content"] == "and now?"
+
+    # And it is visible, rather than a conversation quietly forgetting.
+    trims = [s for s in outcome["steps"] if s["tool"] == "trim_history"]
+    assert len(trims) == 1
+    assert trims[0]["ok"] is True
+    assert trims[0]["arguments"]["dropped_messages"] > 0
+    assert outcome["answer"] == "the answer"
+
+
+def test_a_conversation_that_fits_is_never_trimmed(monkeypatch, window):
+    window(32768)
+    scripted(monkeypatch, says("fine"))
+
+    outcome = agent.ask("hello", history=[{"role": "user", "content": "hi"}])
+
+    assert [s for s in outcome["steps"] if s["tool"] == "trim_history"] == []

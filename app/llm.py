@@ -115,6 +115,100 @@ def model_window(model: str) -> int | None:
     return None
 
 
+# Estimating a token count without a tokenizer. Three characters per token is
+# deliberately pessimistic -- English prose runs closer to four, but what
+# actually fills these prompts is JSON: tool definitions, tool results, and
+# rows out of a database, where punctuation and quoting push the ratio down.
+# Over-estimating the prompt costs a slightly shorter answer. Under-estimating
+# costs an HTTP 400 and no answer at all, so the error is taken in the
+# direction that still works.
+CHARS_PER_TOKEN = 3
+# The chat template wraps every message in role markers the payload does not
+# contain, and the estimate above cannot see them.
+TEMPLATE_OVERHEAD_TOKENS = 256
+
+# A reply needs somewhere to happen. Trimming only until the prompt fits
+# leaves a window with nothing left to answer into, which is the exact failure
+# this exists to stop: vLLM reports it as "you requested 0 output tokens and
+# your prompt contains at least 8193 input tokens".
+MIN_REPLY_TOKENS = 1024
+
+
+def estimate_prompt_tokens(
+    messages: list[dict[str, Any]], tools: list[dict] | None = None
+) -> int:
+    """Roughly how many tokens this prompt will occupy. Never an exact count.
+
+    Shared by app/agent.py, which trims history against it, and app/gateway.py,
+    which clamps max_tokens against it. One estimator on purpose: two would
+    drift, and the two callers would then disagree about how full one window is.
+    """
+    material = json.dumps({"messages": messages or [], "tools": tools or []}, default=str)
+    return len(material) // CHARS_PER_TOKEN + TEMPLATE_OVERHEAD_TOKENS
+
+
+def _oldest_exchange_end(messages: list[dict[str, Any]]) -> int:
+    """Index one past the oldest droppable exchange, or 0 if there is none.
+
+    An exchange is one non-system message plus any tool results answering it.
+    They move as a unit because a `tool` message whose assistant turn has been
+    dropped is an orphan, and a conversation opening with an orphan tool result
+    is rejected outright -- which would trade one HTTP 400 for a different one.
+
+    Returns 0 when nothing can be dropped: messages[0] is the system prompt and
+    stays, and the newest message is what is being asked right now, so at least
+    one message must survive after the cut.
+    """
+    end = 2
+    while end < len(messages) and messages[end].get("role") == "tool":
+        end += 1
+    return end if end < len(messages) else 0
+
+
+def trim_to_window(
+    messages: list[dict[str, Any]],
+    tools: list[dict] | None = None,
+    model: str | None = None,
+) -> int:
+    """Drop oldest exchanges, in place, until the prompt leaves room to reply.
+
+    Returns how many messages were dropped. Zero means it already fitted, or
+    that nothing could be done about it.
+
+    Nothing trimmed conversation history before this, and a full window was
+    terminal: the failure repeats on every following message, because each one
+    is larger than the one that just failed, so the only recovery was starting
+    a new conversation. Dropping the oldest turns keeps the newest ones, which
+    are the ones the next answer is actually built on.
+
+    Two cases are deliberately left alone, matching the reasoning the output
+    clamp in app/gateway.py already uses:
+
+    - No window known. An assumed window silently discards conversation on a
+      server that would have accepted all of it.
+    - It still does not fit with nothing left to drop -- one enormous message,
+      or tool schemas that fill the window on their own. That is a real
+      failure and the model server states it exactly; guessing here would
+      replace a precise error with a vaguer one.
+
+    The caller is expected to say that this happened. Trimming silently is the
+    one option this file's callers have consistently argued against: the
+    conversation would keep working while quietly forgetting, and nobody would
+    know which answer was the first one built on less than it appeared to be.
+    """
+    window = model_window(model or LLM_MODEL)
+    if window is None:
+        return 0
+    dropped = 0
+    while estimate_prompt_tokens(messages, tools) + MIN_REPLY_TOKENS > window:
+        end = _oldest_exchange_end(messages)
+        if not end:
+            break
+        del messages[1:end]
+        dropped += end - 1
+    return dropped
+
+
 def raw_request(payload: dict[str, Any], timeout: int | None = None):
     """POST an arbitrary OpenAI-shaped payload, unmodified, and return the open response.
 
