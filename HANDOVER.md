@@ -100,6 +100,137 @@ are the whole contract; a header field is not part of it.
 
 **Still deferred:** the tunnel itself, and Step 2's five decisions.
 
+**Both checkpoint items closed.** The reboot in the morning, the client database
+in the afternoon. The day then ran past its scope into the website's agent, and
+the sections below are that work: the ESG tool, the Claude comparison, and a
+retry that had to be withdrawn after it was measured.
+
+**Tomorrow starts with the tunnel.** It is unblocked, the Access-vs-WAF question
+is settled, and nothing found today touches it. `docs/runbook.md` § Publishing
+it. The two things waiting on a person rather than on work are Step 2's five
+decisions and whether `pr/agent-hardening` is pushed and opened as a pull
+request.
+
+## Claude passes every trap, and one of the fixes was worse than the bug
+
+9 September, end of day. The five tests were run against the **deployed**
+website, which is the right control: production carries none of these changes,
+so it is the original prompt, the original tool description and no retry, with
+Claude instead of the 14B.
+
+| test | 14B | Claude |
+|---|---|---|
+| ```sql fence after tool-free prose turns | fabricated, 0 steps | **passed** |
+| preamble bypass ("top 5 hospitals") | fabricated, 0 steps | **passed** |
+| ESG scope, Kloof and Midstream | 0 of 3 each | **passed**, 1 rep each |
+| "create a graph" | mermaid diagram of column names | **passed**, real chart |
+| monitoring views | — | **passed**, named them as extension views |
+
+The second row is the strongest: Claude returned Sandton 1441, Morningside
+1418, Limpopo 1346, Donald Gordon 1229, Muelmed 1193 — identical to the
+verified query-log values — on the question that made the 14B invent
+"Hospital A 1200" through "Hospital E 1000".
+
+And it shows *why* it passes: before calling the ESG tool it ran a query to
+confirm the hospital's spelling, exactly as the tool description asks, and even
+noticed `Life Groenkloof Hospital` as a near miss. The 14B skipped that step
+and reached for the example value instead. Claude is not resisting the trap so
+much as doing the work that makes the trap irrelevant.
+
+**So all four changes are hardening for weaker models, not production fixes.**
+That is the honest framing, and it is a much easier merge to argue.
+
+### The database question is settled, and the earlier retraction was right
+
+Claude reported **52,410** records in `Report` — exactly the count measured
+against `medi_merchant` this morning. Same database. The "production is a
+different database" claim is now positively disproven rather than merely
+doubted, and the 14-against-17 gap is entirely the fixture's 1:1 `Inventory`
+assumption. Two more ratios confirm it: production reports 239 items for Kloof
+2026 against 175 non-Removal source rows, and 213 for Midstream against 138 —
+1.37 and 1.54, consistent with Inventory holding one row per physical asset.
+
+One database, two roles: the agent connects as `database_agent_ai` with SELECT
+on `Report` only, while the app's Prisma connection reaches everything.
+
+### The retry was withdrawn, and it is the important lesson of the day
+
+Asked to *write* a query rather than run one, the retry executes it anyway,
+overriding an explicit instruction:
+
+| prompt | narrow (original) | wide (the change) |
+|---|---|---|
+| "Write me a SQL query… **Do not run it.**" | ran it | ran it |
+| "How would I query the Report table for…?" | correctly declined | **ran it** |
+
+The defect predates the change; widening the detector made it strictly worse,
+1 of 2 becoming 2 of 2. And it is not a weak-model problem — it fires precisely
+when a model does the right thing, which is show SQL and call no tool. Claude
+answering "here is the query you asked for" is the exact shape it pounces on.
+
+**The commit was dropped from the pull request.** It fixes a bug Claude does
+not have, carries the largest surface area of the four (a new SSE event, both
+provider adapters, the frontend), and has a demonstrated false positive.
+Separating "show me SQL" from "give me data" is the same hard predicate as
+"asserted a quantity without a query", still unsolved. The narrow version
+already running in production has the milder form of this, which is worth
+telling the owner regardless of whether anything merges.
+
+The chase is worth remembering as a class: **a detector widened to close a
+false negative bought a false positive that was worse than the bug.** The
+original narrow trigger was accidentally doing a second job — suppressing the
+retry on legitimate "here is some SQL" answers — and widening it removed that
+protection without anyone noticing until it was measured.
+
+### Two more revisions before the PR
+
+**The ESG rule was rewritten to be about intent, not spelling.** The first
+version said a name containing the word "Hospital" is always a `hospital_name`.
+It scored 24 of 24, but would misroute a group whose own name contains the word
+— and the `Hospitals` table is unreadable from here, so that could not be ruled
+out. The replacement — use `hospital_group` only when the user asked for a
+whole group or chain — also scores **24 of 24**, with group and month scope
+intact, and depends on nothing unverifiable.
+
+**The chart emphasis was removed.** The first version of the mermaid fix also
+added "any graph, plot or visualisation of query results is this block" to the
+```chart entry. That strengthens a format example inside `OUTPUT_FORMAT` —
+precisely the mechanism proven to turn a block into a slot the model fills —
+on the block already known to get fabricated. The kept version bounds the
+mermaid entry only and leaves ```chart untouched.
+
+### What Claude flagged that nothing here had
+
+Unprompted, on "what tables can you see?": the workspace playbook refers to an
+`item_sustainability` catalogue and a `Hospitals` table with hospital groups,
+and **neither is visible on the agent's connection**. The ESG generator reaches
+them through Prisma; the agent cannot. So any question about item weights or
+hospital groups fails against a playbook that promises them. That is a live
+production gap, it is a grant rather than a code change, and it was found by
+asking the deployed system a question rather than by reading the code.
+
+It also over-claimed once inside a single answer — "the table below has all of
+them", then in the same message "the first 100 of 156 hospitals (truncated at
+100 rows)". It corrected itself, but claiming completeness before disclosing
+truncation is a better hardening target for production than anything in the PR.
+
+### Where the branches stand
+
+| branch | state | contents |
+|---|---|---|
+| `origin/amro-changes` | pushed | 4 commits, 8 files, +202 −7, **includes the withdrawn retry** |
+| `pr/agent-hardening` | local only | 3 commits, 3 files, +34 −3, the revised versions |
+
+They are not parent and child: the PR branch was rebuilt from `main` with
+reworded commits, so the same three ideas exist in two forms. `amro-changes`
+was deliberately **not** force-pushed — it is already on the remote, and it is
+the only record of the retry experiment, whose finding is real even though its
+fix is not safe. `deploy.yml` fires only on `main`, so neither branch affects
+the live service until something merges.
+
+Open: whether a pull request already exists from `amro-changes`. If one does it
+proposes the version with the regression and should be closed.
+
 ## The ESG tool: the model calls it reliably and fills the wrong parameter
 
 9 September, testing `generate_esg_report` — the first custom tool here that
@@ -196,13 +327,10 @@ Data Quality Score of **0.0%** against production's 100%. It declined to vouch
 for numbers built on data it could not match rather than presenting them as
 sound.
 
-**Still not done: the Claude comparison.** This laptop has one provider, the
-box. The deployed site clearly has an Anthropic key, but that is the
-deployment's, not one available here, so the two are not yet comparable on
-equal footing. Comparing a report generated from production against one
-generated from the fixture compares two databases, not two models — both
-models made the same, correct tool call for that case. The 24-run harness is
-built and repeatable the moment a key is added here.
+~~**Still not done: the Claude comparison.**~~ **Done — see the next section.**
+It was run against the deployed site rather than here, which turned out to be
+the better test: production runs the unfixed code, so it is the same traps with
+a different model.
 
 ## The client database is attached, and the retry's trigger is narrower than recorded
 
