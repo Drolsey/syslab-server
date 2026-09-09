@@ -279,6 +279,37 @@ contract and it calls the tool again even with the full poisoned history.
 **An explicit correction in the prompt does not help** (0/4). A worked format
 example outweighs a prohibition sitting next to it.
 
+**Which section, exactly — because the obvious suspect is innocent.** The
+workspace playbook also says "Show the SQL you ran", and the workspace has a
+"SQL style guide" skill, so the tenant-editable content looks guilty. It is
+not. Building the prompt the way `buildSystemPrompt` actually does (core,
+output format, detail, connection, playbook, schema):
+
+| prompt | `run_sql` |
+|---|---|
+| everything, as the app builds it today | 0/4 |
+| **minus `OUTPUT_FORMAT`** (playbook still says "show the SQL") | **4/4** |
+| minus the playbook only | 0/4 |
+| minus both | 4/4 |
+
+Only `OUTPUT_FORMAT` is load-bearing, and the reason is the *kind* of
+instruction, not the topic. The playbook says "Show the SQL you ran" — prose,
+no template. `OUTPUT_FORMAT` says "```sql — the query you ran. Always show it."
+— a worked format specification, which is a slot the model can fill. **A prose
+instruction does not create the decoy; a format example does.** The model is
+not disobeying "call the tool"; it is filling in the most concrete template it
+was handed.
+
+That is lesson 3 of this file one level up: an example in a tool description is
+indistinguishable from an argument, and an example in a format spec is
+indistinguishable from a deliverable.
+
+It also means **the fix is not available to the operator.** `OUTPUT_FORMAT` is
+a hardcoded constant in `lib/agent/prompt.ts`, not tenant-editable, so no
+playbook edit reaches it. The narrow change is to drop the `sql` line from that
+block and render the query from the tool call's own `sql` argument, which the
+UI already receives.
+
 **This is not a 14B tool-calling weakness, and it was wrong to file it as one.**
 The 14B calls `run_sql` 4/4 direct, 4/4 streamed, 4/4 through the gateway, 4/4
 under the full website prompt, and 4/4 with the poisoned history once the SQL
