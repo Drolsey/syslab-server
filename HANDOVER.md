@@ -5,6 +5,40 @@ Rewritten 8 September 2026. A portable copy of the session notes, so a new chat
 The previous version described a Windows laptop with an RTX 3060 and is
 superseded; the commit history has it if you want it.
 
+## Checkpoint — 9 September 2026
+
+Today is scoped to two things, both of which close claims this file currently
+makes without proof. The tunnel and Step 2's sign-off are explicitly deferred;
+they are not blocked by anything done today.
+
+**1. Finish the local website test.** `database-agent/.env.local` is written and
+correct except for one value: `MODEL_API_KEY` is the literal placeholder
+`PASTE_A_GATEWAY_TOKEN_HERE`. Substitute one of the box's `GATEWAY_TOKENS`
+(`grep GATEWAY_TOKENS ~/syslab-server/.env` on the box), then `npm run dev` —
+Next reads env at boot, so it must be a restart, not a reload.
+
+Verified before starting, so these are not the cause if it fails: the box
+answers on the LAN (`:8080` 401, `:8000` 200), no orphan `node.exe` holds
+Next's lock, and nothing listens on 3000/3001.
+
+One trap not in yesterday's notes: `MODEL_PROVIDER` and friends are read
+**only when the workspace has no provider of its own**
+(`lib/services/model-providers.ts:359`). A fresh dev server has none, so the
+env file wins — but if a run returns the setup notice, the fix is Settings →
+Model provider in the app, not the env file.
+
+Order, because each step proves something the next assumes:
+chat once (alias, token, clamp, streaming), then attach the Postgres
+connection and ask something real (multi-turn tool calling).
+
+**2. Prove the reboot.** `sudo reboot` on the box, then both `:8000` and
+`:8080` answer with nothing typed. The box being up right now proves the
+process runs; it does not prove it returns on its own, which is the open claim.
+Do this second — it costs the box's uptime, and the website test needs the box.
+
+**Still deferred, and unblocked by neither:** the tunnel (waiting on the
+Access-vs-WAF decision below) and Step 2's five decisions.
+
 ## Session log — 8 September 2026, evening
 
 Stopped mid-way through a local end-to-end test. Everything on the server side
