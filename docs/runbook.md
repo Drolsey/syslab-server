@@ -71,6 +71,39 @@ python scripts/check_gateway_isolation.py          # inference cannot reach tena
 the real model name. If it does, something has bypassed the alias table and the
 website is one deploy away from being pinned to a model name that will change.
 
+### After changing the model, the window, or `.env`
+
+Run these two before believing anything else. They are the only way to answer
+"did that take effect" from this machine, and the question comes up every time:
+
+```bash
+cd /home/syslab/syslab-server
+TOK=$(grep -E '^GATEWAY_TOKENS=' .env | cut -d= -f2- | cut -d, -f1)
+
+curl -s -H "Authorization: Bearer $TOK" http://localhost:8080/v1/models
+
+curl -s -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json'   -d '{"model":"syslab-default","messages":[{"role":"user","content":"Reply with exactly: ok"}],"max_tokens":32000}'   http://localhost:8080/v1/chat/completions
+```
+
+A normal reply to the second proves four things at once: the alias table is
+current, so the app is running on the current `LLM_MODEL`; gateway token auth
+works; the real model name still does not leave the box (the response's `model`
+field says `syslab-default`); and the clamp is clamping against the *current*
+window, because `max_tokens: 32000` is the website's exact request shape and is
+an outright vLLM 400 without it.
+
+**Why this exists rather than `systemctl status`.** `systemctl restart` prints
+nothing on success, and every app endpoint answers 401 without a token, so
+"is the app running the new configuration" is not answerable by looking from
+outside. On 9 September that cost five restarts of a service that had been
+correct since the first one. `MODEL_ALIASES` is built at import from
+`LLM_MODEL` (`app/config.py`), so an app started before an `.env` edit keeps
+serving the old alias with no outward sign until a request fails.
+
+A 404 naming the *previous* model is the signature of exactly that: `.env` was
+edited after the last restart. That is the one case where restarting again is
+the fix.
+
 ---
 
 ## Publishing it: Cloudflare Tunnel

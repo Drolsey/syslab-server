@@ -71,6 +71,23 @@ trusted — a watcher on the LAN saw the box drop at 07:33:19Z and the boot
 timestamp is 07:33:27Z, which rules out the failure mode where a network blip
 looks exactly like a reboot from outside.
 
+**Blocked, and not on anything box-side.** The website needs its own Postgres
+before it will render at all: users, workspaces and the model-provider secret
+store all live there (`lib/db.ts`), reached through `PGHOST`/`PGPORT`/
+`PGUSER`/`PGPASSWORD`/`PGDATABASE`, plus an `AUTH_SECRET`. None of it exists in
+the checkout. Auth itself is not the problem — `API_AUTH_MODE` defaults to
+`open` (`lib/api/auth.ts`), so no OAuth credentials are needed.
+
+The decision waiting is where that database comes from: a throwaway Postgres in
+Docker (isolated, nothing touches production, needs the Docker daemon started
+on the laptop), or an existing Cloud SQL instance someone is willing to have a
+dev server write session rows and possibly schema into. Everything on the
+syslab-server side is ready and verified — the gateway answers, the alias
+resolves, the clamp works against 16384, and the `custom` preset's Test probe
+will come back green because `/v1/models` lists `syslab-default`
+(`lib/agent/providers/openai-compatible.ts` takes the catalogue branch and
+spends no generation tokens).
+
 **The Access-vs-WAF decision is now settled, by this.** The box is integrated
 as an API token — base URL, key, model — because that is the shape the provider
 config has. Cloudflare Access authenticates with two extra HTTP headers, and
@@ -122,6 +139,15 @@ it separates "does the integration work" from "does the network path work".
 Done on the laptop: `npm install`, `npx prisma generate`. The dev server is up
 and serving (`GET / -> 200`).
 
+> **Corrected 9 September: that `200` was not a working page.** There is no
+> `.env` or `.env.local` in the `database-agent` checkout — only `.env.example`
+> — so the app has no `AUTH_SECRET` and no Postgres connection, and NextAuth
+> renders its "problem with the server configuration" page. That page returns
+> **HTTP 200**, so a status-code check passes while nothing works. The website
+> has therefore never actually run on this laptop, and the note below that the
+> only missing input is a gateway token is wrong: see the checkpoint entry for
+> what it really needs.
+
 Two traps hit, both worth knowing before repeating this:
 
 1. **npm 11 blocks package install scripts by default.** `npm install`
@@ -134,8 +160,8 @@ Two traps hit, both worth knowing before repeating this:
    server is already running" and picks port 3001 while nothing listens on
    3000. `taskkill /PID <pid> /F`, and delete `.next/dev`.
 
-**Next action, and it needs a value only the operator has:** create
-`database-agent/.env.local` —
+**Next action** *(superseded — the workspace-provider path replaced this, and
+the real blocker is the database below, not this file)* —
 
 ```
 MODEL_PROVIDER=custom
