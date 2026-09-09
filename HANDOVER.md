@@ -149,7 +149,7 @@ externally managed — but nothing in the repo says so, and there is no seed
 script for it or for Inventory, Hospitals and item_sustainability, which exist
 locally but empty.
 
-**The production database is not the client database.** Generating the same
+**The production and client row counts disagree — cause not settled.** Generating the same
 report — Mediclinic Muelmed, March 2026 — from the deployed website and from a
 local copy of the client instance gives different totals:
 
@@ -158,10 +158,28 @@ local copy of the client instance gives different totals:
 | client `medi_merchant`, and a faithful local copy | 11 | 2 | 1 | 14 |
 | the deployed website's own database | 11 | 5 | 1 | 17 |
 
-Sale and Scrap agree exactly; production carries three Donation rows the client
-instance does not. So the deployment reads a fuller or newer dataset than the
-credentials handed over for this work reach, and any figure reconciled between
-the two will disagree for that reason before any other.
+Sale and Scrap agree exactly; production shows three more Donation items.
+
+**This was first written as "production is a different database". That was
+overstated.** `Report` joins `Inventory` on `"ID"`, and `prisma/schema.prisma`
+documents Inventory as "one row per individual physical asset within a Register
+transaction" — so one Report row can yield several Inventory rows. The fixture
+here forces exactly 1:1, which undercounts. Three extra donation assets in a
+real Inventory explains 14 against 17 with no second database involved, and
+that explanation fits at least as well as the one originally recorded.
+
+It cannot be settled from this laptop: the `database_agent_ai` role has SELECT
+on `Report` and the two `pg_stat_statements` views and nothing else, so
+Inventory is unreadable here. Settling it needs one `SELECT count(*) FROM
+"Inventory" i JOIN "Report" r ON r."ID" = i."ID"` against production.
+
+**And a related correction: the client database does contain the app's own
+tables.** `Hospitals`, `Inventory`, `item_sustainability`, `users`, `companies`,
+`app_documents` and `app_secrets` are all present in `medi_merchant`. Earlier
+notes here recorded them as absent, because `information_schema` is
+permission-filtered and the role cannot see them — absence of privilege read as
+absence of table. The gateway and the agent behave correctly; only the
+inference was wrong.
 
 ### What the local test rig is, so nobody mistakes it for real
 
