@@ -100,6 +100,91 @@ are the whole contract; a header field is not part of it.
 
 **Still deferred:** the tunnel itself, and Step 2's five decisions.
 
+## The client database is attached, and the retry's trigger is narrower than recorded
+
+9 September. Checkpoint step 3 done: `public."Report"` attached as a real
+`engine: postgres` connection, `allow_writes` false, and asked real questions.
+Every claim below is from the query log in `app_documents`, not from the screen.
+
+**The connection.** `conn_01M22WFDF54ZC2J2K1W5Y3K1HA`, probe `connected` at
+1296 ms, introspection returning three tables — `public.Report` with 35 columns
+and the two `pg_stat_statements` views, exactly as this file describes. **All 35
+of the 35 columns need quoting**, confirmed programmatically rather than by eye.
+Row count is now **52,410**, up from 52,190 on 3 September; ordinary growth in a
+live table, not a discrepancy.
+
+**Quoting costs two round trips, and the model does self-correct.** Turn 1
+("how many records") took three attempts, all three in the query log:
+
+| attempt | sql | result |
+|---|---|---|
+| 1 | `SELECT COUNT(*) FROM public.Report;` | `relation "public.report" does not exist` |
+| 2 | `SELECT COUNT(*) FROM Report;` | `relation "report" does not exist` |
+| 3 | `SELECT COUNT(*) FROM public."Report";` | 1 row in 258 ms |
+
+Unquoted identifiers fold to lower case and the error says so, which is enough
+signal for the model to fix it unaided. It is a latency cost on this schema, not
+a correctness one.
+
+**The fabrication reproduced against real data, on the second turn.** Asked
+"which hospitals have the most assets? show me the top 5", the reply had **no
+steps at all**, returned in 1.3 s, and contained both a ```sql fence and a
+```table block:
+
+```
+Hospital A 1200 · Hospital B 1150 · Hospital C 1100 · Hospital D 1050 · Hospital E 1000
+```
+
+The query log has nothing between 10:48:13 and 10:50:07. Every one of those
+numbers was invented, against a client database it was connected to and had
+successfully queried one turn earlier.
+
+Asked again — "actually run that query and give me the real numbers" — it ran
+one query, 5 rows in 399 ms, and returned Mediclinic Sandton 1441, Morningside
+1418, Limpopo 1346, Donald Gordon 1229, Muelmed 1193. Same question, same
+connection, ninety seconds apart: one invented, one real.
+
+**Why the retry did not fire, which is the finding.** This file said the
+detector "detects a bare ```sql fence". It is narrower than that.
+`bareSqlFence` (`lib/agent/index.ts:142`) strips leading whitespace and tests
+`startsWith("```sql")`, and it is consumed by a **streaming hold**: the first
+delta that cannot still become the fence sets `holding = false`
+(`lib/agent/index.ts:262`), and the retry at line 316 requires `holding` to
+still be true. So the fence must be **the first thing in the reply**.
+
+Turn 1 opened with the fence and the retry fired — the step
+"Query was shown but not run — running it" is in the run. Turn 2 opened with
+"To determine which hospitals have the most assets, we can count…" and the hold
+was released on the first delta, so the fence and the fabricated table that
+followed were never examined.
+
+This sharpens yesterday's entry rather than confirming it. The conclusion there
+was that the dangerous form "does not involve SQL at all". Today's turn 2
+contained a perfectly ordinary ```sql fence and still slipped through — **one
+sentence of preamble is enough to defeat the detector**. That is a much cheaper
+failure than the chart-only case, and it means the retry's real coverage is
+"replies that open with a fence", which is a small subset of the replies it was
+believed to cover.
+
+It also narrows the open decision. Extending the detector to "asserted a
+quantity without a query" is still the general fix and still carries the
+false-positive cost. But moving the check off the streaming hold — scan the
+completed reply for a fence anywhere, instead of requiring it at position zero —
+is a strictly smaller change with no new false positives, since a reply that
+contains a ```sql fence and called no tool is exactly the case the retry was
+already written for. Worth doing regardless of how the larger question lands.
+
+**Two things learned about the harness, both of which cost time here.** The API
+resolves an unauthenticated caller to tenant `ten_local` while the browser
+workspace is `cmp_fb6a6edde0af2c3c38d0` (`lib/api/auth.ts:137`), so a connection
+created by plain curl lands in a tenant with no model provider and every run
+returns the "No model provider is configured" rendering demo — which itself
+emits a fake ```sql block and a fake ```table, and looks exactly like the bug
+being investigated. Authenticate first: the `auto-link` provider takes an email
+and the company name and yields a session cookie. And `/api/v1/queries` is
+POST-only; the query log is read from the `queries` collection in
+`app_documents`, not over HTTP.
+
 ## Session log — 8 September 2026, evening
 
 Stopped mid-way through a local end-to-end test. Everything on the server side
@@ -406,10 +491,9 @@ Something adaptive is needed, and it lives in `lib/agent/index.ts`, not here.
 Worth measuring the 32B against the same replay before concluding the model
 swap caused it.
 
-**Also still not done:** the conversation ran against the built-in "Sample
-dataset" (`engine: demo`), not the client Postgres. Step 3 of the checkpoint —
-attach the real connection and ask something real, against 52,190 rows and 35
-column names that all need quoting — has not been attempted.
+~~**Also still not done:**~~ **Done 9 September** — the client Postgres is
+attached and the run is below. It reproduced the fabrication against real data,
+and showed the retry's trigger is narrower than this file recorded.
 
 ## Deploy verified end to end — 9 September 2026
 
