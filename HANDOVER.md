@@ -243,8 +243,8 @@ Two hypotheses were tested and **both were wrong**: the prompt's "always show
 the SQL" instruction does not suppress tool calls (4/4 with it), and neither
 does the full `OUTPUT_FORMAT` block.
 
-**The cause is conversation history.** Replaying the real transcript from the
-website's own database:
+**The cause is the app's own output contract, and history only loads the gun.**
+Replaying the real transcript from the website's own database:
 
 | context for "show me all public customers" | `run_sql` |
 |---|---|
@@ -261,11 +261,36 @@ imitates itself, and the tool stops being reached for. The degradation is
 gradual, not caused by one turn: removing the file exchanges recovers only
 1 of 4.
 
-**Not known: whether the 32B resisted this.** It cannot be tested without
-loading it again. This is exactly the class of capability difference the swap
-risked, and exactly the class `check_agent` cannot see: every scenario there
-opens with a question that demands a tool, so no scenario ever accumulates
-tool-free turns. **6 of 8 did not, and could not, cover this.**
+Holding that history fixed and changing only the system prompt:
+
+| system prompt | `run_sql` |
+|---|---|
+| with "Show the SQL you ran" + "```sql — the query you ran. Always show it." | **0/4** |
+| **without those two lines** | **4/4** |
+| with them, plus "writing SQL is not running it, never present SQL you have not run" | **0/4** |
+
+So the mechanism is an interaction, and both halves are needed. The prompt's
+rendering contract gives the model a **text channel that imitates the tool** —
+a ```sql block is what a successful query *looks like* to this UI. In a clean
+context the model still calls the tool; once several prose turns are behind it,
+it reaches for the cheaper channel that also satisfies the brief. Remove the
+contract and it calls the tool again even with the full poisoned history.
+
+**An explicit correction in the prompt does not help** (0/4). A worked format
+example outweighs a prohibition sitting next to it.
+
+**This is not a 14B tool-calling weakness, and it was wrong to file it as one.**
+The 14B calls `run_sql` 4/4 direct, 4/4 streamed, 4/4 through the gateway, 4/4
+under the full website prompt, and 4/4 with the poisoned history once the SQL
+contract is removed. Three other hypotheses were tested and all failed:
+`enable_thinking` on vs off (0/4 either way), temperature 0.0 vs 0.7 (0/4
+either way), and the prompt wording in a clean context (4/4 either way).
+
+Whether a 32B resolves the ambiguity better is plausible and **still untested**
+— but it is now a secondary hypothesis, not the explanation. `check_agent`
+cannot see any of this regardless: every scenario opens with a question that
+demands a tool and none accumulates tool-free turns, and none of its tools has
+a text format that imitates it.
 
 **What to do about it is a website decision, not a gateway one.**
 `tool_choice: "required"` fixes it completely but cannot be applied blanket —
