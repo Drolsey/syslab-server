@@ -562,19 +562,21 @@ def test_a_prompt_that_cannot_be_trimmed_is_left_for_the_server_to_reject(window
 
 
 def test_the_loop_trims_and_says_so_in_the_steps(monkeypatch, window):
-    # 8192 because that is what the box actually serves (--max-model-len in
+    # 16384 because that is what the box actually serves (--max-model-len in
     # docker-compose.yml). A smaller number here would not be a stricter test,
     # it would be an impossible one: the system prompt and the twelve tool
     # schemas are ~6000 estimated tokens before the conversation starts, and
-    # neither of them is droppable.
-    window(8192)
+    # neither of them is droppable. The history is sized to overflow that real
+    # window rather than a convenient one -- a test that only trims on a window
+    # nothing serves proves nothing about the server that exists.
+    window(16384)
     seen = scripted(monkeypatch, says("the answer"))
 
-    outcome = agent.ask("and now?", history=_long_history(40))
+    outcome = agent.ask("and now?", history=_long_history(120))
 
     # It fitted by the time the model was called, which is the whole point.
     sent = seen[0]
-    assert llm.estimate_prompt_tokens(sent, agent.TOOL_SCHEMAS) + llm.MIN_REPLY_TOKENS <= 8192
+    assert llm.estimate_prompt_tokens(sent, agent.TOOL_SCHEMAS) + llm.MIN_REPLY_TOKENS <= 16384
     assert sent[0]["role"] == "system"
     assert sent[-1]["content"] == "and now?"
 

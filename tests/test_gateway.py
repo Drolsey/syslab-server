@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from app import config, gateway, llm, main
 
 GATEWAY_TOKEN = "a-gateway-token-long-enough"
-REAL_MODEL = "Qwen/Qwen3-32B-AWQ"
+REAL_MODEL = "Qwen/Qwen3-14B-AWQ"
 ALIAS = "syslab-default"
 
 
