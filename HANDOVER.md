@@ -169,6 +169,35 @@ the Docker bridge address, not loopback, so cloudflared could not reach a
 loopback-only app. The right move is a firewall rule scoped to the bridge
 subnet, and it belongs after the tunnel works, not before.
 
+## Deploy verified end to end — 9 September 2026
+
+The 14B swap is live on the box and proven through the app, not just through
+vLLM. One request carries the whole proof:
+
+```
+GET  /v1/models        -> {"id":"syslab-default"}
+POST /v1/chat/completions with max_tokens: 32000
+                       -> "content":"ok", "finish_reason":"stop",
+                          "model":"syslab-default"
+```
+
+That establishes four things that had been claimed separately: the alias table
+is current (so the app is running on the new `LLM_MODEL`), gateway token auth
+works, the real model name still never leaves the box, and **the clamp is now
+clamping against 16384 rather than 8192** — `max_tokens: 32000` is the
+website's exact request shape and is an outright vLLM 400 without it.
+
+Startup log, measured: `Available KV cache memory: 9.27 GiB`, `GPU KV cache
+size: 60,768 tokens`, `Maximum concurrency for 16,384 tokens per request:
+3.71x`.
+
+One process note worth keeping, because it cost several rounds: `systemctl
+restart` prints nothing on success, and the app's endpoints all answer 401
+without a `GATEWAY_TOKENS` value, so "did the restart take effect" is not
+answerable by looking from outside. The two curls above are the answer, and
+they belong in `docs/runbook.md` as the after-any-model-change check rather
+than being re-derived next time.
+
 ## Where it stands
 
 The 5090 box is real and serving. `syslab-server` is now three planes in one
