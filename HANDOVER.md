@@ -304,6 +304,25 @@ That is lesson 3 of this file one level up: an example in a tool description is
 indistinguishable from an argument, and an example in a format spec is
 indistinguishable from a deliverable.
 
+**The fix is one line, and it is verified.** Removing only the ```sql line
+from `OUTPUT_FORMAT` — keeping ```table, ```chart, the playbook and the skills
+exactly as they are — restores `run_sql` to **5/5** against the same poisoned
+history that scores 0/5 as shipped.
+
+It needs a second, smaller change to not lose the query display, and that
+change is worth making on its own account. `Markdown.tsx` renders `SQLBlock`
+only from a model-authored fence, so today the SQL on screen is the model's
+*recollection* of the query, re-typed after the fact — it is not necessarily
+what executed. `lib/agent/index.ts` already holds the real statement and a
+`query_id` at the point it emits the step. Rendering from that makes the widget
+provably the query that ran, for every provider, and removes the model's reason
+to reproduce it.
+
+Scoping this to one provider is possible — `app/api/chat/route.ts` resolves the
+client and knows which it is — but probably not wanted. The decoy misleads any
+model; a stronger one just resists it longer, and the trustworthy-SQL change is
+an improvement everywhere.
+
 It also means **the fix is not available to the operator.** `OUTPUT_FORMAT` is
 a hardcoded constant in `lib/agent/prompt.ts`, not tenant-editable, so no
 playbook edit reaches it. The narrow change is to drop the `sql` line from that
