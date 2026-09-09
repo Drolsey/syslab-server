@@ -244,24 +244,32 @@ tokens 21,135 → 60,768 (2.88x), concurrency 2.58x → 3.71x (1.44x), window 81
 one 4,506-token tool result not fitting in 3,979 tokens of room — is now a
 4,506-token result inside 12,171, with 7,665 to spare.
 
-**The unmeasured risk is capability, and this document already has evidence it
-is real.** The 8B failed 3 of 8 `check_agent` scenarios — including
-hallucinating a SQL query against a database that was never configured — and
-that is precisely why the 32B was chosen. A 14B sits between the two, and
-nothing here yet says where. The 32B scored **6 of 8** on `check_agent` (the
-two failures are test-strictness, not the model: both reach the correct answer
-by a different valid tool path) and **8 of 8** on `check_search`. Those are the
-gate. Run both after the swap and compare against those numbers:
+**Capability was the real risk, and it held.** This document already had the
+evidence that model size matters here: the 8B failed 3 of 8 `check_agent`
+scenarios, including inventing a SQL query against a database that was never
+configured, and that is precisely why the 32B was chosen. A 14B sits between
+them, and nothing but a measurement could say where.
 
-```
-py scripts/check_agent.py
-py scripts/check_search.py
-```
+Run against the live 14B on 9 September 2026, immediately after the swap:
 
-If the 14B regresses on tool calling, the fallback that keeps the larger model
-is `--kv-cache-dtype fp8` on the 32B, which roughly halves KV memory and would
-reach 16384 at around today's concurrency. It costs some KV precision, which is
-a much cheaper thing to lose than a tool call.
+| | 32B | 14B |
+|---|---|---|
+| `check_agent` | 6 of 8 | **6 of 8** |
+| `check_search` | 8 of 8 | **8 of 8** |
+
+Not merely the same totals — the **same two scenarios** fail (3 and 7), for the
+same reason they failed on the 32B: both reach the correct, verified answer by
+a valid tool path the assertion does not accept. Scenario 7 found the invoice
+with `search_files` instead of `list_files` and built the right spreadsheet
+from it. That is the test being strict about route rather than result, which is
+what this file has said about those two since the 32B, and it is unchanged.
+
+So the 14B costs nothing measurable on the workload this box exists for, and
+the traces run noticeably quicker (2.4s where the 32B took 3.9s on the same
+scenario). Had it regressed, the fallback keeping the larger model was
+`--kv-cache-dtype fp8` on the 32B — roughly halves KV memory and would reach
+16384 at about the old concurrency. It was not needed, and is recorded here
+only so the next person does not have to re-derive it.
 
 ## Serving stack, pinned
 

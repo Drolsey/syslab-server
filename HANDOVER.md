@@ -324,15 +324,14 @@ the short version:
   12,272 recorded, 0.85 → 2.58x against 2.58x recorded. **Still read the
   startup log and record the real numbers**, the way 8 September did.
 
-  **The open question is capability, not memory, and it is measurable.** A 14B
-  is a smaller model, and multi-turn tool calling over a 35-column table whose
-  every column name needs quoting is exactly the workload that shows the
-  difference. `check_agent` was 6 of 8 on the 32B (the two failures are
-  test-strictness, not the model) and `check_search` 8 of 8. Those are the
-  gate: run both after the swap and compare against those numbers, not against
-  an impression. If the 14B regresses, `--kv-cache-dtype fp8` on the 32B is the
-  fallback — it roughly halves KV memory, which would reach 16384 at about
-  today's concurrency while keeping the larger model.
+  **Capability was the open question, and it is now answered: the 14B matches
+  the 32B.** Run against the live model straight after the swap, `check_agent`
+  **6 of 8** and `check_search` **8 of 8** — the same totals as the 32B, and the
+  same two scenarios failing (3 and 7) for the same documented reason, that both
+  reach the correct answer by a tool path the assertion does not accept.
+  Scenario 7 used `search_files` rather than `list_files` and produced the right
+  spreadsheet. Nothing regressed, and the traces are quicker (2.4s against
+  3.9s). The `--kv-cache-dtype fp8` fallback on the 32B was not needed.
 
   Note the numbers above are the **internal** agent path (`/api/chat`, the
   operator UI). The website reaches the model through `/v1` with its own system
