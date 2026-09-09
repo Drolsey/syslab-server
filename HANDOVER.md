@@ -237,6 +237,22 @@ the short version:
 
 ## Known and deliberately not fixed yet
 
+- **Nothing trims conversation history, and a full window is unrecoverable.**
+  Found 9 September in the operator UI: vLLM returned HTTP 400 with "you
+  requested 0 output tokens and your prompt contains at least 8193 input
+  tokens" against the 8192 window. The 0 is not a caller bug -- the internal
+  path sends no `max_tokens` (`app/llm.py:42`) so vLLM fills what remains, and
+  what remained was nothing. Yesterday's clamp does not cover it: it is on the
+  `/v1` path only (`app/gateway.py:139`), and it deliberately bails when
+  `room <= 0` rather than truncate a prompt (`app/gateway.py:142`). The history
+  itself is unbounded (`app/agent.py:754`). The failure is terminal for that
+  conversation -- every following message is larger than the one that just
+  failed -- and the only recovery is starting a new one. **The website will hit
+  this too**, on any long conversation, which puts it directly in front of the
+  Step 3 gate. The fix is a decision, not a patch: drop oldest turns, summarise
+  them, or refuse early with a clear message. Trimming silently is the one
+  option the gateway's existing reasoning already argues against.
+
 - **`check_agent` is 6 of 8.** Both remaining failures reach the correct,
   verified answer by a different valid tool path than the test requires, and
   scenario 7 compares against a fixture left over from an earlier phase that
