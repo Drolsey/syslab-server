@@ -18,6 +18,12 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 ## [Unreleased]
 
 ### Fixed
+- **`scripts/check_isolation.py` was writing into this install's own `derived/` folder**
+  while its docstring promised it never touches anything of yours. It redirects the data,
+  index and control roots into a temporary directory; Step 2 added a fourth it had never
+  heard of, so it had been creating real `derived/alpha/` and `derived/beta/` since 2.1.
+  All four are redirected now, and the assertion checks all four rather than checking one
+  and trusting the rest. Second gate in two sub-steps found checking an incomplete list.
 - **Derived artifacts outlived the files they came from.** Nothing swept them, so a deleted
   document kept a manifest row and a folder of bytes for ever; `scripts/check_search.py`
   had been leaving 41 text artifacts behind on every run. `ingest.rebuild()` now reconciles
@@ -58,6 +64,10 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
     of broken documents.
   - Re-runs on a change of source size, mtime or producer version. Deliberately not a
     content hash.
+- **`check_isolation` covers derived artifacts** (Step 2.5): a folder and manifest per
+  tenant, one tenant's extracted text unreachable as another, a sweep that never crosses
+  the boundary, and a tenant removal that takes its `derived/` with it — asserted through
+  `scripts/tenant.py` itself rather than a copy of what it does.
 - **`scripts/check_ingest.py`** (Step 2.4), the gate for the two properties the rest of the
   design leans on: `derived/` deleted entirely reconstructs from `data/`, and a deleted
   source file leaves nothing behind. `check_search` grew a matching check.

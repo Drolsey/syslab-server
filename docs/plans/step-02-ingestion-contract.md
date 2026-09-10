@@ -1,7 +1,18 @@
 # Step 2: The Ingestion Contract
 
-Status: **SIGNED OFF 10 September 2026**, all five decisions in section 4 taken as
-recommended. **2.0 to 2.4 are done**; 2.5 remains.
+Status: **COMPLETE, 10 September 2026.** All five decisions in section 4 taken as
+recommended, and every sub-step 2.0 to 2.5 built and gated.
+
+| Sub-step | Gate | Result |
+|---|---|---|
+| 2.0 the pipeline | `tests/test_ingest.py` | 28 tests |
+| 2.1 text as a producer | `check_search --rebuild`, `check_tools` | 10 of 10, 12 of 12 |
+| 2.2 one write path | `check_tools` unchanged | 12 of 12 |
+| 2.3 slow work queued | an upload not blocked by a blocking producer | met |
+| 2.4 rebuild and forget | `scripts/check_ingest.py` | 14 of 14 |
+| 2.5 tenancy | `check_isolation` | 38 passed, 1 not tested |
+
+Suite 381 → **426 passed, 1 skipped**.
 Written 3 September 2026, after Step 1 completed.
 
 Two things this document says that were true when it was written and are not now, both
@@ -367,6 +378,31 @@ deleted source file must leave nothing behind. Gate: extend `check_search`, and 
 **2.5** Tenancy still holds. Gate: `check_isolation` grows a section: one tenant's derived
 artifacts are invisible and unreachable from another, and deleting a tenant takes its
 `derived/` with it.
+
+> **DONE, 10 September 2026. Step 2 is complete.** `check_isolation` is **38 passed, 0
+> failed, 1 not tested** (the not-tested one is the Windows symlink privilege, which
+> predates all of this and needs Linux). Five new checks in a `3b. Derived artifacts`
+> section and three in a `9b. Removing a tenant's storage` section, plus five tests in
+> `tests/test_tenant_isolation.py`.
+>
+> **The gate was leaking into the developer's own folders, and its own docstring said it
+> could not.** `check_isolation` redirects `DATA_ROOT`, `INDEX_ROOT` and the control plane
+> into a temporary directory and asserts it has done so — and Step 2 gave a tenant a fourth
+> root it had never heard of. It had been writing real `derived/alpha/` and `derived/beta/`
+> folders into this install since 2.1. Fixed, and the assertion now covers all four rather
+> than checking `DATA_ROOT` and trusting the rest.
+>
+> **That is the second gate in two sub-steps found checking an incomplete list**, after
+> `check_gateway_isolation` in 2.4. The general form is worth writing down: **a gate built
+> from a list is only as good as the list, and nothing tells you when the list has fallen
+> behind — least of all the gate, which goes on passing.**
+>
+> **9b needed a tenant of its own.** The property "deleting a tenant takes its `derived/`
+> with it" belongs to `scripts/tenant.py`, because `tenancy.delete_tenant` removes rows and
+> deliberately stops there. The CLI refuses an id the control plane no longer holds, and
+> section 9 has already taken Beta's rows — so a third tenant is created, seeded, disabled
+> and removed through the real CLI, which is the only way to assert the property rather
+> than a copy of it.
 
 ---
 

@@ -85,27 +85,70 @@ def refused(action, expected) -> bool:
     return False
 
 
+def _load_tenant_cli():
+    """scripts/tenant.py as a module, the way tests/test_tenant_delete.py loads it.
+
+    It is a script rather than a package member, so it cannot simply be
+    imported. Section 9b needs it because it is the only thing in this project
+    that removes a tenant's storage from disk -- tenancy.delete_tenant removes
+    rows and deliberately stops there.
+    """
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / "tenant.py"
+    spec = importlib.util.spec_from_file_location("tenant_cli", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["tenant_cli"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _seed(tenant: str, tools, search) -> bool:
+    """One tenant, one document, produced and indexed.
+
+    Returns True rather than falling off the end. step() reads None as "it
+    raised", so a setup function that succeeds and returns nothing reads as a
+    failure, which is exactly what this one did first time.
+    """
+    with context.use_tenant(tenant):
+        config.ensure_data_dir()
+        tools.write_pdf(f"{tenant}_only.pdf", title=tenant, body="Nothing to see.")
+        search.rebuild()
+    return True
+
+
 # --------------------------------------------------------------------------
 
 def run(root: Path) -> int:
-    from app import jobs, search, tools
+    from app import ingest, jobs, producers, search, tools
 
     section("Where this is running")
-    real_data, real_index, real_control = config.DATA_ROOT, config.INDEX_ROOT, config.CONTROL_PATH
+    real = (config.DATA_ROOT, config.INDEX_ROOT, config.DERIVED_ROOT, config.CONTROL_PATH)
+    real_data, real_index, real_derived, real_control = real
     config.DATA_ROOT = root / "data"
     config.INDEX_ROOT = root / "index"
+    # Step 2 gave a tenant a fourth root, and this script did not know. It ran
+    # for two days writing alpha/ and beta/ into the developer's real derived/
+    # folder while its own docstring promised it never touches anything of
+    # yours. A sandbox is a list of roots, and a list falls behind.
+    config.DERIVED_ROOT = root / "derived"
     config.CONTROL_DIR = root / "control"
     config.CONTROL_PATH = root / "control" / "control.sqlite3"
     tenancy.CONTROL_PATH = config.CONTROL_PATH
     tenancy.ensure_control_dir = lambda: (root / "control").mkdir(parents=True, exist_ok=True)
 
     print(f"  Throwaway root: {root}")
-    check("Your real data, index and control plane are not in use",
+    check("Your real data, index, derived and control plane are not in use",
           lambda: (
-              root in config.DATA_ROOT.parents or config.DATA_ROOT.is_relative_to(root),
+              all(
+                  redirected.is_relative_to(root)
+                  for redirected in (config.DATA_ROOT, config.INDEX_ROOT,
+                                     config.DERIVED_ROOT, config.CONTROL_PATH)
+              ),
               f"nothing outside {root.name} is opened "
               f"(your own stay at {real_data.name}/, {real_index.name}/, "
-              f"{real_control.parent.name}/)",
+              f"{real_derived.name}/, {real_control.parent.name}/)",
+              "one of the four roots is still pointing at this install",
           ))
 
     # ---- two tenants with the same filenames ----------------------------
@@ -240,6 +283,49 @@ def run(root: Path) -> int:
           lambda: (
               _as(B, lambda: config.index_path()).name == f"{B}.sqlite3",
               "asserted on the path used, not on the results returned",
+          ))
+
+    # ---- 3b. derived artifacts, Step 2.5 ---------------------------------
+    #
+    # The index has held one tenant's words since Step 1. Since Step 2 there is
+    # a second thing on disk made out of a customer's documents -- the
+    # extracted text itself, in full -- and it needs the same answers.
+    section("3b. Derived artifacts")
+    check("Each tenant has its own derived folder and manifest",
+          lambda: (
+              _as(A, lambda: config.manifest_path()) != _as(B, lambda: config.manifest_path())
+              and _as(A, lambda: config.derived_dir()).name == A,
+              "a folder each, never one folder with an owner column",
+          ))
+    check("The same filename holds each tenant's own text, not the other's",
+          lambda: (
+              (lambda a, b: a and b and "Aardvark" in a and "Bandicoot" not in a
+               and "Bandicoot" in b and "Aardvark" not in b)(
+                  _as(A, lambda: producers.text_of("shared.pdf")),
+                  _as(B, lambda: producers.text_of("shared.pdf")),
+              ),
+              "shared.pdf produced twice, and neither artifact carries the other's words",
+              "one tenant's extracted text was reachable as the other",
+          ))
+    check("A document only one tenant has is unknown to the other",
+          lambda: (
+              _as(A, lambda: ingest.status("alpha_only.pdf"))["ready"] is True
+              and refused(lambda: _as(B, lambda: ingest.status("alpha_only.pdf")),
+                          ingest.IngestError),
+              "not found rather than forbidden: 'it exists but is not yours' "
+              "confirms a filename someone guessed",
+          ))
+    check("Sweeping as one tenant never reaches the other's artifacts",
+          lambda: (
+              _as(B, lambda: ingest.forget_missing())["gone"] == []
+              and _as(A, lambda: producers.text_of("alpha_only.pdf")) is not None,
+              "forget_missing walks one tenant's folder and no other",
+          ))
+    check("A rebuild as one tenant produces nothing for the other",
+          lambda: (
+              _as(B, lambda: ingest.rebuild())["files_seen"] == 1
+              and len(_as(A, lambda: list((config.derived_dir() / "text").iterdir()))) == 2,
+              "Beta has one document, Alpha still has its two",
           ))
 
     # ---- 4. jobs ---------------------------------------------------------
@@ -378,14 +464,70 @@ def run(root: Path) -> int:
                   tenancy.get_tenant(A, connection=connection) is not None
                   and tenancy.resolve_token(a_token, connection=connection) is not None
                   and (config.DATA_ROOT / A / "alpha_only.pdf").is_file()
-                  and (config.INDEX_ROOT / f"{A}.sqlite3").exists(),
-                  "Alpha's rows, token, files and index are all still there",
+                  and (config.INDEX_ROOT / f"{A}.sqlite3").exists()
+                  and (config.DERIVED_ROOT / A / "manifest.sqlite3").exists(),
+                  "Alpha's rows, token, files, index and artifacts are all still there",
               ))
         check("The deleted tenant's documents are still on disk",
               lambda: (
                   (config.DATA_ROOT / B / "shared.pdf").is_file(),
                   "delete_tenant removes ROWS. What happens to a customer's documents "
                   "is a separate judgement, made by scripts/tenant.py",
+              ))
+        check("And so are its derived artifacts, for the same reason",
+              lambda: (
+                  (config.DERIVED_ROOT / B).is_dir(),
+                  "they hold the customer's own text, so they go when the documents "
+                  "are dealt with, not when the rows are",
+              ))
+
+    # ---- 9b. and what scripts/tenant.py does with them -------------------
+    #
+    # The property Step 2.5 asks for -- deleting a tenant takes its derived/
+    # with it -- belongs to the CLI, because that is the only thing here that
+    # removes anything from disk. It needs a tenant of its own: the CLI refuses
+    # an id the control plane no longer has, and section 9 has already taken
+    # Beta's rows. Loaded the way tests/test_tenant_delete.py loads it, and
+    # wrapped, because a gate must not crash on the way to its last check.
+    section("9b. Removing a tenant's storage")
+    C = "gamma"
+    cli = step("Load scripts/tenant.py", _load_tenant_cli)
+    ready = cli is not None and step("Give it a third tenant to remove", lambda: (
+        tenancy.create_tenant("Gamma Ltd", tenant_id=C, connection=connection),
+        _seed(C, tools, search),
+        tenancy.set_disabled(C, True, connection=connection),
+        True,
+    )[-1])
+
+    if not ready:
+        for name in ("Removing a tenant takes its derived artifacts with it",
+                     "And leaves the surviving tenant's alone"):
+            skip(name, "the CLI or its tenant could not be set up")
+    else:
+        cli.DATA_ROOT = config.DATA_ROOT
+        cli.INDEX_ROOT = config.INDEX_ROOT
+        cli.DERIVED_ROOT = config.DERIVED_ROOT
+        cli._app_is_running = lambda: False
+        record("Load scripts/tenant.py", PASSED, "pointed at the throwaway roots")
+        record("Give it a third tenant to remove", PASSED,
+               f"{C}, disabled, with a document and its artifacts")
+
+        had = (config.DERIVED_ROOT / C).is_dir()
+        code = step("Remove it", lambda: cli.main(
+            ["delete", C, "--apply", "--confirm", C]))
+        check("Removing a tenant takes its derived artifacts with it",
+              lambda: (
+                  had and code == 0 and not (config.DERIVED_ROOT / C).exists(),
+                  "deleted outright even though the documents are only moved aside: "
+                  "everything in derived/ can be made again from them",
+                  "the artifacts outlived the tenant" if had
+                  else "there were none to remove, so this proved nothing",
+              ))
+        check("And leaves the surviving tenant's alone",
+              lambda: (
+                  (config.DERIVED_ROOT / A / "manifest.sqlite3").exists()
+                  and (config.DERIVED_ROOT / A / "text" / "alpha_only.pdf").is_dir(),
+                  f"Alpha's manifest and artifacts survived {C}'s removal",
               ))
 
     try:

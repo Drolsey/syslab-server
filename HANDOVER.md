@@ -922,12 +922,61 @@ the short version:
    0, 1, 3, 2, 4, 5, 6, 7 — Step 3 comes before Step 2 because it is the step
    that stops the per-request model bill.
 
-   **2.0 through 2.4 are done**, each with its gate met; the sections below
-   have what each one cost. **2.5 is the last one**: tenancy — one tenant's
-   derived artifacts invisible and unreachable from another, and deleting a
-   tenant taking its `derived/` with it. The storage half of that was already
-   pulled forward in 2.1, so what is left is the gate: `check_isolation` grows
-   a derived section.
+   **Step 2 is COMPLETE, 10 September.** Every sub-step 2.0 to 2.5 built and
+   gated; the sections below have what each one cost. Suite 381 → 426 passed,
+   1 skipped, and `scripts/check_ingest.py` is the step's own gate.
+
+   **What it unblocks is Step 4**, the retrieval plane, which is the consumer
+   this pipeline was designed for and which still has no plan document. Step 5
+   (embeddings) and Step 6 (speech) also have none — and both now fit in VRAM
+   again after the 14B swap, so the constraint recorded in `docs/models.md` is
+   stale. Writing the Step 4 plan to the standard of 0-3 is the natural next
+   piece of work here.
+
+## Step 2 is complete, and 2.5 found the gate leaking into this install
+
+10 September. `check_isolation` grew a `3b. Derived artifacts` section and a
+`9b. Removing a tenant's storage` section — **38 passed, 0 failed, 1 not
+tested**, the not-tested one being the Windows symlink privilege that predates
+all of this. Five matching tests in `tests/test_tenant_isolation.py`.
+
+**The gate was writing into the developer's own folders, and its docstring
+said it could not.** `check_isolation` redirects `DATA_ROOT`, `INDEX_ROOT` and
+the control plane into a temporary directory and asserts it has done so. Step 2
+gave a tenant a fourth root it had never heard of, so it had been creating real
+`derived/alpha/` and `derived/beta/` folders in this install since 2.1 — found
+by looking, not by anything failing. The redirect covers all four now, and the
+assertion checks all four rather than checking `DATA_ROOT` and trusting the
+rest.
+
+**That is the second gate in two sub-steps caught checking an incomplete
+list**, after `check_gateway_isolation` in 2.4. Worth keeping as a class: **a
+gate built from a list is only as good as the list, and nothing tells you when
+the list has fallen behind — least of all the gate, which goes on passing.**
+Both were found by hand while doing something else. Neither would have been
+found by running them.
+
+**9b needed a tenant of its own.** "Deleting a tenant takes its `derived/` with
+it" belongs to `scripts/tenant.py`, because `tenancy.delete_tenant` removes
+rows and deliberately stops there. The CLI refuses an id the control plane no
+longer holds, and section 9 has already taken Beta's rows — so a third tenant
+is created, seeded, disabled and removed through the real CLI. Asserting the
+property rather than a copy of it.
+
+**Step 2 is done.** Every sub-step built and gated:
+
+| Sub-step | Gate | Result |
+|---|---|---|
+| 2.0 the pipeline | `tests/test_ingest.py` | 28 tests |
+| 2.1 text as a producer | `check_search --rebuild`, `check_tools` | 10 of 10, 12 of 12 |
+| 2.2 one write path | `check_tools` unchanged | 12 of 12 |
+| 2.3 slow work queued | an upload not blocked by a blocking producer | met |
+| 2.4 rebuild and forget | `scripts/check_ingest.py` | 14 of 14 |
+| 2.5 tenancy | `check_isolation` | 38 passed, 1 not tested |
+
+Suite 381 → **426 passed, 1 skipped**. No capability a user would notice, which
+was the point: image reading, numeric fields and embeddings are each now a new
+producer in an existing pipeline rather than a fourth reader of the same PDF.
 
 ## 2.4: derived/ is disposable, and now something checks
 

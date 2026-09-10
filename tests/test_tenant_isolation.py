@@ -17,7 +17,7 @@ import re
 
 import pytest
 
-from app import agent, config, context, search, tools
+from app import agent, config, context, ingest, producers, search, tools
 from tests.conftest import OTHER_TENANT, TEST_TENANT
 
 
@@ -150,6 +150,81 @@ def test_deleting_one_tenants_index_leaves_the_other_alone(two_tenants):
     assert search.status()["documents"] == 0
     with context.use_tenant(OTHER_TENANT):
         assert search.status()["documents"] > 0
+
+
+# --------------------------------------------------------------------------
+# derived artifacts, Step 2.5
+# --------------------------------------------------------------------------
+#
+# The index has held one tenant's words since Step 1. Since Step 2 there is a
+# second thing on disk made out of a customer's documents -- the extracted
+# text itself, in full -- and every answer the index needed, this needs too.
+
+def test_each_tenant_has_its_own_derived_folder_and_manifest(two_tenants):
+    mine = config.manifest_path()
+    with context.use_tenant(OTHER_TENANT):
+        theirs = config.manifest_path()
+    assert mine != theirs
+    assert mine.parent.name == TEST_TENANT and theirs.parent.name == OTHER_TENANT
+
+
+def test_the_same_filename_holds_each_tenants_own_text(two_tenants):
+    """A folder each, never one folder with an owner column.
+
+    The failure modes are not comparable: a forgotten WHERE hands back another
+    customer's document text silently, while a wrong path finds nothing.
+    """
+    search.rebuild()
+    mine = producers.text_of("shared_name.pdf")
+    with context.use_tenant(OTHER_TENANT):
+        search.rebuild()
+        theirs = producers.text_of("shared_name.pdf")
+
+    assert mine and theirs
+    assert "Aardvark" in mine and "Bandicoot" not in mine
+    assert "Bandicoot" in theirs and "Aardvark" not in theirs
+
+
+def test_a_document_only_one_tenant_has_is_unknown_to_the_other(two_tenants):
+    """Not found rather than forbidden.
+
+    "That document exists but is not yours" confirms a filename someone
+    guessed, which is the precedent the job lane already set.
+    """
+    with context.use_tenant(OTHER_TENANT):
+        search.rebuild()
+        assert ingest.status("b_only.pdf")["ready"] is True
+
+    with pytest.raises(ingest.IngestError):
+        ingest.status("b_only.pdf")
+
+
+def test_sweeping_as_one_tenant_never_reaches_the_others_artifacts(two_tenants):
+    with context.use_tenant(OTHER_TENANT):
+        search.rebuild()
+    search.rebuild()
+
+    swept = ingest.forget_missing()
+
+    assert swept["gone"] == []
+    with context.use_tenant(OTHER_TENANT):
+        assert producers.text_of("b_only.pdf") is not None
+
+
+def test_deleting_one_tenants_derived_folder_leaves_the_other_alone(two_tenants):
+    """The disposability rule is per tenant, like the index file it copies."""
+    import shutil
+
+    search.rebuild()
+    with context.use_tenant(OTHER_TENANT):
+        search.rebuild()
+        assert ingest.status("b_only.pdf")["ready"] is True
+
+    shutil.rmtree(config.derived_dir())
+
+    assert ingest.status("shared_name.pdf")["ready"] is False
+    with context.use_tenant(OTHER_TENANT):
+        assert ingest.status("b_only.pdf")["ready"] is True
 
 
 # --------------------------------------------------------------------------
