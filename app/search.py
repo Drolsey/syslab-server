@@ -172,6 +172,13 @@ def rebuild(report=None) -> dict:
     except ingest.ProducerUnavailable as exc:
         raise SearchError(str(exc)) from exc
 
+    # Bring the pipeline up to date first, in one call, and let it decide what
+    # that means -- including forgetting artifacts whose source file has left.
+    # A rebuild reads the text artifacts, so "rebuild from the files on disk"
+    # is only honest if what stands between this and the disk is current.
+    # Fast producers only: an index rebuild must not turn into an OCR run.
+    ingest.rebuild(only_fast=True)
+
     connection = connect()
     started = time.time()
     indexed, skipped = [], []

@@ -31,11 +31,22 @@ FORBIDDEN = [
     (r"^\s*from\s+app\s+import\s+.*\bsearch\b", "imports app.search"),
     (r"^\s*from\s+app\s+import\s+.*\btools\b", "imports app.tools"),
     (r"^\s*from\s+app\s+import\s+.*\bdb\b", "imports app.db"),
+    # Step 2 added three more modules that reach tenant storage. This list is
+    # only as good as its completeness: a module that touches derived/ and is
+    # not named here is a hole that looks exactly like a pass.
+    (r"^\s*from\s+app\s+import\s+.*\bingest\b", "imports app.ingest"),
+    (r"^\s*from\s+app\s+import\s+.*\bproducers\b", "imports app.producers"),
+    (r"^\s*from\s+app\s+import\s+.*\bintake\b", "imports app.intake"),
+    (r"^\s*from\s+app\.ingest\s+import", "imports from app.ingest"),
+    (r"^\s*from\s+app\.intake\s+import", "imports from app.intake"),
     (r"^\s*from\s+app\.context\s+import", "imports from app.context"),
     (r"^\s*from\s+app\.tenancy\s+import", "imports from app.tenancy"),
     (r"^\s*from\s+app\.db\s+import", "imports from app.db"),
     (r"\bdata_dir\s*\(", "calls data_dir()"),
     (r"\bindex_path\s*\(", "calls index_path()"),
+    (r"\bderived_dir\s*\(", "calls derived_dir()"),
+    (r"\bmanifest_path\s*\(", "calls manifest_path()"),
+    (r"\bensure_derived_dir\s*\(", "calls ensure_derived_dir()"),
     (r"\bensure_data_dir\s*\(", "calls ensure_data_dir()"),
     (r"\bresolve_in_data_dir\s*\(", "calls resolve_in_data_dir()"),
     (r"\bcurrent_tenant\s*\(", "calls current_tenant()"),

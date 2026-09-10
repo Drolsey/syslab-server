@@ -476,6 +476,23 @@ def ingest_summary() -> dict:
     }
 
 
+@app.post("/api/ingest", status_code=202, dependencies=[Depends(require_auth)])
+def ingest_folder(only_fast: bool = False) -> dict:
+    """Reconcile and produce the whole folder. Always a job, never a wait.
+
+    This is the rebuild affordance the app never had: `search.rebuild()` was
+    reachable only from a script, so an operator whose index had drifted had to
+    open a terminal. It also forgets artifacts belonging to files that have
+    left, which for now is the only way that happens -- nothing here deletes a
+    document, so they go by hand and nothing notices until something sweeps.
+    """
+    try:
+        job = jobs.lane.submit(intake.FOLDER_INGEST, {"only_fast": only_fast})
+    except jobs.JobError as exc:
+        raise HTTPException(429, str(exc)) from exc
+    return job.public(jobs.lane.position_of(job.id))
+
+
 @app.get("/api/ingest/{name}", dependencies=[Depends(require_auth)])
 def ingest_status(name: str) -> dict:
     """Is this document ready, and what failed?"""

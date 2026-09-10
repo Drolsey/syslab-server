@@ -40,6 +40,11 @@ from app import ingest, jobs, search
 # is ready, not three that each look like the whole job.
 SLOW_INGEST = "ingest_slow"
 
+# The whole folder, reconciled and produced. Always a job: it walks every file
+# and may run a slow producer over each, which is the definition of work that
+# does not belong in a request.
+FOLDER_INGEST = "ingest_folder"
+
 
 def arrived(path: Path) -> dict:
     """Everything that should happen to a file that has just been written.
@@ -106,4 +111,30 @@ def run_slow(report, name: str) -> dict:
     return outcome
 
 
+def run_folder(report, only_fast: bool = False) -> dict:
+    """The job lane's handler: reconcile and produce the whole tenant folder.
+
+    `ingest.rebuild` forgets artifacts whose source file has left before it
+    produces anything, so this is also how "a deleted source file leaves
+    nothing behind" becomes true for files that were removed by hand rather
+    than through the app -- which is currently every one of them, since nothing
+    here deletes a document.
+
+    The search index is rebuilt afterwards rather than left to catch up. It
+    reads the text artifacts, so rebuilding it once at the end is both cheaper
+    and more obviously correct than re-indexing per file along the way.
+    """
+    outcome = ingest.rebuild(only_fast=only_fast, report=report)
+    report(0.95, "rebuilding the index")
+    try:
+        outcome["index"] = search.rebuild()
+    except search.SearchError as exc:
+        # A missing parser stops the index rebuild and must not lose the
+        # producing that already succeeded.
+        outcome["index_error"] = str(exc)
+    report(1.0, "done")
+    return outcome
+
+
 jobs.lane.handler(SLOW_INGEST, run_slow)
+jobs.lane.handler(FOLDER_INGEST, run_folder)

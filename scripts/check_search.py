@@ -32,6 +32,7 @@ from app.config import (  # noqa: E402
     BOOTSTRAP_TENANT,
     MAX_TOOL_STEPS,
     data_dir,
+    derived_dir,
     ensure_data_dir,
     index_path,
 )
@@ -159,6 +160,18 @@ def main() -> int:
         print(f"  Removed {removed} of {len(made)} test files and reindexed.")
         if removed < len(made):
             print(f"  {len(made) - removed} could not be deleted; remove them by hand.")
+
+        # Step 2.4. The decoys are gone from data/, so nothing derived from
+        # them may still be on disk. This ran for a while leaving 41 text
+        # artifacts behind every time, which is exactly the accumulation the
+        # disposability rule exists to prevent -- and nothing said so, because
+        # nothing looked.
+        left = [name for name in made if (derived_dir() / "text" / name).exists()]
+        record(
+            "The decoys took their artifacts with them",
+            not left,
+            f"{len(left)} left behind" if left else f"derived/ is clean of all {len(made)}",
+        )
 
     # ---- summary --------------------------------------------------------
     section("Gate")

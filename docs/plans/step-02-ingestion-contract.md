@@ -1,7 +1,7 @@
 # Step 2: The Ingestion Contract
 
 Status: **SIGNED OFF 10 September 2026**, all five decisions in section 4 taken as
-recommended. **2.0 to 2.3 are done**; 2.4 and 2.5 remain.
+recommended. **2.0 to 2.4 are done**; 2.5 remains.
 Written 3 September 2026, after Step 1 completed.
 
 Two things this document says that were true when it was written and are not now, both
@@ -328,11 +328,41 @@ show. Gate: a slow producer on a large file does not block the upload response.
 deleted source file must leave nothing behind. Gate: extend `check_search`, and add
 `scripts/check_ingest.py`.
 
-> **Live since 2.1, not hypothetical.** `search.forget_missing()` drops index rows for files
-> that have left; nothing does the same for artifacts, so they accumulate. Deliberately not
-> patched into `forget_missing()` in passing: 2.4's gate tests rebuild and forget as one
-> unit, and arriving at it half-implemented and untested is how the half that was skipped
-> stops being looked at.
+> **DONE, 10 September 2026.** `scripts/check_ingest.py` is the new gate, **14 of 14**, and
+> `check_search` grew a tenth check. On this install the orphans are gone: 11 artifacts for
+> 11 documents, where the folder had been carrying 41 decoys' worth of leftovers.
+>
+> - **`ingest.forget_missing()`** reconciles BOTH sides against `data/`, not just the
+>   manifest. A producer folder can hold output for a source with no row -- a crash between
+>   writing the bytes and recording them -- and sweeping only the rows would leave that on
+>   disk with nothing pointing at it, which is the harder sort to notice. The gate tests it.
+> - **`ingest.rebuild()` reconciles before it produces.** A rebuild that added what was
+>   missing but left what should not be there would make "rebuilt" mean a little less every
+>   time it ran.
+> - **`search.rebuild()` now calls `ingest.rebuild(only_fast=True)` first**, rather than
+>   relying on per-file ingestion. A rebuild reads the text artifacts, so "rebuild from the
+>   files on disk" is only honest if what stands between it and the disk is current. Fast
+>   producers only: an index rebuild must not turn into an OCR run.
+> - **`POST /api/ingest`** (folder-level, always a job) is the rebuild affordance the app
+>   never had -- `search.rebuild()` was reachable only from a script, so an operator whose
+>   index had drifted had to open a terminal. It is also the only thing that notices a
+>   document removed by hand, which for now is every document that ever leaves.
+>
+> **Deliberately NOT hooked into `search()`'s read path.** `search.forget_missing()` is
+> there because a stale index row is returned to the model and wastes a turn; nothing reads
+> an orphaned artifact, so paying for a manifest open on every search would buy tidiness at
+> the cost of the hot path.
+>
+> **`check_gateway_isolation` was incomplete and is now not.** Its forbidden list names
+> every module that reaches tenant storage, and Step 2 added three it had never heard of.
+> A module that touches `derived/` and is not on that list is a hole that looks exactly
+> like a pass. 16 checks to 24.
+>
+> **Two findings from writing the gate.** `check_search`'s totals moved again, 9 to 10,
+> which is the second time in two days -- gate on the named checks, never the count. And an
+> assertion that counted search hits failed for a reason unrelated to what it tested,
+> because `search()` falls back from "all terms" to "any term" and the run's tag matched
+> every file the script had written; it asserts by document name now.
 
 **2.5** Tenancy still holds. Gate: `check_isolation` grows a section: one tenant's derived
 artifacts are invisible and unreachable from another, and deleting a tenant takes its

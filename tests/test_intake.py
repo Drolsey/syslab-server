@@ -263,6 +263,74 @@ def test_the_summary_endpoint_sorts_the_folder_three_ways(client):
     assert "text" in body["producers"] and "pages" in body["producers"]
 
 
+# --------------------------------------------------------------------------
+# 2.4: rebuild and forget, over HTTP
+# --------------------------------------------------------------------------
+
+def test_the_folder_rebuild_is_a_job_and_sweeps_what_has_left(client):
+    """The rebuild affordance the app never had.
+
+    `search.rebuild()` was reachable only from a script, so an operator whose
+    index had drifted had to open a terminal. It is also the only thing that
+    notices a document removed by hand, which for now is every document that
+    ever leaves -- nothing here deletes one.
+    """
+    from app import search
+
+    a_pdf("stays.pdf")
+    leaving = a_pdf("leaving.pdf", body="Ephemeral bracket assembly.")
+    client.post("/api/ingest/stays.pdf")
+    client.post("/api/ingest/leaving.pdf")
+    assert (config.derived_dir() / "text" / "leaving.pdf").exists()
+    assert search.search("ephemeral")["count"] == 1
+
+    leaving.unlink()
+    response = client.post("/api/ingest")
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+
+    assert wait_for(lambda: jobs.lane.get(job_id).status in jobs.FINISHED)
+    job = jobs.lane.get(job_id)
+    assert job.status == jobs.DONE, job.error
+
+    assert job.result["forgotten"] == ["leaving.pdf"]
+    assert not (config.derived_dir() / "text" / "leaving.pdf").exists()
+    assert search.search("ephemeral")["count"] == 0
+    assert client.get("/api/ingest").json()["ready"] == ["stays.pdf"]
+
+
+def test_derived_can_be_deleted_whole_and_rebuilt_from_the_documents(client):
+    """The rule that keeps everything under derived/ safe to throw away.
+
+    Asserted through the app rather than the module, because that is where an
+    operator would do it: delete the folder, press the button.
+    """
+    import shutil
+
+    from app import search
+
+    a_pdf("one.pdf")
+    a_pdf("two.pdf", body="Torque specification revision.")
+    first = client.post("/api/ingest").json()["id"]
+    # Wait on the JOB, not on readiness. The documents read as ready the moment
+    # the last producer records, while the worker is still holding the manifest
+    # open for the index rebuild that follows -- and Windows will not delete a
+    # SQLite file another thread has open.
+    assert wait_for(lambda: jobs.lane.get(first).status in jobs.FINISHED)
+    assert client.get("/api/ingest").json()["ready"] == ["one.pdf", "two.pdf"]
+
+    shutil.rmtree(config.derived_dir())
+    assert client.get("/api/ingest").json()["outstanding"] == ["one.pdf", "two.pdf"]
+
+    response = client.post("/api/ingest")
+    job_id = response.json()["id"]
+    assert wait_for(lambda: jobs.lane.get(job_id).status in jobs.FINISHED)
+    assert jobs.lane.get(job_id).status == jobs.DONE, jobs.lane.get(job_id).error
+
+    assert client.get("/api/ingest").json()["ready"] == ["one.pdf", "two.pdf"]
+    assert search.search("torque")["count"] == 1
+
+
 def test_asking_about_a_file_that_is_not_there_is_a_404(client):
     assert client.get("/api/ingest/nothing.pdf").status_code == 404
     assert client.post("/api/ingest/nothing.pdf").status_code == 404

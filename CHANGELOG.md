@@ -18,6 +18,15 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 ## [Unreleased]
 
 ### Fixed
+- **Derived artifacts outlived the files they came from.** Nothing swept them, so a deleted
+  document kept a manifest row and a folder of bytes for ever; `scripts/check_search.py`
+  had been leaving 41 text artifacts behind on every run. `ingest.rebuild()` now reconciles
+  before it produces, and reconciles both the manifest and the folder — output written by a
+  run that died before recording itself was the case that only sweeping rows would miss.
+- **`scripts/check_gateway_isolation.py` was checking an incomplete list.** It names every
+  module that can reach tenant storage, and Step 2 added three it had never heard of. A
+  gate built from a list is only as good as the list, and nothing says when the list has
+  fallen behind. 16 checks to 24.
 - **A tenant delete left `derived/<tenant>/` behind**, holding text extracted from that
   customer's documents. `scripts/tenant.py` removes it now — deleted rather than moved
   aside even when the documents are only moved, because it can be made again from them.
@@ -49,6 +58,11 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
     of broken documents.
   - Re-runs on a change of source size, mtime or producer version. Deliberately not a
     content hash.
+- **`scripts/check_ingest.py`** (Step 2.4), the gate for the two properties the rest of the
+  design leans on: `derived/` deleted entirely reconstructs from `data/`, and a deleted
+  source file leaves nothing behind. `check_search` grew a matching check.
+- **`ingest.forget_missing()`** and a folder-level **`POST /api/ingest`** — the rebuild
+  affordance the app never had, since `search.rebuild()` was reachable only from a script.
 - **`app/intake.py`** (Steps 2.2 and 2.3), the one place that decides what happens to a file
   that has just been written: fast producers in the request, then the index, then anything
   slow to the job lane. Uploads, tool writes and database exports all go through it.

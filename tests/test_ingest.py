@@ -467,6 +467,71 @@ def test_the_whole_derived_folder_can_be_deleted_and_rebuilt(tenant_storage):
     assert ingest.status("two.txt")["ready"] is True
 
 
+def test_a_file_that_left_takes_its_artifacts_with_it(tenant_storage):
+    """2.4. Artifacts are written when a file arrives and never when one leaves.
+
+    `check_search` writes 41 decoy PDFs, deletes them, and used to leave 41
+    text artifacts behind on every run.
+    """
+    counting_producer(name="text")
+    one = a_file(tenant_storage, name="one.txt")
+    a_file(tenant_storage, name="two.txt", body="second")
+    ingest.rebuild()
+
+    one.unlink()
+    swept = ingest.forget_missing()
+
+    assert swept["gone"] == ["one.txt"]
+    assert swept["rows"] == 1
+    assert not (config.derived_dir() / "text" / "one.txt").exists()
+    assert (config.derived_dir() / "text" / "two.txt").exists(), "the wrong file's went"
+
+
+def test_output_with_no_row_behind_it_is_swept_too(tenant_storage):
+    """A crash between writing the bytes and recording them leaves this.
+
+    Sweeping only the manifest would leave it on disk with nothing pointing at
+    it, which is the harder sort to notice.
+    """
+    counting_producer(name="text")
+    orphan = config.derived_dir() / "text" / "ghost.txt"
+    orphan.mkdir(parents=True)
+    (orphan / "output.txt").write_text("from a run that never finished", encoding="utf-8")
+
+    swept = ingest.forget_missing()
+
+    assert swept["gone"] == ["ghost.txt"]
+    assert swept["rows"] == 0, "there was no row, and that is the point"
+    assert not orphan.exists()
+
+
+def test_a_rebuild_reconciles_before_it_produces(tenant_storage):
+    """Otherwise "rebuilt" means a bit less every time it runs."""
+    counting_producer(name="text")
+    gone = a_file(tenant_storage, name="gone.txt")
+    a_file(tenant_storage, name="stays.txt", body="here")
+    ingest.rebuild()
+    gone.unlink()
+
+    summary = ingest.rebuild()
+
+    assert summary["forgotten"] == ["gone.txt"]
+    assert summary["files_seen"] == 1
+    assert not (config.derived_dir() / "text" / "gone.txt").exists()
+    assert ingest.status("stays.txt")["ready"] is True
+
+
+def test_sweeping_a_folder_that_lost_nothing_changes_nothing(tenant_storage):
+    counting_producer(name="text")
+    a_file(tenant_storage)
+    ingest.rebuild()
+
+    swept = ingest.forget_missing()
+
+    assert swept == {"gone": [], "rows": 0, "removed": []}
+    assert ingest.status("report.txt")["ready"] is True
+
+
 # --------------------------------------------------------------------------
 # the owner rules apply here too
 # --------------------------------------------------------------------------

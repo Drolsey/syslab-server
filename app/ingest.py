@@ -577,6 +577,55 @@ def forget(name: str) -> dict:
     return {"name": key, "rows": dropped, "removed": removed}
 
 
+def forget_missing() -> dict:
+    """Drop everything belonging to source files that are no longer on disk.
+
+    The counterpart to search.forget_missing(), and it exists for the same
+    reason: artifacts are written when a file arrives and never when one
+    leaves, so a deleted document went on owning a manifest row and a folder of
+    derived bytes for ever. `scripts/check_search.py` writes 41 decoy PDFs,
+    deletes them, and used to leave 41 text artifacts behind every run.
+
+    Reconciles BOTH sides against data/, not just the manifest. A producer
+    folder can hold output for a source with no row -- a crash between writing
+    the bytes and recording them -- and a row can name a source whose folder was
+    never made. Sweeping only the rows would leave the first kind on disk with
+    nothing pointing at it, which is the harder sort to notice.
+
+    Deliberately NOT called from search()'s read path. search.forget_missing()
+    is there because a stale index row is returned to the model and wastes a
+    turn; nothing reads an orphaned artifact, so paying for a manifest open on
+    every search would buy tidiness at the cost of the hot path. It runs at
+    rebuild, and when someone asks.
+    """
+    from app.config import ensure_data_dir
+
+    folder = ensure_data_dir()
+    root = ensure_derived_dir()
+
+    known: set[str] = set()
+    connection = connect()
+    try:
+        known.update(
+            row["source_name"]
+            for row in connection.execute("SELECT DISTINCT source_name FROM artifacts")
+        )
+    finally:
+        connection.close()
+    for producer_folder in (p for p in root.iterdir() if p.is_dir()):
+        known.update(p.name for p in producer_folder.iterdir() if p.is_dir())
+
+    gone = sorted(name for name in known if not (folder / name).is_file())
+    removed = []
+    for name in gone:
+        removed.append(forget(name))
+    return {
+        "gone": gone,
+        "rows": sum(r["rows"] for r in removed),
+        "removed": sorted(p for r in removed for p in r["removed"]),
+    }
+
+
 def rebuild(only_fast: bool = False, report: Callable[[float, str], None] | None = None) -> dict:
     """Run every registered producer over every file in the tenant's folder.
 
@@ -585,6 +634,11 @@ def rebuild(only_fast: bool = False, report: Callable[[float, str], None] | None
     cannot accumulate anything irreplaceable.
     """
     from app.config import ensure_data_dir  # local: keeps the import graph flat
+
+    # Reconcile before producing. A rebuild that added what is missing but left
+    # what should not be there would make "rebuilt" mean less every time it
+    # ran, and this is the one moment the whole folder is already being walked.
+    swept = forget_missing()
 
     suffixes = {s for p in _PRODUCERS.values() for s in p.handles}
     files = sorted(
@@ -603,5 +657,6 @@ def rebuild(only_fast: bool = False, report: Callable[[float, str], None] | None
         "failed": sum(len(r["failed"]) for r in reports),
         "deferred": sum(len(r["deferred"]) for r in reports),
         "unavailable": sorted({n for r in reports for n in r["unavailable"]}),
+        "forgotten": swept["gone"],
         "seconds": round(time.time() - started, 2),
     }
