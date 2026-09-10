@@ -26,7 +26,7 @@ OTHER_TENANT = "othertenant"
 # looked equivalent and was not: fixture teardown order between two independent
 # function-scoped fixtures is not specified, so the guard sometimes ran while
 # the roots were still patched and dutifully compared a tmp folder with itself.
-REAL_ROOTS = (config.DATA_ROOT, config.INDEX_ROOT, config.CONTROL_DIR)
+REAL_ROOTS = (config.DATA_ROOT, config.INDEX_ROOT, config.CONTROL_DIR, config.DERIVED_ROOT)
 
 
 def _listing() -> dict:
@@ -142,6 +142,10 @@ def tenant_storage(tmp_path, monkeypatch):
     tenant's own data folder, which is what tests used to get as DATA_DIR."""
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
     monkeypatch.setattr(config, "INDEX_ROOT", tmp_path / "index")
+    # Step 2's derived artifacts. Redirected here rather than in the ingest
+    # tests for the reason the guard above exists: a root that only the tests
+    # which remembered redirect is a root the rest of the suite writes into.
+    monkeypatch.setattr(config, "DERIVED_ROOT", tmp_path / "derived")
     # The web app decides the tenant per request in middleware and overrides
     # whatever the caller had set, which is correct in production and would
     # otherwise send every TestClient request to the bootstrap tenant while the

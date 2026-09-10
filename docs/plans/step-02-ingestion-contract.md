@@ -1,7 +1,20 @@
 # Step 2: The Ingestion Contract
 
-Status: PLANNED, NOT STARTED. Needs Amro's sign-off on the five decisions in section 4.
+Status: **SIGNED OFF 10 September 2026**, all five decisions in section 4 taken as
+recommended. **2.0 is done**; 2.1 to 2.5 remain.
 Written 3 September 2026, after Step 1 completed.
+
+Two things this document says that were true when it was written and are not now, both
+recorded rather than edited away:
+
+- **The step numbering in section 2 is the old one.** "No vision model. Step 3" was written
+  when Step 3 was image reading. Step 3 is the model gateway and is built; vision is not
+  currently a numbered step. What section 2 means is unchanged: this step designs the
+  contract and adds no producer beyond the one that already exists.
+- **2.1's gate cites `check_search` at 9 of 9.** `HANDOVER.md` records it reporting 8 of 8,
+  with the discrepancy unexplained and predating this plan. **Which number is right has to
+  be settled before 2.1 can be gated on anything**, or the gate is unfalsifiable. It does
+  not block 2.0.
 
 ---
 
@@ -177,6 +190,38 @@ in it.
 **2.0** `app/ingest.py` and the manifest schema, imported by nothing. Gate: a fake producer
 runs, records, invalidates on size, mtime and version change, and its failure is recorded
 rather than raised.
+
+> **DONE, 10 September 2026.** `app/ingest.py`, `tests/test_ingest.py` (23 tests), and
+> `DERIVED_DIR` in `app/config.py`. Suite 404 passed, 1 skipped, up from 381. Nothing
+> imports it, which was the point: the pipeline is proven before the first real producer
+> moves behind it.
+>
+> **Three departures from this document, all deliberate.**
+>
+> 1. **`run` takes the source path AND the directory to write into**, rather than the
+>    one-argument signature in section 5. A producer that chooses its own output location
+>    is a producer whose output nothing else can find or delete, and 4.2's promise — that
+>    `derived/` can be deleted and rebuilt — would then rest on every producer remembering
+>    to keep it. Handing the directory down makes it structural. The layout is
+>    `derived/<tenant>/<producer>/<source file>/`, a directory per source rather than a
+>    file, because a producer that makes one thing today makes forty page images tomorrow
+>    and `forget()` has to remove all of it without knowing which.
+> 2. **A `Result` says `ok` or `skipped`, never `failed`.** Failure is the exception the
+>    producer raises and the pipeline records, so a producer never has to remember 4.5.
+> 3. **A producer that does not handle a suffix gets no row at all**, rather than a
+>    `skipped` one. The alternative fills the manifest with the absence of work nobody
+>    asked for and buries the skips that mean something.
+>
+> **One thing the plan did not specify, decided here.** A `failed` row is retried on the
+> next `ingest()` call and `attempts` counts the goes at the same unchanged input; a
+> change to the file or the producer version resets it to 1, because three failures
+> against the old bytes say nothing about the new ones. There is no retry cap: the
+> pipeline records, and a policy about when to stop belongs where the retrying is
+> scheduled, which is 2.3.
+>
+> **One bug found by its own test.** Pruning the empty per-source directory left
+> `derived/<tenant>/<producer>/` standing, which reads as "this producer has output here"
+> to anyone listing the folder. Both are pruned now.
 
 **2.1** Move text extraction into a producer. `search.index_file` becomes a consumer of it.
 Gate: `check_search` unchanged at 9 of 9, and the suite unchanged, because nothing about the

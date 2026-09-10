@@ -114,6 +114,19 @@ TRUST_CLIENT_IP_HEADER = _env("TRUST_CLIENT_IP_HEADER", "false").lower() in {
 # deleting it must be obviously safe.
 INDEX_ROOT = _path("INDEX_DIR", PROJECT_ROOT / "index")
 
+# --- derived artifacts (Step 2, the ingestion contract) ---
+# What producers make out of a source file, and a manifest row per (file,
+# producer) saying whether it worked. Outside DATA_DIR for the same reason the
+# index is: nothing here is user data, and every byte of it can be thrown away
+# and rebuilt from data/. A producer that ever makes something which CANNOT be
+# regenerated is not a producer, and its output does not belong under here.
+#
+# Separate from INDEX_DIR rather than folded into it because the index is one
+# consumer of this pipeline, not its owner: the FTS5 file stays deletable on
+# its own, and page images do not become something you lose by rebuilding a
+# search index.
+DERIVED_ROOT = _path("DERIVED_DIR", PROJECT_ROOT / "derived")
+
 # --- control plane ---
 # Who exists, and which token belongs to whom. Deliberately outside DATA_DIR,
 # which is customer content, and outside INDEX_DIR, which is a derived cache
@@ -225,6 +238,33 @@ def ensure_index_dir() -> Path:
     # The root, not a per-tenant folder: the index files sit directly in it.
     INDEX_ROOT.mkdir(parents=True, exist_ok=True)
     return INDEX_ROOT
+
+
+def derived_dir() -> Path:
+    """The current tenant's derived-artifact folder.
+
+    A folder each rather than a shared folder with an owner column, for the
+    same reason index_path() is a file each: deleting one tenant's derived
+    artifacts must be `rm -rf` of one path, and a bug must land somewhere
+    empty rather than somewhere belonging to somebody else.
+    """
+    return DERIVED_ROOT / current_tenant()
+
+
+def manifest_path() -> Path:
+    """The current tenant's ingestion manifest.
+
+    Inside derived_dir(), not beside it, so that deleting the folder deletes
+    the record of what was in it. A manifest that outlived its artifacts would
+    claim a document is ready and point at files that are gone.
+    """
+    return derived_dir() / "manifest.sqlite3"
+
+
+def ensure_derived_dir() -> Path:
+    folder = derived_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def ensure_control_dir() -> Path:

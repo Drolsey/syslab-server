@@ -915,11 +915,64 @@ the short version:
    15 seconds after kernel boot, vLLM at ~54s, both units `enabled`, serving
    the 14B at 16384. The claim this file used to make without proof is now
    made with it.
-4. **Step 2, the ingestion contract.** Designed in full in
-   `docs/plans/step-02-ingestion-contract.md` and **waiting on your sign-off of
-   its five decisions**, which is the thing actually blocking it. The plan's
-   dependency order is 0, 1, 3, 2, 4, 5, 6, 7 — Step 3 comes before Step 2
-   because it is the step that stops the per-request model bill.
+4. **Step 2, the ingestion contract. Signed off 10 September, and 2.0 is
+   done.** All five decisions taken as recommended. `app/ingest.py` and
+   `tests/test_ingest.py` are in, nothing imports them, and the suite is 404
+   passed / 1 skipped, up from 381. The plan's dependency order is
+   0, 1, 3, 2, 4, 5, 6, 7 — Step 3 comes before Step 2 because it is the step
+   that stops the per-request model bill.
+
+   **2.1 is next and it is the delicate one**: move the existing text
+   extraction behind the pipeline, changing no behaviour. **It is blocked on a
+   number, not on code.** Its gate is "`check_search` unchanged at 9 of 9" and
+   this file records it reporting **8 of 8**, unexplained and predating the
+   plan. Settle which is right first, or the gate cannot fail.
+
+## Step 2 is signed off, and the pipeline exists before its first producer
+
+10 September. The five decisions in `docs/plans/step-02-ingestion-contract.md`
+were taken as recommended, and sub-step 2.0 is built: `app/ingest.py`, the
+manifest schema, `DERIVED_DIR`, and 23 tests. **Nothing imports it.** That is
+the order the plan asked for and the reason to keep it: when 2.1 moves the real
+text extraction behind this interface, a change in `check_search`'s numbers
+means the move broke something, rather than meaning the pipeline was never
+right.
+
+What the contract is, in one line each: a producer declares a name, a version,
+the suffixes it handles and whether it is slow; the pipeline decides what runs,
+records what happened, and re-runs on a change of source size, mtime or
+producer version.
+
+**Three departures from the signed plan, all deliberate and all written into
+it.** A producer's `run` takes the output directory as well as the source,
+because a producer that picks its own location is one whose output nothing else
+can find or delete — and 4.2's promise that `derived/` is disposable would then
+rest on every producer remembering to keep it. A `Result` says `ok` or
+`skipped` and never `failed`, so failure is the exception the pipeline records
+and a producer never has to remember decision 4.5. And a producer that does not
+handle a suffix gets no row at all, rather than a `skipped` one that buries the
+skips which mean something.
+
+**The layout is new on disk**, which is the kind of thing a restore from backup
+has to match: `derived/<tenant>/manifest.sqlite3` for the record, and
+`derived/<tenant>/<producer>/<source file>/` for the bytes. A directory per
+source rather than a file, because a producer that makes one thing today makes
+forty page images tomorrow and `forget()` has to remove all of it without
+knowing which.
+
+**One thing the plan did not decide, decided here.** A failed producer is
+retried on the next call and `attempts` counts the goes at the same unchanged
+input, resetting when the file or the producer version changes — three failures
+against the old bytes say nothing about the new ones. No retry cap: the
+pipeline records, and a policy about when to stop belongs where the retrying is
+scheduled, which is 2.3.
+
+**And one bug found by its own test**, worth the entry because it is the same
+shape as several already here. Pruning the empty per-source directory left
+`derived/<tenant>/<producer>/` standing empty, which reads as "this producer
+has output here" to anything listing the folder. The test asserting that a
+producer which wrote nothing leaves nothing behind was written expecting to
+pass, and did not.
 
 ## Known and deliberately not fixed yet
 

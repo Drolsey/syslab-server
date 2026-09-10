@@ -11,6 +11,9 @@ venv/
 # derived search index: rebuildable from the files in data/
 index/
 
+# derived artifacts and the ingestion manifest: rebuildable from data/ too
+derived/
+
 # benchmark output
 bench_results*.json
 

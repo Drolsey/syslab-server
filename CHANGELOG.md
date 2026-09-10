@@ -18,6 +18,25 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 ## [Unreleased]
 
 ### Added
+- **The ingestion contract** (`app/ingest.py`), Step 2.0. One place that decides what runs
+  when a file enters the system, so that page images, extracted fields and embeddings each
+  become a producer in an existing pipeline rather than a fourth reader of the same PDF.
+  A producer declares a name, a version, the suffixes it handles and whether it is slow;
+  the pipeline records what was asked for, whether it worked, and against which version.
+  **Nothing imports it yet**, which is the point of doing it in this order: the pipeline is
+  proven before the first real producer moves behind it (2.1).
+  - **On-disk layout, new:** `derived/<tenant>/manifest.sqlite3` and
+    `derived/<tenant>/<producer>/<source file>/`, under a new `DERIVED_DIR` (default
+    `./derived`). Same rule as the search index and for the same reason — everything in it
+    was made out of a file in `data/` and can be deleted and rebuilt. A producer that ever
+    makes something which cannot be regenerated does not belong there.
+  - **A producer failing is recorded, not raised.** One failed producer does not fail the
+    upload, does not stop the other producers, and is not invisible. A missing library is
+    the exception: it is an environment fault, reported once and written against nothing,
+    because recording it per file is how nineteen good PDFs once came to look like a folder
+    of broken documents.
+  - Re-runs on a change of source size, mtime or producer version. Deliberately not a
+    content hash.
 - **The inference plane** (`app/gateway.py`), mounted on the same process: an
   OpenAI-compatible `/v1/chat/completions` and `/v1/models`, authenticated by its own
   `GATEWAY_TOKENS` and carrying no tenant at all, by design. A leaked gateway token costs
