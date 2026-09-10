@@ -1082,9 +1082,24 @@ pass, and did not.
   scenario 7 compares against a fixture left over from an earlier phase that
   has nothing to do with invoices. Worth tightening the assertions; not a model
   or gateway regression.
-- **`check_search` reports 8 of 8** where this file used to claim 9 of 9. The
-  discrepancy is unexplained and predates this work; find out which is right
-  before quoting either.
+- ~~**`check_search` reports 8 of 8** where this file used to claim 9 of 9.~~
+  **Explained 10 September. Both numbers are right, and the denominator is the
+  bug.** `scripts/check_search.py` holds nine checks, and one of them —
+  "Rebuilt from the files on disk", line 81 — is inside
+  `if args.rebuild or before["not_yet_indexed"]`. Run against an index that is
+  already current it never executes, and the script honestly reports 8 of 8.
+  Run with `--rebuild`, or against a folder holding a file the index has not
+  seen, it reports 9 of 9. Both runs were done today and both pass.
+
+  Nothing regressed and nothing ever did. What is wrong is quoting the total at
+  all: **the denominator is a function of how the script was invoked and what
+  state the index was in**, so "unchanged at 9 of 9" is a gate that can fail for
+  a reason that is not a failure, and pass while a check silently did not run.
+
+  **This matters beyond the tidiness, because Step 2.1's gate is written on
+  it.** The plan says "`check_search` unchanged at 9 of 9". Gate 2.1 on the
+  named checks all passing — and run it with `--rebuild` so the conditional one
+  is among them — not on the total.
 - **Gateway usage accounting is pass-through only.** The `usage` block reaches
   the caller; nothing here records per-token spend. Wanted before Step 7's
   measurement window, which is when someone asks what the hardware served.

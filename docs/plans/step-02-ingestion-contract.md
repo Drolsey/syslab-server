@@ -11,10 +11,13 @@ recorded rather than edited away:
   when Step 3 was image reading. Step 3 is the model gateway and is built; vision is not
   currently a numbered step. What section 2 means is unchanged: this step designs the
   contract and adds no producer beyond the one that already exists.
-- **2.1's gate cites `check_search` at 9 of 9.** `HANDOVER.md` records it reporting 8 of 8,
-  with the discrepancy unexplained and predating this plan. **Which number is right has to
-  be settled before 2.1 can be gated on anything**, or the gate is unfalsifiable. It does
-  not block 2.0.
+- **2.1's gate cites `check_search` at 9 of 9, and the total is not a thing to gate on.**
+  Settled 10 September: both numbers are right. One of the nine checks, "Rebuilt from the
+  files on disk", is inside `if args.rebuild or before["not_yet_indexed"]`
+  (`scripts/check_search.py:81`), so a run against an already-current index reports 8 of 8
+  and a run with `--rebuild` reports 9 of 9. The denominator is a function of invocation,
+  not of behaviour. **Gate 2.1 on the named checks all passing, with `--rebuild` so the
+  conditional one is among them.**
 
 ---
 
