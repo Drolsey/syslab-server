@@ -25,17 +25,21 @@ moment something exists only in this file it stops being a cache.
 
 from __future__ import annotations
 
-import importlib
 import re
 import sqlite3
-import sys
 import time
 from pathlib import Path
 
+from app import ingest, producers
 from app.config import ensure_data_dir, ensure_index_dir, index_path
 
-SEARCHABLE = {".pdf", ".xlsx", ".xlsm"}
-MAX_TEXT_PER_FILE = 400_000
+# Both moved to app/producers.py in Step 2.1 and re-exported here, because the
+# suffixes a file type can be read from are now a property of the producer that
+# reads them rather than of the index. Kept as names on this module so that
+# nothing which imported them from here has to care that they moved.
+SEARCHABLE = producers.SEARCHABLE
+MAX_TEXT_PER_FILE = producers.MAX_TEXT_PER_FILE
+extract = producers.extract
 
 
 class SearchError(Exception):
@@ -88,85 +92,35 @@ def connect() -> sqlite3.Connection:
 
 
 # --------------------------------------------------------------------------
-# extraction
-# --------------------------------------------------------------------------
-
-def _reader(module: str, what: str):
-    """Import a parser, or say plainly that it is missing.
-
-    A missing library is NOT an unreadable file, and catching both with one
-    `except Exception` made them indistinguishable. Running a rebuild under an
-    interpreter without pymupdf indexed nineteen perfectly good PDFs as empty
-    and reported each as "no extractable text, probably a scan": a cause the
-    code had not established, for a folder that was entirely fine.
-
-    An unreadable file affects one document. A missing parser affects every
-    document of that type, and it is an environment fault, not a data fault.
-    """
-    try:
-        return importlib.import_module(module)
-    except ImportError as exc:
-        raise SearchError(
-            f"{module} is not installed in the interpreter running this "
-            f"({sys.executable}), so {what}. Every file of that type would be "
-            "indexed as empty, which reads like a folder of unreadable documents "
-            "rather than a missing package. Install the project's requirements, "
-            "or run this with the virtualenv's python."
-        ) from exc
-
-
-def extract(path: Path) -> str:
-    """Pull readable text out of one file. Empty string if there is none.
-
-    Raises SearchError if the parser for this file type is not installed. That
-    is deliberately not the same outcome as a file that cannot be read.
-    """
-    suffix = path.suffix.lower()
-
-    if suffix == ".pdf":
-        pymupdf = _reader("pymupdf", "no PDF can be read")
-        try:
-            with pymupdf.open(path) as document:
-                pages = [document.load_page(i).get_text("text") for i in range(document.page_count)]
-            return "\n".join(pages)[:MAX_TEXT_PER_FILE]
-        except Exception:  # noqa: BLE001 - this one file is unreadable, never fatal
-            return ""
-
-    if suffix in {".xlsx", ".xlsm"}:
-        openpyxl = _reader("openpyxl", "no spreadsheet can be read")
-        try:
-            book = openpyxl.load_workbook(path, data_only=True, read_only=True)
-            try:
-                parts: list[str] = []
-                for sheet in book.worksheets:
-                    parts.append(sheet.title)
-                    for row in sheet.iter_rows(values_only=True):
-                        cells = [str(v) for v in row if v is not None]
-                        if cells:
-                            parts.append(" ".join(cells))
-                        if sum(len(p) for p in parts) > MAX_TEXT_PER_FILE:
-                            break
-            finally:
-                book.close()
-            return "\n".join(parts)[:MAX_TEXT_PER_FILE]
-        except Exception:  # noqa: BLE001
-            return ""
-
-    return ""
-
-
-# --------------------------------------------------------------------------
 # writing
 # --------------------------------------------------------------------------
 
 def index_file(path: Path, connection: sqlite3.Connection | None = None) -> dict:
-    """Add or replace one file in the index. Safe to call repeatedly."""
+    """Add or replace one file in the index. Safe to call repeatedly.
+
+    A CONSUMER of the ingestion pipeline since Step 2.1, not the owner of the
+    extraction any more. It asks ingest() to bring the file's fast producers up
+    to date and then reads the text artifact, which means a second call over an
+    unchanged file re-indexes without re-parsing the PDF -- and, more to the
+    point, means the next thing that wants this text reads the same bytes
+    rather than opening the file again for itself.
+
+    The return shape has not changed, and neither has what a caller sees when
+    a parser is missing: the pipeline reports that as an environment fault
+    rather than a per-file failure, and it is translated back into a
+    SearchError here because three callers already catch that.
+    """
     own = connection is None
     connection = connection or connect()
     try:
         if path.suffix.lower() not in SEARCHABLE or not path.is_file():
             return {"name": path.name, "indexed": False, "reason": "not a searchable file"}
-        text = extract(path)
+
+        report = ingest.ingest(path.name, only_fast=True)
+        unavailable = report["unavailable"].get(producers.TEXT.name)
+        if unavailable:
+            raise SearchError(unavailable)
+        text = producers.text_of(path.name) or ""
         stat = path.stat()
         connection.execute("DELETE FROM documents WHERE name = ?", (path.name,))
         if text.strip():
@@ -213,11 +167,10 @@ def rebuild(report=None) -> dict:
     # under the wrong interpreter cost the whole index and replaced it with
     # nothing. Same shape as the row cap that was applied after the fetch: a
     # limit enforced after the cost is paid is not a limit.
-    for suffix in sorted({p.suffix.lower() for p in files}):
-        if suffix == ".pdf":
-            _reader("pymupdf", "no PDF can be read")
-        elif suffix in {".xlsx", ".xlsm"}:
-            _reader("openpyxl", "no spreadsheet can be read")
+    try:
+        producers.require_readers(p.suffix for p in files)
+    except ingest.ProducerUnavailable as exc:
+        raise SearchError(str(exc)) from exc
 
     connection = connect()
     started = time.time()

@@ -27,12 +27,18 @@ def cli(tmp_path, monkeypatch):
     spec.loader.exec_module(module)
 
     data, index = tmp_path / "data", tmp_path / "index"
+    derived = tmp_path / "derived"
     monkeypatch.setattr(module, "DATA_ROOT", data)
     monkeypatch.setattr(module, "INDEX_ROOT", index)
+    monkeypatch.setattr(module, "DERIVED_ROOT", derived)
     monkeypatch.setattr(module, "BOOTSTRAP_TENANT", "default")
     monkeypatch.setattr(module, "_app_is_running", lambda: False)
     monkeypatch.setattr(config, "DATA_ROOT", data)
     monkeypatch.setattr(config, "INDEX_ROOT", index)
+    # Writing a PDF now runs the ingestion pipeline, which creates this. Before
+    # Step 2.1 it did not exist and this fixture did not need to know about it;
+    # the suite's folder guard is what said so, by failing.
+    monkeypatch.setattr(config, "DERIVED_ROOT", derived)
 
     connection = tenancy.connect()
     try:
@@ -47,7 +53,7 @@ def cli(tmp_path, monkeypatch):
             config.ensure_data_dir()
             tools.write_pdf(f"{ident}.pdf", title=ident, body=f"{word} is here.")
 
-    module._data, module._index = data, index
+    module._data, module._index, module._derived = data, index, derived
     return module
 
 
@@ -157,6 +163,25 @@ def test_the_documents_are_moved_aside_not_destroyed(cli, capsys):
     kept = list((cli._data / cli.REMOVED).iterdir())
     assert len(kept) == 1 and kept[0].name.startswith("going-")
     assert _files(kept[0]) == {"going.pdf"}, "access is gone, the documents are not"
+
+
+def test_the_derived_artifacts_go_even_when_the_documents_only_move(cli):
+    """They hold text extracted from the customer's documents.
+
+    Moving the documents aside is a judgement about the customer's data;
+    keeping a second copy of it in a folder nothing points at any more is not
+    that judgement, it is an oversight. Everything under derived/ can be made
+    again from the files, so there is nothing to weigh.
+    """
+    assert (cli._derived / "going").exists(), "the fixture never produced anything"
+    tenancy.set_disabled("going", True)
+    assert cli.main(["delete", "going", "--apply", "--confirm", "going"]) == 0
+
+    assert not (cli._derived / "going").exists()
+    assert (cli._derived / "staying").exists(), "the wrong tenant's artifacts went"
+
+    kept = list((cli._data / cli.REMOVED).iterdir())
+    assert _files(kept[0]) == {"going.pdf"}, "the documents themselves still moved aside"
 
 
 def test_purge_files_really_removes_them(cli):

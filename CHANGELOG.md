@@ -17,6 +17,18 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 
 ## [Unreleased]
 
+### Fixed
+- **A tenant delete left `derived/<tenant>/` behind**, holding text extracted from that
+  customer's documents. `scripts/tenant.py` removes it now — deleted rather than moved
+  aside even when the documents are only moved, because it can be made again from them.
+  Found by the test suite's folder guard the moment Step 2.1 made an upload produce
+  artifacts.
+- **The ingestion pipeline's freshness check used a one-second mtime tolerance**, carried
+  over from `search.stale()`, whose consequences are not comparable: that one produces a
+  suggestion, this one decides whether derived data may be served for bytes that no longer
+  exist. A file rewritten at the same size within the same second was served stale.
+  Exact now.
+
 ### Added
 - **The ingestion contract** (`app/ingest.py`), Step 2.0. One place that decides what runs
   when a file enters the system, so that page images, extracted fields and embeddings each
@@ -37,6 +49,11 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
     of broken documents.
   - Re-runs on a change of source size, mtime or producer version. Deliberately not a
     content hash.
+- **`app/producers.py`** (Step 2.1). Text extraction moved out of `app/search.py` and
+  became the pipeline's first producer; `search.index_file` is a consumer of it now, so a
+  re-index of an unchanged file no longer re-parses the PDF, and the next thing that wants
+  that text reads the same bytes rather than opening the file again for itself.
+  `search.SEARCHABLE`, `MAX_TEXT_PER_FILE` and `extract` remain as names on `search`.
 - **The inference plane** (`app/gateway.py`), mounted on the same process: an
   OpenAI-compatible `/v1/chat/completions` and `/v1/models`, authenticated by its own
   `GATEWAY_TOKENS` and carrying no tenant at all, by design. A leaked gateway token costs

@@ -76,6 +76,10 @@ def test_a_producer_runs_and_its_work_is_recorded(tenant_storage):
     assert row["status"] == ingest.OK
     assert row["attempts"] == 1
     assert row["stale"] is False
+    # Forward slashes whatever platform wrote it: the same code runs on this
+    # laptop and on the Ubuntu box, and a path is the one field here that
+    # another machine might have to read.
+    assert row["output_path"] == "fake/report.txt/output.txt"
     assert (config.derived_dir() / row["output_path"]).read_text(encoding="utf-8") == "ORIGINAL"
 
 
@@ -149,12 +153,17 @@ def test_a_touched_file_of_the_same_size_is_produced_again(tenant_storage):
     assert len(calls) == 2
 
 
-def test_a_file_touched_within_the_tolerance_is_left_alone(tenant_storage):
-    """The tolerance is deliberate and matches search.stale().
+def test_a_file_touched_by_half_a_second_is_produced_again(tenant_storage):
+    """The mtime comparison is exact, and an earlier version of it was not.
 
-    Filesystems disagree about mtime resolution; FAT-derived mounts round to
-    two seconds. A pipeline that re-ran everything on a sub-second difference
-    would re-OCR a folder because it was copied.
+    It carried search.stale()'s one-second tolerance across on the reasoning
+    that the two ought to agree about the same file. They serve different
+    purposes: stale() produces a suggestion, so being loose costs a rebuild
+    nobody needed, while this decides whether derived data may be served for
+    bytes that no longer exist.
+
+    Step 2.1 found it -- a PDF rewritten with a body of the same length inside
+    the same second, and the index was handed the old text.
     """
     _, calls = counting_producer()
     path = a_file(tenant_storage)
@@ -162,6 +171,25 @@ def test_a_file_touched_within_the_tolerance_is_left_alone(tenant_storage):
 
     nudged = path.stat().st_mtime + 0.5
     os.utime(path, (nudged, nudged))
+
+    assert ingest.needs("report.txt") == ["fake"]
+    ingest.ingest("report.txt")
+    assert len(calls) == 2
+
+
+def test_a_file_nobody_touched_is_left_alone(tenant_storage):
+    """Exact is not the same as paranoid: an unchanged file stays unchanged.
+
+    Including one restored from a backup that preserved its timestamp, which
+    is the case a hash would also decline to re-run and a tolerance was never
+    needed for.
+    """
+    _, calls = counting_producer()
+    path = a_file(tenant_storage)
+    ingest.ingest("report.txt")
+
+    stat = path.stat()
+    os.utime(path, (stat.st_atime, stat.st_mtime))
 
     assert ingest.needs("report.txt") == []
     ingest.ingest("report.txt")

@@ -922,12 +922,59 @@ the short version:
    0, 1, 3, 2, 4, 5, 6, 7 — Step 3 comes before Step 2 because it is the step
    that stops the per-request model bill.
 
-   **2.1 is next and it is the delicate one**: move the existing text
-   extraction behind the pipeline, changing no behaviour. It was blocked on the
-   `check_search` 8-against-9 discrepancy; that was settled the same day — one
-   of the nine checks is conditional, both numbers are honest, and the gate is
-   the named checks with `--rebuild`, never the total. See the entry below.
-   **Nothing blocks 2.1 now.**
+   **2.1 is done too**, and its gate caught two real things — see the section
+   below. **2.2 is next**: wire the write paths, so `tools._index_quietly`
+   becomes `ingest(name, only_fast=True)` and uploads and tool writes go
+   through one path. Gate: `check_tools` unchanged.
+
+## 2.1: the index is a consumer now, and the gate caught two things
+
+10 September. Text extraction moved out of `app/search.py` into
+`app/producers.py` as the pipeline's first producer, and `search.index_file`
+became a consumer of it: it calls `ingest(name, only_fast=True)` and reads the
+artifact. Import direction is `config <- ingest <- producers <- search`, and
+search must never be imported back the other way — a cycle would be the old
+arrangement smuggled back in.
+
+**Gate: `check_search --rebuild` 9 of 9, `check_tools` 12 of 12, suite 406
+passed / 1 skipped.** Nothing about the behaviour differs, which was the whole
+requirement.
+
+**The gate earned itself twice, and that is the argument for doing this
+sub-step before anything interesting.**
+
+**1. The mtime tolerance was wrong, and only became wrong here.** 2.0 carried
+`search.stale()`'s one-second tolerance into the freshness check on the
+reasoning that the two ought to agree about the same file. They do not serve
+the same purpose. `stale()` produces a *suggestion* — a list somebody might
+want to reindex — so being loose costs a rebuild nobody needed. The pipeline's
+check decides **whether derived data may be served for bytes that no longer
+exist**, and being loose there is silently wrong. An existing test rewrote a
+PDF with a body of the same length inside the same second, and the pipeline
+handed the index the old text. Exact now. Nothing had been wrong before,
+because `index_file` re-extracted every time and had no cache to be stale.
+
+**A tolerance copied from a function whose consequences are different is not a
+consistency, it is a guess.** That is the general form and it is worth keeping.
+
+**2. `scripts/tenant.py` did not know a tenant had a third thing on disk.**
+Deleting a tenant removed the folder and the index and left
+`derived/<tenant>/`, holding text extracted from that customer's documents.
+Found by the suite's own folder guard — the one that fails any test writing
+outside `tmp_path` — which reported a real `derived/going/` appearing in the
+repo. This is **2.5's storage half, pulled forward**, because 2.1 is what makes
+an upload create the artifacts at all: shipping 2.1 without it ships a delete
+that leaves a copy of the customer's content behind. The artifacts are
+*deleted* even when the documents are only moved aside, since everything under
+`derived/` can be made again from the files.
+
+**Two consequences left for 2.4 on purpose rather than half-done.** Nothing
+calls `ingest.forget()` yet, so an artifact outlives the file it came from —
+`check_search` writes 41 decoy PDFs, deletes them, and leaves 41 text artifacts
+behind. And `search.rebuild()` still refuses to run when a parser is missing
+even though the text it needs is already extracted; that pre-check is existing
+behaviour, and changing it is not a no-behaviour-change sub-step. Both are
+written into the plan at 2.4 rather than left to be noticed.
 
 ## Step 2 is signed off, and the pipeline exists before its first producer
 

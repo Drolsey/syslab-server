@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import config, search, tools
+from app import config, producers, search, tools
 
 
 @pytest.fixture(autouse=True)
@@ -196,7 +196,7 @@ def test_a_missing_parser_is_a_fault_not_an_empty_document(documents, monkeypatc
         return real(name, *args, **kwargs)
 
     with monkeypatch.context() as scoped:
-        scoped.setattr(search.importlib, "import_module", without_pymupdf)
+        scoped.setattr(producers.importlib, "import_module", without_pymupdf)
         with pytest.raises(search.SearchError) as caught:
             search.rebuild()
     message = str(caught.value)
@@ -249,7 +249,7 @@ def test_a_failed_rebuild_does_not_destroy_the_index_it_could_not_replace(docume
     # fixture set, so the assertion below would have read the real index on the
     # developer's machine instead of this test's. It did, once.
     with monkeypatch.context() as scoped:
-        scoped.setattr(search.importlib, "import_module", without_pymupdf)
+        scoped.setattr(producers.importlib, "import_module", without_pymupdf)
         with pytest.raises(search.SearchError):
             search.rebuild()
 

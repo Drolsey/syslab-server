@@ -1,7 +1,7 @@
 # Step 2: The Ingestion Contract
 
 Status: **SIGNED OFF 10 September 2026**, all five decisions in section 4 taken as
-recommended. **2.0 is done**; 2.1 to 2.5 remain.
+recommended. **2.0 and 2.1 are done**; 2.2 to 2.5 remain.
 Written 3 September 2026, after Step 1 completed.
 
 Two things this document says that were true when it was written and are not now, both
@@ -230,6 +230,41 @@ rather than raised.
 Gate: `check_search` unchanged at 9 of 9, and the suite unchanged, because nothing about the
 behaviour should differ.
 
+> **DONE, 10 September 2026.** `app/producers.py` holds `_reader`, `extract` and the `text`
+> producer, moved verbatim out of `app/search.py`; `search.index_file` now calls
+> `ingest(name, only_fast=True)` and reads the artifact. Import direction is
+> `config <- ingest <- producers <- search`, and search must never be imported back the
+> other way. Gate: `check_search --rebuild` 9 of 9, `check_tools` 12 of 12, suite 406
+> passed / 1 skipped. `search.SEARCHABLE`, `MAX_TEXT_PER_FILE` and `extract` stay as names
+> on `search` so nothing that imported them has to care that they moved.
+>
+> **The gate earned itself twice, which is the argument for doing 2.1 before anything
+> interesting.**
+>
+> 1. **The mtime tolerance was wrong, and only became wrong here.** 2.0 carried
+>    `search.stale()`'s one-second tolerance into `_is_current()` on the reasoning that the
+>    two ought to agree about the same file. They serve different purposes: `stale()`
+>    produces a *suggestion*, so being loose costs a rebuild nobody needed, while
+>    `_is_current()` decides whether **derived data may be served for bytes that no longer
+>    exist**. An existing test rewrote a PDF with a body of the same length inside the same
+>    second and the pipeline handed the index the old text. The comparison is exact now.
+>    Nothing had been wrong before 2.1 because `index_file` re-extracted every time and had
+>    no cache to be stale.
+> 2. **`scripts/tenant.py` did not know a tenant had a third thing on disk.** Deleting a
+>    tenant removed the folder and the index and left `derived/<tenant>/`, which holds text
+>    extracted from that customer's documents. **This is 2.5's storage half and it was
+>    pulled forward**, because 2.1 is what makes an upload create the artifacts: shipping
+>    2.1 without it ships a delete that leaves a copy of the customer's content behind. The
+>    artifacts are *deleted* even when the documents are only moved aside, since everything
+>    in `derived/` can be made again from the files.
+>
+> **Two consequences, both left for 2.4 on purpose rather than half-done here.** Nothing
+> calls `ingest.forget()` yet, so an artifact outlives the file it came from — `check_search`
+> writes 41 decoy PDFs, deletes them, and leaves 41 text artifacts behind. And
+> `search.rebuild()` still refuses to run at all when a parser is missing, even though the
+> text it needs is now already extracted; that pre-check is existing behaviour and changing
+> it is not a no-behaviour-change sub-step.
+
 **2.2** Wire the write paths. `_index_quietly` becomes `ingest(name, only_fast=True)`.
 Uploads and tool writes go through one path. Gate: `check_tools` unchanged.
 
@@ -239,6 +274,12 @@ show. Gate: a slow producer on a large file does not block the upload response.
 **2.4** Rebuild and forget: `derived/` deleted entirely must reconstruct from `data/`, and a
 deleted source file must leave nothing behind. Gate: extend `check_search`, and add
 `scripts/check_ingest.py`.
+
+> **Live since 2.1, not hypothetical.** `search.forget_missing()` drops index rows for files
+> that have left; nothing does the same for artifacts, so they accumulate. Deliberately not
+> patched into `forget_missing()` in passing: 2.4's gate tests rebuild and forget as one
+> unit, and arriving at it half-implemented and untested is how the half that was skipped
+> stops being looked at.
 
 **2.5** Tenancy still holds. Gate: `check_isolation` grows a section: one tenant's derived
 artifacts are invisible and unreachable from another, and deleting a tenant takes its
@@ -254,7 +295,7 @@ artifacts are invisible and unreachable from another, and deleting a tenant take
 | A producer that is slow AND in-request slips in | `slow` is declared per producer and 2.3's gate asserts an upload stays fast |
 | Silent failure returns, because it is convenient | 4.5, and a status call that names what failed |
 | Scope creep into vision or embeddings | 2.1's first producer is the existing text extraction, moved and not improved |
-| Another sub-step forgets tenancy | 2.5, and the conftest guard that fails any test writing outside `tmp_path` |
+| Another sub-step forgets tenancy | 2.5, and the conftest guard that fails any test writing outside `tmp_path` — which is exactly how 2.1 found that `scripts/tenant.py` had never heard of `derived/` |
 
 ## 8. Effort
 

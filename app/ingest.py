@@ -65,13 +65,6 @@ from app.config import (
     resolve_in_data_dir,
 )
 
-# Same tolerance as search.stale(), and the same reasoning: mtime resolution is
-# a property of the filesystem, not of this code, and FAT-derived mounts round
-# to two seconds. Deliberately consistent with the index rather than stricter
-# than it, so that "the index thinks this file changed" and "the manifest
-# thinks this file changed" cannot disagree about the same file.
-MTIME_TOLERANCE_SECONDS = 1.0
-
 # A recorded error is read by a person scanning a manifest and, later, by a
 # model deciding whether a document is usable. A stack trace pasted whole
 # serves neither. The lesson is already written down in this project: an error
@@ -273,11 +266,31 @@ def _is_current(row: sqlite3.Row, stat, producer: Producer) -> bool:
     200 MB workbook on every upload, to notice a change that size and mtime
     already caught, is a cost paid every time for a case that is both rare and
     not silent.
+
+    THE MTIME COMPARISON IS EXACT, AND THE FIRST VERSION OF THIS WAS NOT.
+    It carried search.stale()'s one-second tolerance across, on the reasoning
+    that the two ought to agree about the same file. They serve different
+    purposes and the consequences are not comparable. stale() produces a
+    SUGGESTION -- a list of files somebody might want to reindex -- so being
+    loose there costs a rebuild nobody needed. This decides whether DERIVED
+    DATA MAY BE SERVED FOR BYTES THAT NO LONGER EXIST, and being loose here is
+    silently wrong.
+
+    Step 2.1 caught it the moment the index started consuming this: a test
+    rewrote a PDF with a body of the same length, within the same second, and
+    the pipeline served the old text to the index. Nothing had been wrong
+    before, because index_file re-extracted every time and had no cache to be
+    stale. A float survives SQLite's REAL unchanged, so exact is exact.
+
+    What exact still cannot see is a rewrite inside one filesystem mtime tick
+    that leaves the size identical -- sub-microsecond on NTFS and ext4, two
+    seconds on a FAT-derived mount. Bumping a producer's version, or forget(),
+    is the answer to that; hashing is not, for the reason above.
     """
     return (
         int(row["producer_version"]) == producer.version
         and int(row["source_size"]) == stat.st_size
-        and abs(float(row["source_mtime"]) - stat.st_mtime) <= MTIME_TOLERANCE_SECONDS
+        and float(row["source_mtime"]) == stat.st_mtime
     )
 
 
@@ -314,7 +327,10 @@ def _record(
             status,
             stat.st_size,
             stat.st_mtime,
-            output_path,
+            # Recorded with forward slashes whatever wrote it. A path is the
+            # one field here another machine might read, and this project
+            # already runs the same code on Windows and on the Ubuntu box.
+            None if output_path is None else str(output_path).replace("\\", "/"),
             (detail or "")[:MAX_DETAIL],
             attempts,
             _now(),

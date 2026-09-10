@@ -26,7 +26,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import tenancy  # noqa: E402
-from app.config import BOOTSTRAP_TENANT, CONTROL_PATH, DATA_ROOT, INDEX_ROOT  # noqa: E402
+from app.config import (  # noqa: E402
+    BOOTSTRAP_TENANT, CONTROL_PATH, DATA_ROOT, DERIVED_ROOT, INDEX_ROOT,
+)
 
 LINE = "-" * 62
 
@@ -167,6 +169,10 @@ def cmd_delete(args) -> int:
 
     folder = DATA_ROOT / tenant["id"]
     index = INDEX_ROOT / f"{tenant['id']}.sqlite3"
+    # Step 2.1 gave a tenant a third thing on disk. It holds text extracted
+    # from their documents, so leaving it behind after a delete leaves a copy
+    # of the customer's content in a folder nothing points at any more.
+    derived = DERIVED_ROOT / tenant["id"]
     count, size = _count_files(folder)
     tokens = tenancy.list_tokens(tenant["id"])
 
@@ -174,6 +180,7 @@ def cmd_delete(args) -> int:
     print(f"  State    {'ACTIVE' if tenant['active'] else 'disabled ' + _short(tenant['disabled_at'])}")
     print(f"  Files    {count} file(s), {size / 1048576:.1f} MB in {folder}")
     print(f"  Index    {'present' if index.exists() else 'absent'}  {index}")
+    print(f"  Derived  {'present' if derived.exists() else 'absent'}  {derived}")
     print(f"  Tokens   {len(tokens)}")
 
     if not args.apply:
@@ -223,6 +230,13 @@ def cmd_delete(args) -> int:
     if index.exists():
         index.unlink()
         print(f"  index:         deleted {index.name} (derived, rebuildable)")
+
+    # Deleted rather than moved aside, even when the documents are only moved.
+    # Everything in it can be made again from the files, so keeping it would
+    # preserve a second copy of the customer's text for no benefit.
+    if derived.exists():
+        shutil.rmtree(derived)
+        print("  derived:       deleted (artifacts and manifest, rebuildable)")
 
     if not folder.exists():
         print("  files:         none on disk")

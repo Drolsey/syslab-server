@@ -74,7 +74,7 @@ plan document, sub-steps and gate:
 | 0 | Clean baseline | Complete |
 | 1 | The ownership boundary: every byte has an owner | Complete, `scripts/check_isolation.py` is its gate |
 | 3 | The model gateway: serve `/v1` from our own hardware | Built. Its gate belongs to the website — see below |
-| 2 | The ingestion contract | Signed off 10 Sep. **2.0 done**, 2.1-2.5 to go |
+| 2 | The ingestion contract | Signed off 10 Sep. **2.0 and 2.1 done**, 2.2-2.5 to go |
 
 Step 3 comes before Step 2 on purpose: that is the plan's own dependency order, and Step 3
 is the one that stops the per-request model bill. Its gate is the website's own provider
