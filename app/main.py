@@ -22,7 +22,9 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Respon
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from app import agent, config, context, gateway, jobs, search, tenancy, tools
+from app import (
+    agent, config, context, gateway, ingest, intake, jobs, search, tenancy, tools,
+)
 from app.config import (
     APP_HOST,
     APP_PORT,
@@ -407,21 +409,26 @@ async def upload(file: UploadFile = File(...)) -> dict:
     path = unique_path(name)
     path.write_bytes(contents)
 
-    # Index it now, while we have it. Doing this at upload is what lets someone
+    # Ingest it now, while we have it. Doing this at upload is what lets someone
     # later find a document by what is in it rather than by remembering its name.
     # A failure here must never lose the upload: the file is already on disk and
     # scripts/check_search.py can rebuild the index at any time.
-    indexed = False
-    try:
-        indexed = bool(search.index_file(path).get("indexed"))
-    except Exception:  # noqa: BLE001
-        pass
+    #
+    # intake.arrived does not raise, and it is what decides that the fast
+    # producers run here and anything slow goes to the job lane -- which is why
+    # a 200 page scan does not turn this into a request that times out.
+    outcome = intake.arrived(path)
 
     return {
         "name": path.name,
         "size_kb": round(len(contents) / 1024, 1),
         "renamed": path.name != name,
-        "searchable": indexed,
+        "searchable": bool(outcome.get("indexed")),
+        # Step 2.3. Without these an uploader has no way to know the document
+        # is not finished: "searchable" says the text is in, and says nothing
+        # about the producers still queued behind it.
+        "outstanding": outcome.get("deferred") or [],
+        "job": outcome.get("queued"),
     }
 
 
@@ -434,6 +441,65 @@ def download(name: str) -> FileResponse:
     if not path.is_file():
         raise HTTPException(404, f"No file named {name!r}.")
     return FileResponse(path, filename=path.name)
+
+
+# --------------------------------------------------------------------------
+# the ingestion pipeline
+# --------------------------------------------------------------------------
+#
+# Step 2.3. What has been produced from a document, what is outstanding, and a
+# way to ask for the outstanding work without waiting for it. The read side is
+# the point: before this, "is this document ready" had no answer, only a search
+# index row that either existed or did not.
+
+@app.get("/api/ingest", dependencies=[Depends(require_auth)])
+def ingest_summary() -> dict:
+    """The folder at a glance: what is ready, what is not, and what failed."""
+    ready, outstanding, failed = [], [], []
+    for path in sorted(config.ensure_data_dir().iterdir()):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        if not ingest.producers_for(path.suffix):
+            continue
+        state = ingest.status(path.name)
+        if state["failed"]:
+            failed.append(path.name)
+        elif state["ready"]:
+            ready.append(path.name)
+        else:
+            outstanding.append(path.name)
+    return {
+        "ready": ready,
+        "outstanding": outstanding,
+        "failed": failed,
+        "producers": sorted(ingest.registered()),
+    }
+
+
+@app.get("/api/ingest/{name}", dependencies=[Depends(require_auth)])
+def ingest_status(name: str) -> dict:
+    """Is this document ready, and what failed?"""
+    try:
+        return ingest.status(name)
+    except ingest.IngestError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/ingest/{name}", dependencies=[Depends(require_auth)])
+def ingest_file(name: str) -> dict:
+    """Bring one document up to date.
+
+    Returns as soon as the fast producers are done. Anything slow is a job id
+    in the response rather than time spent in this request, which is the whole
+    point of decision 4.3 and the gate for this sub-step.
+    """
+    try:
+        path = resolve_in_data_dir(name)
+    except UnsafePathError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(404, f"No file named {name!r}.")
+    return intake.arrived(path)
 
 
 # --------------------------------------------------------------------------

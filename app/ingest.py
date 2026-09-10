@@ -486,6 +486,17 @@ def needs(name: str) -> list[str]:
         connection.close()
 
 
+def deferred(name: str) -> list[str]:
+    """The SLOW producers still outstanding for this file.
+
+    What `ingest(only_fast=True)` left behind, asked as a question rather than
+    remembered from a return value -- so the caller that schedules the work
+    does not have to be the same call that skipped it, and a file left
+    half-produced by a restart is still answerable.
+    """
+    return [n for n in needs(name) if n in _PRODUCERS and _PRODUCERS[n].slow]
+
+
 def status(name: str) -> dict:
     """Is this document ready, and what failed?
 

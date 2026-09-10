@@ -922,10 +922,65 @@ the short version:
    0, 1, 3, 2, 4, 5, 6, 7 — Step 3 comes before Step 2 because it is the step
    that stops the per-request model bill.
 
-   **2.1 is done too**, and its gate caught two real things — see the section
-   below. **2.2 is next**: wire the write paths, so `tools._index_quietly`
-   becomes `ingest(name, only_fast=True)` and uploads and tool writes go
-   through one path. Gate: `check_tools` unchanged.
+   **2.0 through 2.3 are done**, each with its gate met; the sections below
+   have what each one cost. **2.4 is next**: rebuild and forget — `derived/`
+   deleted entirely must reconstruct from `data/`, and a deleted source file
+   must leave nothing behind. Nothing calls `ingest.forget()` yet, so artifacts
+   currently outlive the files they came from. Gate: extend `check_search`, and
+   add `scripts/check_ingest.py`. Then 2.5, tenancy — whose storage half was
+   already pulled forward in 2.1.
+
+## 2.2 and 2.3: one path in, and slow work off the request
+
+10 September. `app/intake.py` is the one place that decides what happens to a
+file that has just been written — fast producers in the request, then the
+index, then anything slow to the job lane. The three write paths (the upload
+endpoint, `tools._index_quietly`, `db.query_to_excel`) call `intake.arrived`.
+Import direction is now `config <- ingest <- producers <- search <- intake`.
+
+**Why a new module rather than a line in `search.py`.** All three callers
+already went through one function, so "one path in" was arguably true before.
+What was not true is that the path was owned by anything entitled to own it:
+the index is a *consumer* of the pipeline, and a consumer that also drives the
+pipeline and schedules its jobs is the owner of it wearing a different hat.
+`intake` owns the order and none of the work.
+
+**2.3's gate is met.** A producer that blocks until a test releases it is
+queued rather than waited on; the upload returns in well under a second with
+the text already indexed. It is asserted against a producer that genuinely
+blocks on an event rather than one that sleeps — a sleep makes the test a race
+against the machine it runs on, and passes on a fast one for the wrong reason.
+
+New surface: `GET /api/ingest` (the folder sorted into ready / outstanding /
+failed), `GET /api/ingest/{name}` (is this document ready, and what failed),
+`POST /api/ingest/{name}`. The upload response gained `outstanding` and `job`,
+because `searchable` says the text is in and says nothing about what is still
+queued behind it. Additive, and `/api/*` is not the frozen surface — only `/v1`
+is, so `check_api_compat` still passes.
+
+**One job kind for all slow producers**, not one per producer: the lane
+serialises anyway, and a file with three slow producers outstanding wants one
+queue entry that finishes when the document is ready, not three that each look
+like the whole job.
+
+**A full queue is a delay, not a loss.** The manifest still records the
+producer as stale, so the next ingest picks it up, and the response says so
+rather than swallowing it.
+
+**Suite 415 passed / 1 skipped. `check_tools` 12 of 12, `check_search
+--rebuild` 9 of 9, `check_api_compat` pass, `check_isolation` unchanged** (its
+one unrun check is the Windows symlink privilege, which predates this and needs
+Linux).
+
+**Not proven over a live socket.** The gate ran through the real ASGI app and
+the real job-lane threads under `TestClient`; uvicorn in front of that is not
+where the risk is, and minting a token in this install's own control plane to
+prove it was not worth the side effect.
+
+**A test-hygiene finding worth keeping, because it cost time.** The job lane is
+a module-level singleton with one worker, so a producer left blocking by a
+failed assertion wedges it for the full timeout and fails the NEXT test too. It
+read as two bugs and was one. The release is in a `finally` now.
 
 ## 2.1: the index is a consumer now, and the gate caught two things
 

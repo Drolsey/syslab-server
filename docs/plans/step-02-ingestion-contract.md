@@ -1,7 +1,7 @@
 # Step 2: The Ingestion Contract
 
 Status: **SIGNED OFF 10 September 2026**, all five decisions in section 4 taken as
-recommended. **2.0 and 2.1 are done**; 2.2 to 2.5 remain.
+recommended. **2.0 to 2.3 are done**; 2.4 and 2.5 remain.
 Written 3 September 2026, after Step 1 completed.
 
 Two things this document says that were true when it was written and are not now, both
@@ -268,8 +268,61 @@ behaviour should differ.
 **2.2** Wire the write paths. `_index_quietly` becomes `ingest(name, only_fast=True)`.
 Uploads and tool writes go through one path. Gate: `check_tools` unchanged.
 
+> **DONE, 10 September 2026.** `app/intake.py`, and the three write paths — the upload
+> endpoint, `tools._index_quietly`, and `db.query_to_excel` — now call `intake.arrived`.
+> Gate: `check_tools` 12 of 12 unchanged.
+>
+> **It is a new module rather than a line in `search.py`, and that is the point of the
+> sub-step.** All three callers already went through one function, `search.index_file`, so
+> "one path" was arguably true before. What was not true is that the path was owned by
+> anything entitled to own it: the index is a *consumer* of the pipeline, and a consumer
+> that also drives the pipeline and schedules its jobs is the owner of it wearing a
+> different hat. `intake` owns the ORDER — fast producers, then the index, then the queue —
+> and owns none of the work. Import direction extends to
+> `config <- ingest <- producers <- search <- intake`.
+>
+> `intake.arrived` never raises. Two of the three callers already wrapped their call in
+> `except Exception: pass` because a write that already succeeded must not be lost to a bad
+> day in the index; that guarantee now lives in one place instead of three.
+
 **2.3** Slow producers through the job lane, and `POST /api/ingest` plus a status the UI can
 show. Gate: a slow producer on a large file does not block the upload response.
+
+> **DONE, 10 September 2026.** Gate met: a producer that blocks until a test releases it is
+> queued rather than waited on, and the upload returns in well under a second with the text
+> indexed. Asserted against a producer that genuinely blocks on an event, not one that
+> sleeps — a sleep makes the test a race against the machine it runs on and passes on a
+> fast one for the wrong reason.
+>
+> - **`ingest.deferred(name)`** — the slow producers still outstanding, asked as a question
+>   rather than remembered from `ingest(only_fast=True)`'s return value, so the caller that
+>   schedules the work need not be the call that skipped it and a file left half-produced by
+>   a restart is still answerable.
+> - **One job kind, `ingest_slow`**, not one per producer. The lane serialises anyway, and a
+>   file with three slow producers outstanding wants one queue entry that finishes when the
+>   document is ready, not three that each look like the whole job.
+> - **`GET /api/ingest`** (the folder sorted into ready / outstanding / failed),
+>   **`GET /api/ingest/{name}`** (is this document ready, and what failed),
+>   **`POST /api/ingest/{name}`** (bring it up to date, returning as soon as the fast
+>   producers are done).
+> - **The upload response gained `outstanding` and `job`.** Without them an uploader has no
+>   way to know the document is unfinished: `searchable` says the text is in and says
+>   nothing about what is still queued behind it. Additive, and `/api/*` is not the frozen
+>   surface — only `/v1` is.
+> - **A full queue is a delay, not a loss.** The manifest still records the producer as
+>   stale so the next ingest picks it up, and the response says so rather than swallowing
+>   it, because "nothing happened and nothing said so" is the failure mode 4.5 exists to
+>   prevent.
+>
+> **Not done live over HTTP.** The gate ran through the real ASGI app and the real job-lane
+> threads under `TestClient`; a uvicorn socket in front of that is not where the risk is,
+> and minting a token in the developer's own control plane to prove it was not worth the
+> side effect.
+>
+> **A test-hygiene finding worth keeping.** The lane is a module-level singleton with one
+> worker, so a producer left blocking by a failed assertion wedges it for the full timeout
+> and fails the NEXT test too. It read as two bugs and was one. The release is in a
+> `finally` now.
 
 **2.4** Rebuild and forget: `derived/` deleted entirely must reconstruct from `data/`, and a
 deleted source file must leave nothing behind. Gate: extend `check_search`, and add

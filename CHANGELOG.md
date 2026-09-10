@@ -49,6 +49,18 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
     of broken documents.
   - Re-runs on a change of source size, mtime or producer version. Deliberately not a
     content hash.
+- **`app/intake.py`** (Steps 2.2 and 2.3), the one place that decides what happens to a file
+  that has just been written: fast producers in the request, then the index, then anything
+  slow to the job lane. Uploads, tool writes and database exports all go through it.
+- **Slow producers run in the job lane** (Step 2.3), so an upload is not held open while a
+  200 page scan is processed. One job kind for all of them, because a file with three slow
+  producers outstanding wants one queue entry that finishes when the document is ready.
+- **`GET /api/ingest`**, **`GET /api/ingest/{name}`** and **`POST /api/ingest/{name}`** —
+  what has been produced from a document, what is outstanding, and a way to ask for the
+  outstanding work without waiting for it. Before this, "is this document ready" had no
+  answer, only a search index row that either existed or did not.
+- **The upload response gained `outstanding` and `job`.** `searchable` says the text is in;
+  it says nothing about producers still queued behind it. Additive — only `/v1` is frozen.
 - **`app/producers.py`** (Step 2.1). Text extraction moved out of `app/search.py` and
   became the pipeline's first producer; `search.index_file` is a consumer of it now, so a
   re-index of an unchanged file no longer re-parses the PDF, and the next thing that wants
