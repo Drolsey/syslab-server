@@ -111,6 +111,97 @@ it. The two things waiting on a person rather than on work are Step 2's five
 decisions and whether `pr/agent-hardening` is pushed and opened as a pull
 request.
 
+## The decoy reproduces in production, on the model that always loses
+
+10 September, reported from the **deployed** website by the owner. Everything on
+record until now came from the local replay rig; this is the first production
+reproduction, and it needed no rig at all — two chats, differing only in their
+first message:
+
+| conversation | result |
+|---|---|
+| opens with "list me top 5 hospitals from report" | the correct hospitals |
+| opens with "hi", then the identical question | invented customer rows |
+
+That is this file's 0/4-against-4/4 finding, reproduced by hand, by a user who
+was not looking for it.
+
+**It is fully explained, and every ingredient was already written down.**
+Production carries none of the fixes — original prompt, original tool
+description, no retry — and `syslab-default` is now wired in through Settings →
+Model provider. The unopposed `OUTPUT_FORMAT` decoy, meeting the model that
+always loses to it. Nothing here is new mechanism; what is new is that the
+combination is *shipped*.
+
+**Why nothing caught it: the Claude pass measured the model, not the
+deployment.** The five traps were run against this same unfixed production and
+passed, so production looked healthy. It was healthy because Claude does the
+work that makes the trap irrelevant, not because the trap was absent. Swapping
+the model swaps that away, and the deployment offers nothing underneath.
+
+**This gates the Step 3 integration.** `syslab-default` must not sit behind the
+deployed site until the retry ships, because the failure is silent: no error, no
+empty state, a result grid carrying a row count and a timing. Nothing on screen
+separates that turn from a real one. And the retry alone is not sufficient — its
+blind spot is the fabrication relocating to ```chart and prose, which is the
+more dangerous form.
+
+**The natural wrong diagnosis, recorded because it cost time.** Two accounts on
+two machines behaved differently, and the difference read as an access problem —
+same token, same database, one works. It was neither. The gateway token
+authenticates to the inference plane and carries no tenant, so a shared token
+predicts nothing about data access; the accounts differed only in what was
+already in their conversations. **Anything that varies per conversation will
+first present as varying per account.**
+
+**The invented rows were the frontend's, not the model's — and that is the
+actual bug.** `components/chat/blocks/sql/mockExecute.ts` in `database-agent`
+was a stub for the result view, and it shipped. Every field in the report
+matches it exactly: columns `["id","name","region","plan","active"]`, ids
+`1000 + i`, first names cycling Amina/Chen/Diego, `REGIONS` and `PLANS` cycling
+on `i % 3`, `active: Math.random() > 0.25` — which is why the same question
+returned 11, then 15, then 13 rows and flipped Hugo from false to true.
+`rowCount = 8 + floor(random() * 8)` is 8..15; `delay = 350 + random() * 500`
+is the 594 ms, 727 ms, 837 ms and 733 ms on screen. `mockExplain` did the same
+for query plans, with invented costs.
+
+So the two mechanisms compose, and only together do they produce what was seen:
+
+| step | what happens |
+|---|---|
+| context poisoned by prose turns | the model emits a ```sql fence instead of calling `run_sql` |
+| the UI renders any fence as an `SQLBlock` | with an Execute button |
+| **Auto-run generated SQL** is on | the block runs itself |
+| `mockExecute` answers | fabricated rows, a row count and a plausible duration |
+
+The model never claimed those rows — it never saw them. The 10, 16 and 36
+output tokens are consistent with a short fence and nothing else, and
+`lib/agent/index.ts` accumulates usage across the whole loop, so those totals
+are the whole turn. **The earlier reading here, that the model fabricated the
+data, was wrong.** It fabricated the *query*; the frontend fabricated the
+answer.
+
+**Fixed 10 September** in `database-agent`. `mockExecute.ts` is deleted and
+replaced by `sql/execute.ts`, which posts to the real `POST /api/v1/queries`
+against the conversation's own connection. A failure now renders as a failure,
+truncation is stated rather than implied, no connection says so instead of
+inventing rows, and Explain runs a real `EXPLAIN` (allowed by
+`lib/connectors/sql-guard.ts`). `tsc`, `eslint` and 227 tests pass.
+
+**Making a mock real turns free calls into expensive ones, and that is its own
+bug.** Auto-run fired for every ```sql block in a conversation on mount, and
+six times for a single block (remount, StrictMode's double-invoke, and
+`connectionId` settling from `""`). Against a browser generator none of that
+cost anything. Against the customer's database, reopening a chat with twenty
+blocks is twenty queries at once, past the 60/minute limit — which is exactly
+the error the owner hit while testing. Auto-run is now limited to the newest
+message and guarded against repeats. **Whenever a stub is replaced by the real
+thing, count the calls: the call count was free to be wrong, and now is not.**
+
+The `tool_choice` retry is still worth shipping — it stops the model reaching for
+the fence in the first place — but it is no longer what stands between a user
+and fabricated data.
+
 ## Claude passes every trap, and one of the fixes was worse than the bug
 
 9 September, end of day. The five tests were run against the **deployed**
@@ -809,6 +900,13 @@ the short version:
    network. Everything on this side is ready. The website change is a secret
    value (base URL, gateway token, Access service-token pair), not a container
    change.
+
+   **Caveat added 10 September:** completing the conversation is no longer
+   sufficient evidence. `syslab-default` behind the deployed site fabricates
+   rows without calling a tool, and the UI renders that as a result grid — so
+   the gate passes on the screen while nothing has run. Gate it on the query
+   log instead, and treat the `tool_choice` retry as a prerequisite rather
+   than a follow-up.
 2. **Stand the tunnel up.** `docs/runbook.md` § Publishing it. Cloudflare Zero
    Trust, then `COMPOSE_PROFILES=public` and the token in `.env`, then Access
    with a service token in front, and only then `PUBLIC_MODE=true` and
