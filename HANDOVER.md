@@ -923,10 +923,11 @@ the short version:
    that stops the per-request model bill.
 
    **2.1 is next and it is the delicate one**: move the existing text
-   extraction behind the pipeline, changing no behaviour. **It is blocked on a
-   number, not on code.** Its gate is "`check_search` unchanged at 9 of 9" and
-   this file records it reporting **8 of 8**, unexplained and predating the
-   plan. Settle which is right first, or the gate cannot fail.
+   extraction behind the pipeline, changing no behaviour. It was blocked on the
+   `check_search` 8-against-9 discrepancy; that was settled the same day — one
+   of the nine checks is conditional, both numbers are honest, and the gate is
+   the named checks with `--rebuild`, never the total. See the entry below.
+   **Nothing blocks 2.1 now.**
 
 ## Step 2 is signed off, and the pipeline exists before its first producer
 
