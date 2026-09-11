@@ -616,6 +616,14 @@ def main() -> None:
         print("  Or set:   APP_HOST=127.0.0.1\n")
         raise SystemExit(2)
 
+    # A token that could not be parsed authenticates nobody, which is the right
+    # direction to fail, but silently means an operator sees 401s and nothing
+    # explaining them. config drops malformed entries rather than raising at
+    # import, because a config typo that stops the process leaves no server to
+    # read the error from -- so it is said here instead.
+    for problem in config.RETRIEVAL_TOKEN_PROBLEMS:
+        print(f"  RETRIEVAL_TOKENS: ignoring an entry -- {problem}")
+
     print(f"syslab-server: model {LLM_MODEL}, files under {DATA_ROOT}")
     if APP_HOST in LOOPBACK:
         print("Listening on this machine only. Phase 06 opens it to your tailnet.")

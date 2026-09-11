@@ -288,4 +288,9 @@ def test_config_and_tenancy_agree_on_what_a_system_name_is():
     ("", {}),
 ])
 def test_retrieval_tokens_parse_fails_closed(raw, expected):
-    assert config._retrieval_tokens(raw) == expected
+    tokens, problems = config._retrieval_tokens(raw)
+    assert tokens == expected
+    # Dropped, but never silently: main() prints these at startup, because a
+    # token that fails to parse authenticates nobody and an operator who is
+    # not told sees only unexplained 401s.
+    assert bool(problems) is (raw.strip() != "" and tokens == {})

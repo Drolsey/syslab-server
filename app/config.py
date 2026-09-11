@@ -202,8 +202,8 @@ MIN_TOKEN_LENGTH = 16
 
 
 # --- the retrieval plane (Step 4.0) ---
-def _retrieval_tokens(raw: str) -> dict[str, str]:
-    """Parse `system:token,system:token` into {token: external system}.
+def _retrieval_tokens(raw: str) -> tuple[dict[str, str], list[str]]:
+    """Parse `system:token,...` into ({token: external system}, what was dropped).
 
     THE SYSTEM COMES FROM THE TOKEN, NEVER FROM A HEADER, and that is the whole
     reason this is a mapping rather than the flat set GATEWAY_TOKENS is. A
@@ -215,8 +215,13 @@ def _retrieval_tokens(raw: str) -> dict[str, str]:
     Malformed entries are dropped rather than raised on, because this runs at
     import time and a config typo that stops the process leaves an operator
     with a server that will not start and no plane to read the error from. A
-    dropped token fails closed -- it authenticates nobody -- and
-    RETRIEVAL_TOKEN_PROBLEMS carries the count so a startup check can say so.
+    dropped token fails closed -- it authenticates nobody -- and the second
+    half of the return is what app/main.py prints at startup, so failing
+    closed is not the same as failing silently.
+
+    Both halves are RETURNED rather than one of them being left on the
+    function, so that calling this twice cannot leave the module's constants
+    describing different parses.
     """
     tokens: dict[str, str] = {}
     problems: list[str] = []
@@ -236,8 +241,7 @@ def _retrieval_tokens(raw: str) -> dict[str, str]:
             problems.append(f"the token for {system!r} is shorter than {MIN_TOKEN_LENGTH}")
             continue
         tokens[token] = system
-    _retrieval_tokens.problems = problems  # type: ignore[attr-defined]
-    return tokens
+    return tokens, problems
 
 
 # Kept in step with tenancy.VALID_EXTERNAL_SYSTEM, which cannot be imported
@@ -245,8 +249,8 @@ def _retrieval_tokens(raw: str) -> dict[str, str]:
 # a short lower-case label and a test asserts the two agree.
 _VALID_SYSTEM = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
-RETRIEVAL_TOKENS = _retrieval_tokens(_env("RETRIEVAL_TOKENS", ""))
-RETRIEVAL_TOKEN_PROBLEMS: list[str] = getattr(_retrieval_tokens, "problems", [])
+RETRIEVAL_TOKENS, RETRIEVAL_TOKEN_PROBLEMS = _retrieval_tokens(
+    _env("RETRIEVAL_TOKENS", ""))
 
 
 def token_is_configured() -> bool:
