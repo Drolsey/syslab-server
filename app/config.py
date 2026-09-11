@@ -6,7 +6,9 @@ copy of the folder rather than a hunt through the code for hardcoded drive lette
 
 from __future__ import annotations
 
+import hmac
 import os
+import re
 from pathlib import Path, PurePosixPath
 
 from app.context import current_tenant
@@ -199,9 +201,75 @@ WEAK_TOKENS = {"", "change-me", "changeme", "password", "token", "secret"}
 MIN_TOKEN_LENGTH = 16
 
 
+# --- the retrieval plane (Step 4.0) ---
+def _retrieval_tokens(raw: str) -> dict[str, str]:
+    """Parse `system:token,system:token` into {token: external system}.
+
+    THE SYSTEM COMES FROM THE TOKEN, NEVER FROM A HEADER, and that is the whole
+    reason this is a mapping rather than the flat set GATEWAY_TOKENS is. A
+    foreign id is only meaningful inside one system's id space: if a caller
+    could name its own system, one system's token would resolve ids in
+    another's namespace, and the separation the tenant_alias primary key exists
+    to provide would be worth nothing.
+
+    Malformed entries are dropped rather than raised on, because this runs at
+    import time and a config typo that stops the process leaves an operator
+    with a server that will not start and no plane to read the error from. A
+    dropped token fails closed -- it authenticates nobody -- and
+    RETRIEVAL_TOKEN_PROBLEMS carries the count so a startup check can say so.
+    """
+    tokens: dict[str, str] = {}
+    problems: list[str] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        system, separator, token = entry.partition(":")
+        system, token = system.strip(), token.strip()
+        if not separator or not system or not token:
+            problems.append(f"{entry[:12]!r} is not system:token")
+            continue
+        if not _VALID_SYSTEM.match(system):
+            problems.append(f"{system!r} is not a usable system name")
+            continue
+        if len(token) < MIN_TOKEN_LENGTH:
+            problems.append(f"the token for {system!r} is shorter than {MIN_TOKEN_LENGTH}")
+            continue
+        tokens[token] = system
+    _retrieval_tokens.problems = problems  # type: ignore[attr-defined]
+    return tokens
+
+
+# Kept in step with tenancy.VALID_EXTERNAL_SYSTEM, which cannot be imported
+# here: tenancy imports config, so the arrow only points one way. The shape is
+# a short lower-case label and a test asserts the two agree.
+_VALID_SYSTEM = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+RETRIEVAL_TOKENS = _retrieval_tokens(_env("RETRIEVAL_TOKENS", ""))
+RETRIEVAL_TOKEN_PROBLEMS: list[str] = getattr(_retrieval_tokens, "problems", [])
+
+
 def token_is_configured() -> bool:
     token = (APP_TOKEN or "").strip()
     return token.lower() not in WEAK_TOKENS and len(token) >= MIN_TOKEN_LENGTH
+
+
+def tokens_equal(candidate: object, known: str) -> bool:
+    """Constant-time token comparison that its own input cannot crash.
+
+    hmac.compare_digest RAISES TypeError on a str holding any non-ASCII
+    character, so `Authorization: Bearer unicode-yes-really` turned what should
+    be a 401 into a 500 on every plane that compared a token -- an
+    unauthenticated caller reaching a traceback by sending one accented letter.
+
+    Comparing the UTF-8 bytes keeps the constant-time property, which is the
+    only reason compare_digest is here at all, and makes a malformed token
+    simply a wrong one. Every plane compares through this and none of them
+    calls compare_digest on a str directly.
+    """
+    if not isinstance(candidate, str) or not isinstance(known, str) or not known:
+        return False
+    return hmac.compare_digest(candidate.encode("utf-8"), known.encode("utf-8"))
 
 
 class UnsafePathError(ValueError):

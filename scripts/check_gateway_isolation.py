@@ -37,6 +37,13 @@ FORBIDDEN = [
     (r"^\s*from\s+app\s+import\s+.*\bingest\b", "imports app.ingest"),
     (r"^\s*from\s+app\s+import\s+.*\bproducers\b", "imports app.producers"),
     (r"^\s*from\s+app\s+import\s+.*\bintake\b", "imports app.intake"),
+    # Step 4.0 added the retrieval plane, which is this one's opposite: it
+    # cannot do anything WITHOUT a tenant, so importing it would hand the
+    # inference plane a ready-made way to get one. Named here the moment it
+    # existed, rather than after a third gate is caught trusting a stale list.
+    (r"^\s*from\s+app\s+import\s+.*\bplane\b", "imports app.plane"),
+    (r"^\s*from\s+app\.plane\s+import", "imports from app.plane"),
+    (r"\bresolve_alias\s*\(", "calls resolve_alias()"),
     (r"^\s*from\s+app\.ingest\s+import", "imports from app.ingest"),
     (r"^\s*from\s+app\.intake\s+import", "imports from app.intake"),
     (r"^\s*from\s+app\.context\s+import", "imports from app.context"),

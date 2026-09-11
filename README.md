@@ -75,7 +75,7 @@ plan document, sub-steps and gate:
 | 1 | The ownership boundary: every byte has an owner | Complete, `scripts/check_isolation.py` is its gate |
 | 3 | The model gateway: serve `/v1` from our own hardware | Built. Its gate belongs to the website — see below |
 | 2 | The ingestion contract | **Complete**, 10 Sep. `scripts/check_ingest.py` is its gate |
-| 4 | The retrieval plane: which parts of a document bear on this question | **Planned**, not started. `docs/plans/step-04-retrieval-plane.md`, awaiting sign-off on its six decisions |
+| 4 | The retrieval plane: which parts of a document bear on this question | **In progress.** Signed off 11 Sep; 4.0 (the tenant bridge) is built and gated. `docs/plans/step-04-retrieval-plane.md` |
 
 Step 3 comes before Step 2 on purpose: that is the plan's own dependency order, and Step 3
 is the one that stops the per-request model bill. Its gate is the website's own provider

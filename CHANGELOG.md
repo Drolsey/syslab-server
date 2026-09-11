@@ -18,6 +18,30 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 ## [Unreleased]
 
 ### Fixed
+- **`tenancy.new_id()` was generating tenant ids the rest of the application refuses,
+  about one in four.** The id alphabet holds eight digits and the first character was
+  drawn from all 31, while `context.VALID_TENANT_ID` requires an id to start with a letter
+  — deliberately, so that an id can never look like a number, a flag or a dotfile. So
+  roughly a quarter of generated tenants were stored happily by `create_tenant` and then
+  refused by `context.set_tenant` on their first request, **permanently and with a 500**.
+  Measured before the fix: 50 of 200. Nothing had noticed because every tenant that exists
+  was created with an explicit id, and Step 4's retrieval plane is the first thing that
+  would have created one without.
+  - **The deeper fault was where the check lived.** `create_tenant` validated an id a
+    caller chose and skipped the one it generated itself, so the single id in the system
+    nobody checked was the one the system made. It validates both now. A generator is not
+    more trustworthy than a caller; it is only closer to home.
+  - Found by `tenancy.resolve_alias`, which validates the local id on the way out as
+    defence against a hand-edited control plane, and started returning `None` for a tenant
+    that was plainly there.
+- **A bearer token holding one non-ASCII character was a 500, not a 401**, on both the
+  inference plane and the local plane. `hmac.compare_digest` **raises** `TypeError` on a
+  `str` with non-ASCII in it, so `Authorization: Bearer ünicode` reached a traceback from a
+  caller who had not authenticated — and header values are bytes on the wire, latin-1
+  decoded by Starlette, so it is something a real client can send even though httpx will
+  not build one from a `str`. Every plane now compares through `config.tokens_equal`, which
+  compares the UTF-8 bytes: the constant-time property is kept, and a malformed token is
+  simply a wrong one.
 - **`scripts/check_isolation.py` was writing into this install's own `derived/` folder**
   while its docstring promised it never touches anything of yours. It redirects the data,
   index and control roots into a temporary directory; Step 2 added a fourth it had never
@@ -45,6 +69,40 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Exact now.
 
 ### Added
+- **The tenant bridge** (`app/plane.py`, `tenant_alias`), Step 4.0. A foreign tenant id
+  becomes one of ours through an explicit table and nothing else — no regex over another
+  system's primary key, no hash of it, no "sanitise it and hope". The rule it exists to
+  keep is the sharpest one in the project: **a foreign id must never become a filesystem
+  path.** It reaches exactly one function, `tenancy.resolve_alias`, as a bound lookup key;
+  it never reaches `validate_tenant_id`; and what reaches `context.set_tenant` is the local
+  id that came back out of the control plane.
+  - **An unlinked id is 404, never 403**, and so are an id linked to a disabled tenant, an
+    id linked to a tenant since deleted, and an id that could not be an id at all.
+    `../../etc/passwd` is not refused as malformed — it is simply an id nothing linked, and
+    a distinct error for a malformed one would tell a stranger which of their guesses had
+    the right shape.
+  - **The external system comes from the token, never from a header.** `RETRIEVAL_TOKENS`
+    in `.env` is `system:token` pairs rather than the flat list `GATEWAY_TOKENS` is,
+    because a foreign id only means anything inside one system's namespace: a caller that
+    could name its own system could resolve ids in another's, and the
+    `(external_system, external_id)` key would be decoration.
+  - **On-disk layout, new:** `tenant_alias` in `control/control.sqlite3`. `SCHEMA_VERSION`
+    stays at 1 on purpose — it guards against an older build opening a schema it would
+    misread, and an additive table nothing older references is not that. Bumping it would
+    turn a code rollback into a control plane that refuses to open, and the control plane
+    is the one directory here that cannot be rebuilt.
+  - `scripts/tenant.py alias link|unlink|list`. Nothing in the app writes to the table: a
+    link decides whose documents an id can reach, so it is a deliberate act by a person.
+    Re-pointing a live alias is unlink-then-link rather than an update, for the same reason.
+  - The `/api/v1` router is mounted **with no routes yet**, which is the point of this
+    order. `POST /api/v1/retrieve` arrives in 4.5 onto a router already wired and already
+    authenticated, exactly as Step 2.0 landed its pipeline before its first producer.
+- **`scripts/check_isolation.py` § 7b, the retrieval plane** — 38 checks to 54, and
+  section 9 grew one more. Each was written by breaking the property first, and **two of
+  them were decoration until that run**: one read the `ContextVar` in the wrong thread, so
+  removing the teardown entirely did not move it, and one never sent the spoofed
+  `X-Syslab-System` header it claimed to test. Both are real checks now, and the habit paid
+  for itself in a single afternoon.
 - **The ingestion contract** (`app/ingest.py`), Step 2.0. One place that decides what runs
   when a file enters the system, so that page images, extracted fields and embeddings each
   become a producer in an existing pipeline rather than a fourth reader of the same PDF.
@@ -297,13 +355,10 @@ blocks a conversation; token authentication; the file tools; and the model bench
 
 ### Not yet started
 
-- **Step 4, the retrieval plane.** Designed in full in
-  `docs/plans/step-04-retrieval-plane.md`, awaiting sign-off on its six decisions. It is the
-  first consumer the Step 2 pipeline was built for: a tenant-scoped surface answering which
-  *parts* of a customer's documents bear on a question, with offsets that let the caller
-  check them. Blocked on none of the code and on one missing table — `tenant_alias`, which
-  `docs/architecture.md` §6 designs and nothing has built, and without which nothing on the
-  plane can be tenant-scoped.
+- ~~**Step 4, the retrieval plane.**~~ **Signed off and started, 11 September**, all six
+  decisions as recommended. 4.0, the tenant bridge that blocked it, is built and is above
+  under Added. What is left is 4.1 to 4.6, and 4.1 — a committed synthetic corpus and a
+  hand-written golden set — is the long one.
 - **Per-tenant database credentials.** `tenancy.database_for()` raises for any row it finds
   because no cipher was chosen. The table exists and nothing writes to it. Recorded as
   decision 4.5 in the Step 1 plan.

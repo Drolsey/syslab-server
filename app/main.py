@@ -10,7 +10,6 @@ before there is a check on the door.
 
 from __future__ import annotations
 
-import hmac
 import re
 import time
 import unicodedata
@@ -23,7 +22,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from app import (
-    agent, config, context, gateway, ingest, intake, jobs, search, tenancy, tools,
+    agent, config, context, gateway, ingest, intake, jobs, plane, search, tenancy,
+    tools,
 )
 from app.config import (
     APP_HOST,
@@ -61,6 +61,14 @@ app = FastAPI(
 # of the architecture plan. Mounted here so all three planes share one
 # process, as the plan's architecture diagram has them.
 app.include_router(gateway.router)
+
+# The retrieval plane (Step 4.0). The opposite of the one above it: every route
+# it will carry requires a tenant, resolved from a foreign id through the
+# tenant_alias bridge in app/plane.py. Mounted with NO ROUTES YET on purpose --
+# 4.0 is the bridge, and POST /api/v1/retrieve arrives in 4.5 onto a router
+# that is already wired and already authenticated. Step 2.0 landed its pipeline
+# the same way.
+app.include_router(plane.router)
 
 # Recorded at import so the Phase 05 check can tell a process that started
 # itself at boot from one someone started by hand afterwards.
@@ -121,8 +129,12 @@ def token_is_configured() -> bool:
 
 def token_matches(candidate: str) -> bool:
     """Does this match the operator's own token in .env?"""
-    # compare_digest, not ==, so a wrong guess takes the same time as a right one
-    return token_is_configured() and hmac.compare_digest(candidate, config.APP_TOKEN)
+    # Constant-time, so a wrong guess takes the same time as a right one, and
+    # through config.tokens_equal rather than hmac.compare_digest directly:
+    # compare_digest raises TypeError on a non-ASCII str, so a bearer token
+    # with one accented letter used to reach a 500 from an unauthenticated
+    # caller instead of a 401.
+    return token_is_configured() and config.tokens_equal(candidate, config.APP_TOKEN)
 
 
 def tenant_for_token(candidate: str) -> str | None:

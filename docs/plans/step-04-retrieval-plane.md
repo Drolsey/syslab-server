@@ -1,6 +1,7 @@
 # Step 4: The Retrieval Plane
 
-Status: PLANNED, NOT STARTED. Needs Amro's sign-off on the six decisions in section 4.
+Status: **IN PROGRESS.** Signed off 11 September 2026, all six decisions taken as
+recommended. **4.0 is built and gated**; 4.1 is next and is the long one.
 Written 10 September 2026, after Step 2 completed.
 
 Step 2 built the pipeline that makes derived things out of a tenant's documents and can
@@ -388,11 +389,24 @@ caller ships with it.
 
 ## 6. Step by step
 
-**4.0 The tenant bridge.** `tenant_alias` in the control plane, `tenancy.resolve_alias`,
-and a dependency that sets the tenant from `X-Syslab-Tenant`. Nothing else in this step can
-begin. Gate: an unlinked external id is **404 and not 403**; a foreign id shaped like
-`../../etc` or `Acme Ltd` never reaches `validate_tenant_id` as a path; `check_isolation`
-grows a section reaching the retrieval plane as one tenant and getting nothing of another's.
+**4.0 The tenant bridge. DONE, 11 September 2026.** `tenant_alias` in the control plane,
+`tenancy.resolve_alias`, `app/plane.py` with the dependency and an empty `/api/v1` router,
+`RETRIEVAL_TOKENS` as `system:token` pairs, and `scripts/tenant.py alias link|unlink|list`.
+Gate: `check_isolation` § 7b, **38 → 54 checks**, each written by breaking the property
+first — and two of them were decoration until that run, which is the whole argument for
+the habit. Suite 426 → 471.
+
+One thing the plan did not anticipate and one bug found on the way:
+
+- **The service token had to be decided here**, because a dependency with no credential is
+  a plane anyone can call. `RETRIEVAL_TOKENS` follows the `GATEWAY_TOKENS` precedent but is
+  a *mapping*, so the external system comes from the token and never from a header. The
+  `kind` column on real tokens that `app/config.py` promised to Step 4 is still not built;
+  it is wanted when a service token needs revoking without a restart.
+- **`tenancy.new_id()` was generating ids the rest of the application refuses**, about one
+  in four. See the Fixed entry in `CHANGELOG.md`; it is the bug this sub-step is most glad
+  to have found, because the retrieval plane is the first thing that would have created a
+  tenant without choosing its id by hand.
 
 **4.1 The corpus and the golden set.** `tests/fixtures/corpus/` and a committed
 `golden.json`: 25–30 queries, each with the document that answers it and, where it is

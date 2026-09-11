@@ -8,6 +8,9 @@
     py scripts\\tenant.py token new <id> --label "amro laptop"
     py scripts\\tenant.py token list [<id>]
     py scripts\\tenant.py token revoke <fingerprint>
+    py scripts\\tenant.py alias link website 42 <our id>
+    py scripts\\tenant.py alias list [<our id>]
+    py scripts\\tenant.py alias unlink website 42
 
 A token is shown once, at the moment it is created, and never again. The store
 holds only its SHA-256, so there is no command that could print it back to you.
@@ -257,6 +260,49 @@ def cmd_delete(args) -> int:
     return 0
 
 
+def cmd_alias_link(args) -> int:
+    """Point another system's id at one of ours. Step 4.0's operator surface.
+
+    This is the ONLY way an alias is created. Nothing in the app writes to
+    tenant_alias: a link decides which customer's documents a foreign id can
+    reach, and that is a deliberate act by a person, not something a request
+    can do to itself.
+    """
+    link = tenancy.link_alias(args.system, args.external_id, args.id, label=args.label)
+    print(f"\n  {link['external_system']}:{link['external_id']}  ->  {link['tenant_id']}")
+    print("\n  The retrieval plane will now resolve that id to that tenant.")
+    print("  Nothing else changed: no token was issued and no file was touched.\n")
+    return 0
+
+
+def cmd_alias_unlink(args) -> int:
+    removed = tenancy.unlink_alias(args.system, args.external_id)
+    if not removed:
+        print(f"\n  Nothing linked for {args.system}:{args.external_id}.\n")
+        return 1
+    print(f"\n  {args.system}:{args.external_id} unlinked.")
+    print("  That id now answers 404 on the retrieval plane. The tenant, its")
+    print("  documents and its tokens are untouched.\n")
+    return 0
+
+
+def cmd_alias_list(args) -> int:
+    aliases = tenancy.list_aliases(args.id)
+    if not aliases:
+        where = f" for {args.id}" if args.id else ""
+        print(f"\n  No aliases{where}. Link one with:")
+        print("    py scripts\\tenant.py alias link website 42 <our id>\n")
+        return 0
+    print(f"\n  {'system':<14}{'their id':<26}{'our tenant':<14}{'linked (UTC)':<22}label")
+    print("  " + LINE)
+    for alias in aliases:
+        print(f"  {alias['external_system']:<14}{alias['external_id'][:24]:<26}"
+              f"{alias['tenant_id']:<14}{_short(alias['created_at']):<22}"
+              f"{alias['label'] or '-'}")
+    print()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage syslab tenants and their tokens.")
     subs = parser.add_subparsers(dest="command", required=True)
@@ -309,6 +355,26 @@ def build_parser() -> argparse.ArgumentParser:
     p = token_subs.add_parser("revoke", help="revoke one token by fingerprint")
     p.add_argument("fingerprint")
     p.set_defaults(func=cmd_token_revoke)
+
+    alias = subs.add_parser(
+        "alias", help="link another system's tenant id to one of ours")
+    alias_subs = alias.add_subparsers(dest="alias_command", required=True)
+
+    p = alias_subs.add_parser("link", help="point a foreign id at one of our tenants")
+    p.add_argument("system", help="which system the id comes from, e.g. 'website'")
+    p.add_argument("external_id", help="their id for the customer, exactly as they send it")
+    p.add_argument("id", help="our tenant id")
+    p.add_argument("--label", help="a note, e.g. 'acme, migrated 11 Sep'")
+    p.set_defaults(func=cmd_alias_link)
+
+    p = alias_subs.add_parser("unlink", help="remove a link; the tenant is untouched")
+    p.add_argument("system")
+    p.add_argument("external_id")
+    p.set_defaults(func=cmd_alias_unlink)
+
+    p = alias_subs.add_parser("list", help="every link, or one tenant's")
+    p.add_argument("id", nargs="?", default=None)
+    p.set_defaults(func=cmd_alias_list)
 
     return parser
 

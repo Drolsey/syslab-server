@@ -852,8 +852,9 @@ than being re-derived next time.
 The 5090 box is real and serving. `syslab-server` is now three planes in one
 FastAPI process: the **inference plane** at `/v1` (no tenant, its own tokens),
 the **local plane** at `/api/...` (this install's own admin surface), and the
-retrieval plane, which is Step 4, is planned in full as of 10 September, and
-has not had a line of code written for it.
+**retrieval plane** at `/api/v1/...`, which as of 11 September is mounted,
+authenticated and tenant-scoped, and has no routes in it yet — 4.0 built the
+door, and 4.5 puts something behind it.
 
 Gated 9 September: **pytest 381 passed, 1 skipped**, `check_gateway_isolation`
 pass, `check_api_compat` pass, `check_remote` 13 of 16 with the public-surface
@@ -928,12 +929,17 @@ the short version:
    1 skipped, and `scripts/check_ingest.py` is the step's own gate.
 
    **What it unblocks is Step 4**, the retrieval plane, which is the consumer
-   this pipeline was designed for. ~~It still has no plan document.~~
-   **`docs/plans/step-04-retrieval-plane.md`, written 10 September, awaiting
-   sign-off on its six decisions** — the section below has what it decided and
-   the one thing it found blocking. Step 5 (embeddings) and Step 6 (speech)
-   still have no plan — and both now fit in VRAM again after the 14B swap, so
-   the constraint recorded in `docs/models.md` is stale.
+   this pipeline was designed for. **Signed off 11 September, all six decisions
+   as recommended, and 4.0 is built** — see the two sections below. Step 5
+   (embeddings) and Step 6 (speech) still have no plan, and both now fit in VRAM
+   again after the 14B swap, so the constraint recorded in `docs/models.md` is
+   stale.
+
+   **Next here is 4.1**, the committed synthetic corpus and the hand-written
+   golden set, measured against today's document-level keyword retrieval
+   **before** the chunker exists. The plan warns it is the longest sub-step and
+   the one that feels least like progress, and it is the one that decides
+   whether anything after it can be believed.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
@@ -987,6 +993,72 @@ list is that list in order, so Step 4 ships RRF that provably does nothing and
 Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
+
+## 4.0: the bridge is built, and it found a one-in-four bug on the way
+
+11 September. Step 4 is **signed off, all six decisions as recommended**, and 4.0
+is done. `check_isolation` **38 → 54 checks**, suite **426 → 471 passed**, 1
+skipped.
+
+What exists now: `tenant_alias` in the control plane; `tenancy.resolve_alias`
+beside `resolve_token` and fail-closed in the same way; `app/plane.py` holding
+the dependency and an `/api/v1` router **with no routes in it**; and
+`scripts/tenant.py alias link|unlink|list`, which is the only thing that writes
+to the table.
+
+**Two decisions the plan left open and this sub-step had to take.**
+
+- **A service token had to be decided here**, because a dependency with no
+  credential is a plane anyone can call. `RETRIEVAL_TOKENS` in `.env`, following
+  the `GATEWAY_TOKENS` precedent — but as a **mapping**, `system:token`, so the
+  external system comes from the token and never from a header. That is not
+  tidiness: a foreign id only means anything inside one system's namespace, so a
+  caller able to name its own system could resolve ids in another's, and the
+  `(system, id)` key would be decoration. The `kind` column on real tokens that
+  `app/config.py` promised to Step 4 is still not built; it is wanted the day a
+  service token needs revoking without a restart.
+- **`SCHEMA_VERSION` stays at 1** with a new table in the schema. What the number
+  guards is an older build opening a schema it would MISREAD, and an additive
+  table nothing older references is not that — every control plane converges on
+  the next open, in either direction, because the whole schema runs as
+  `CREATE TABLE IF NOT EXISTS`. Bumping it would convert a code rollback into a
+  control plane that refuses to open, and that is the one directory here which
+  cannot be rebuilt from anything. Bump it for a column whose meaning changes;
+  not for a table nothing older has heard of.
+
+**The bug, and it is the good kind.** `tenancy.new_id()` was generating tenant
+ids that the rest of the application refuses — **50 of 200, measured**. The id
+alphabet holds eight digits and the first character was drawn from all 31, while
+`context.VALID_TENANT_ID` requires an id to start with a letter. A quarter of
+generated tenants would have been stored by `create_tenant` and then refused by
+`context.set_tenant` on their first request, permanently, with a 500.
+
+It survived because **every tenant that exists was created with an explicit id**
+— `default`, `testtenant`, and the gates' `alpha`/`beta`/`gamma`. The retrieval
+plane is the first thing that would have made one without choosing its id by
+hand. And the deeper fault was where the check lived: `create_tenant` validated
+an id a caller chose and skipped the one it generated itself, so the single id
+in the system nobody checked was the one the system made. **A generator is not
+more trustworthy than a caller; it is only closer to home.**
+
+**A second, smaller one.** `hmac.compare_digest` raises `TypeError` on a `str`
+holding non-ASCII, so `Authorization: Bearer ünicode` was a **500 from a caller
+who had not authenticated**, on the inference plane and the local plane both.
+Header values are bytes on the wire and Starlette decodes them latin-1, so it is
+something a real client can send — httpx simply will not build one from a `str`,
+which is why no test had. All three planes compare through `config.tokens_equal`
+now, on the UTF-8 bytes.
+
+**And the thing most worth keeping from today.** "Write a check by breaking the
+thing first" is in `docs/architecture.md` § 9 and it earned its place again:
+**two of the fourteen new checks were decoration**, and the break-it run is what
+said so. One read the `ContextVar` in the gate's own thread after a TestClient
+call — but the dependency runs in the client's task, whose context copy dies with
+the request either way, so deleting the teardown entirely did not move it. The
+other never sent the spoofed `X-Syslab-System` header it claimed to test, so a
+plane that trusted such a header would have passed. Both are real now; the
+teardown one drives the async generator by hand so it runs in a context where a
+missing reset is visible.
 
 ## Step 2 is complete, and 2.5 found the gate leaking into this install
 
@@ -1413,8 +1485,9 @@ views, not client data.
 
 ## Run these to confirm the state
 
-    py -m pytest -q
+    py -m pytest -q                           # 471 passed, 1 skipped
     py scripts/check_api_compat.py
     py scripts/check_gateway_isolation.py
+    py scripts/check_isolation.py             # 54 passed, 1 not tested on Windows
     py scripts/check_agent.py                 # needs the model up
     py scripts/check_remote.py

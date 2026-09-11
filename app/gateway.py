@@ -22,7 +22,6 @@ never has to change when the served model does (Section 13).
 
 from __future__ import annotations
 
-import hmac
 import json
 import time
 from collections import defaultdict
@@ -33,7 +32,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from app import llm
-from app.config import GATEWAY_RATE_LIMIT_PER_MINUTE, GATEWAY_TOKENS, MODEL_ALIASES
+from app.config import (GATEWAY_RATE_LIMIT_PER_MINUTE, GATEWAY_TOKENS,
+                        MODEL_ALIASES, tokens_equal)
 
 router = APIRouter()
 
@@ -78,10 +78,13 @@ def require_gateway_token(request: Request) -> str:
         )
     header = request.headers.get("authorization", "")
     candidate = header[7:].strip() if header.lower().startswith("bearer ") else ""
-    # compare_digest against every configured token, not ==, so a wrong guess
-    # takes the same time as a right one and no early return leaks which
-    # token index it was compared against.
-    if not candidate or not any(hmac.compare_digest(candidate, t) for t in GATEWAY_TOKENS):
+    # Constant-time against every configured token, not ==, so a wrong guess
+    # takes the same time as a right one and no early return leaks which token
+    # index it was compared against. Through config.tokens_equal rather than
+    # hmac.compare_digest directly: compare_digest RAISES on a str holding
+    # non-ASCII, so one accented letter in a bearer token used to reach a 500
+    # from a caller who had not authenticated. Found in Step 4.0.
+    if not candidate or not any(tokens_equal(candidate, t) for t in GATEWAY_TOKENS):
         raise HTTPException(401, "Invalid or missing bearer token.")
     _enforce_rate_limit(candidate)
     return candidate

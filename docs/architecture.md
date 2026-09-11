@@ -129,12 +129,14 @@ These are real and they shape the plan. None is a bug.
 
 ## 5. Target: three planes
 
-PLANNED. One FastAPI process, three groups of endpoints separated by what they may touch.
+One FastAPI process, three groups of endpoints separated by what they may touch. All three
+are mounted as of 11 September; the retrieval plane's own endpoints are the part still to
+come, and the table marks which.
 
 | Plane | Endpoints | Tenant | May touch tenant storage |
 |---|---|---|---|
 | **Inference** | `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/audio/*` | none | **No, enforced by a source check** |
-| **Retrieval** | `/api/v1/retrieve`, `/api/v1/documents`, `/api/v1/ingest/{name}` | required | Yes |
+| **Retrieval** | mounted and authenticated (Step 4.0); `/api/v1/retrieve` is Step 4.5, `/api/v1/documents` and `/api/v1/ingest/{name}` Step 4.6 | required, resolved through `tenant_alias` | Yes |
 | **Local** | the existing `/api/*` and `app/agent.py` | required | Yes, unchanged |
 
 The inference plane being unable to reach tenant storage is what bounds the damage from a
@@ -179,13 +181,28 @@ worker, and why `agent.py` submits parallel tool calls through `contextvars.copy
 
 ### The tenant id collision
 
-PLANNED, and important. The website's tenant is a database id from its own schema.
+**BUILT, Step 4.0, 11 September 2026.** The website's tenant is a database id from its own
+schema.
 `context.py` requires `^[a-z][a-z0-9_-]{0,31}$` **and that value becomes a directory name.**
 
 **A foreign id must never become a filesystem path.** The bridge is an explicit
 `tenant_alias` table mapping (external system, external id) to a local tenant id generated
 here. An unlinked id is a **404, not a 403**, because "that tenant exists but is not yours"
 confirms an id someone guessed. The job lane already sets this precedent.
+
+`app/plane.py` is where that rule is kept, and it is kept by the foreign id reaching exactly
+one function — `tenancy.resolve_alias`, as a bound lookup key. It never reaches
+`validate_tenant_id`, and what reaches `context.set_tenant` is the local id that came back
+out of the control plane. `../../etc/passwd` is not rejected as malformed; it is an id
+nothing linked, and it gets the same 404 as `12345`, because a distinct error for a
+malformed id tells a stranger which of their guesses had the right shape.
+
+**The system comes from the token, never from a header.** `RETRIEVAL_TOKENS` in `.env` is
+`system:token` pairs rather than the flat list `GATEWAY_TOKENS` is, because ids only mean
+anything inside one system's namespace: a caller that could name its own system could
+resolve ids in another's, and the `(external_system, external_id)` key would be decoration.
+`scripts/check_isolation.py` § 7b asserts all of this, each check written by breaking the
+property first.
 
 ---
 
