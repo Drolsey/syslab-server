@@ -112,9 +112,41 @@ not any step of the build.
 | Kokoro-82M | Apache-2.0 | Yes | unverified — **verify before Step 6**, it is the default |
 | Silero VAD | MIT | Yes | unverified |
 | sqlite-vec | Apache-2.0 **and** MIT, dual | Yes | unverified — **verify before Step 5**; see the note below |
+| Docling | MIT | Yes | **verified 11 September 2026** — the LICENSE file itself, read by Amro. See the note below |
+| CUAD v1 (test corpus) | CC BY 4.0 | Yes, with attribution | unverified — **verify before 4.1**; it is data, not code, and the note below says why that matters |
 | cloudflared | Apache-2.0 | Yes | unverified |
 | Docker Engine | Apache-2.0 | Yes | unverified |
 | NVIDIA Container Toolkit | Apache-2.0 | Yes | unverified; the driver itself is proprietary but freely redistributable |
+
+**Docling, 11 September 2026. VERIFIED, and this is what verified looks like.** The MIT
+licence text was read from the project's own LICENSE file and pasted in full, by a person.
+That is a primary source under this file's rule, where the fetch-and-summarise reading of
+sqlite-vec below was not, and the difference is the whole reason the rule exists. Adopted as
+the document parser in Step 4.2. **If it retires PyMuPDF, it also retires this project's
+largest licence risk** — see the AGPL entry above — but that has to be demonstrated on the
+same documents, not assumed.
+
+**One thing the MIT licence does not cover, and it is not a quibble.** Docling *downloads
+models* at runtime — layout, table structure, and an OCR engine. **Those carry their own
+terms and are not covered by the library's MIT.** The library being clear is necessary and
+not sufficient. Before 4.2 ships, the models Docling actually pulls on this box must be
+listed and their terms read, the same way this row was. An OCR engine is the one most likely
+to surprise: some are GPL.
+
+**CUAD v1, 11 September 2026, and it is DATA rather than a dependency.** Proposed in 4.1 as
+the test corpus: 510 real commercial contracts as PDF *and* text, with 13,000+ expert
+annotations across 41 clause categories. The Atticus Project states CC BY 4.0, explicitly
+for commercial and non-commercial use — **but that reading came through a search result,
+which this file excludes exactly as it excluded sqlite-vec's.** So the row says `unverified`
+and the same one minute of somebody opening the licence clears it.
+
+Two things to settle at the same time, because data has questions code does not:
+
+- **CC BY 4.0 requires attribution.** If any part of this corpus is committed to the
+  repository, the attribution goes with it, in the corpus folder and not only here.
+- **The Atticus Project makes no representation about the underlying contracts**, which are
+  public filings from EDGAR. That is fine for a test corpus and is worth knowing before
+  anything from it is shown to a customer as an example.
 
 **sqlite-vec, 10 September 2026.** Its repository front page states dual Apache-2.0 / MIT.
 That reading came through a fetch-and-summarise tool, which **this file's own rule excludes

@@ -319,6 +319,21 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 - **Tailscale's free plan is non-commercial.** The client is BSD-3-Clause, but the plan terms
   restrict it. Tailscale stays for operator access and will not be the production request
   path.
+- **Docling is MIT, and this row is VERIFIED** — 11 September 2026, the LICENSE file itself,
+  read and pasted in full by a person. That is a primary source under `docs/licences.md`'s
+  rule, where the fetch-and-summarise reading of sqlite-vec was not, and it is what the rule
+  looks like when it works. Adopted as the document parser in Step 4.2. **It may also retire
+  PyMuPDF and with it the AGPL-3.0 entry at the top of this list** — the largest licence risk
+  in the project — but that has to be demonstrated on the same documents, not assumed.
+  - **The MIT does not cover the models Docling downloads at runtime** — layout, table
+    structure, OCR — and those carry their own terms. The library being clear is necessary
+    and not sufficient. 4.2 has a gate for listing them and reading each. An OCR engine is
+    the one most likely to be GPL.
+- **CUAD v1 is stated CC BY 4.0 and the row says `unverified` anyway**, for the same reason
+  sqlite-vec's does: the reading came through a search result. It is the test corpus proposed
+  in 4.1 — 510 real commercial contracts with 13,000+ lawyer annotations. Somebody opens the
+  licence before a single PDF is committed. Attribution travels with the corpus folder, not
+  only with this file.
 - **sqlite-vec reads as dual Apache-2.0 / MIT, and the row stays `unverified` anyway.** Its
   repository front page states both licences, but that reading arrived through a
   fetch-and-summarise tool, which is exactly what `docs/licences.md` refuses as a primary

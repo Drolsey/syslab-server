@@ -999,6 +999,56 @@ Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
 
+## Step 4: signed off, and the corpus decision got better under challenge
+
+11 September, same day as the rewrite below. **All seven decisions signed off**, 5.1 to 5.6
+as recommended, and **5.7 amended — the amendment is the best thing that happened to this
+plan.**
+
+The recommendation was to hand-build a 40–60 document corpus and write 25–30 questions with
+their answers, and it called that the longest sub-step, the one that would "feel least like
+progress". The challenge back was: *"Can we download a small dataset that has this rather
+than building it? Surely there has to be something."*
+
+There is: **CUAD v1**, the Contract Understanding Atticus Dataset. 510 real commercial
+contracts from public EDGAR filings, as **PDF and text**, with **13,000+ annotations by
+lawyers across 41 clause categories**. Stated CC BY 4.0, commercial use permitted.
+
+It is better than what would have been built, not merely faster, and one row is the reason:
+**the clause labels give an aggregate question a countable true answer.** "How many of these
+contracts carry an exclusivity clause" can be checked against the labels. Decision 5.6 says a
+question about *all* of something must not be silently answered from eight passages — and
+proving that needs a question whose real answer is known. Hand-writing one means hand-writing
+the answer too, by the same person who knows how the retriever works. CUAD supplies both
+halves, and lawyers wrote them.
+
+Three caveats, recorded rather than smoothed over:
+
+- **CUAD is an extraction benchmark, not a retrieval one.** Its questions name their own
+  contract, which makes retrieval trivial. 4.1 has to *construct* retrieval queries from the
+  annotated spans — transcription with ground truth attached, rather than invention.
+- **It is legal contracts, not the client's asset-removal records.** The corpus proves the
+  machinery and the metrics. Only the client's own documents prove the fit, and those cannot
+  live in this repository.
+- **510 is too many and PDFs are not small.** 40–60 committed, under ~25 MB, attribution in
+  the folder. Committed rather than fetched, because a gate that needs the network is a gate
+  that stops running on a laptop.
+
+**Effect: 4.1 stops being the longest sub-step. 4.2 becomes it**, because Docling changes
+what the ingestion pipeline reads. Step 4 goes from six-to-eight sessions to **five to
+seven**.
+
+**And the licence rule worked in both directions on the same day.** Docling's MIT is now
+**verified** — the LICENSE file read and pasted in full by a person, which is a primary
+source, unlike the summarised reading that left sqlite-vec unverified. CUAD's CC BY 4.0 came
+through a search result and therefore **stays unverified**, exactly like sqlite-vec's, and
+blocks committing a PDF until somebody opens it. One rule, applied to a row we wanted to be
+true and a row we equally wanted to be true.
+
+**One thing the MIT does not buy, and 4.2 gates it:** Docling **downloads models at runtime**
+— layout, table structure, OCR — and those carry their own terms. The library being clear is
+necessary and not sufficient. An OCR engine is the likeliest GPL surprise.
+
 ## Step 4 was rewritten the day it was signed off, and the reason is worth keeping
 
 11 September, hours after 4.0 landed. The plan was written against the wrong

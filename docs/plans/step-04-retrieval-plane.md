@@ -1,8 +1,9 @@
 # Step 4: The Retrieval Plane, and the Seams Everything Else Plugs Into
 
 Status: **IN PROGRESS.** 4.0 is built and gated. **Rewritten 11 September 2026**, after the
-requirements turned out to be wider than the first draft assumed. Needs sign-off on the
-seven decisions in section 5.
+requirements turned out to be wider than the first draft assumed. **All seven decisions
+signed off the same day**, 5.1 to 5.6 as recommended and 5.7 amended by Amro — see below,
+because the amendment is the best thing that happened to this plan.
 
 4.0 stands unchanged and is done — the tenant bridge is needed under every version of this.
 Everything from 4.1 onward is new.
@@ -134,10 +135,19 @@ needing Path B never gets silently answered from Path A** — decision 5.6.
 | **b. Passages with a citation** | **Recommended.** `{source, chunk_id, text, offsets, score}` — quotable, showable, checkable |
 | c. An answer | Crosses the boundary rule. Needs the conversation, which is not here |
 
-**Recommendation: (b).** And the part that separates a citation from a decoration: **the
-offsets point into the source's extracted text, not into the chunk.** "Characters 4,096–4,608
-of `contract.pdf`" can be verified by anyone holding the file. A chunk that knows only its
-own index cannot.
+**Recommendation: (b). SIGNED OFF**, with an instruction attached: *"just tell the customer
+the information he needs only."*
+
+That is a constraint on the response, not a comment on it, and it shows up in three places:
+`k` defaults low rather than high, `budget_tokens` is respected rather than advisory, and a
+passage is returned at chunk size rather than padded with its neighbours. **Returning more
+than was asked for is not generosity here** — it is spending the caller's 12,171-token
+conversation budget on their behalf, and it is how a retrieval plane starts crowding out the
+conversation it exists to serve.
+
+And the part that separates a citation from a decoration: **the offsets point into the
+source's extracted text, not into the chunk.** "Characters 4,096–4,608 of `contract.pdf`" can
+be verified by anyone holding the file. A chunk that knows only its own index cannot.
 
 ### 5.2 Where does format-agnostic parsing come from? *(new)*
 
@@ -150,10 +160,16 @@ The requirement is explicit: many formats, media included, and no hardcoded list
 | b. Write one abstraction over several parsers ourselves | Rebuilding a solved problem. Nobody should hand-write an `.odt` parser |
 | **c. Adopt a document-parsing library behind ONE producer** | **Recommended.** Formats become a property of the library, not of our code |
 
-**Recommendation: (c).** Candidates are **Docling** and **`unstructured`**; both cover PDF,
-Office formats, HTML, images and OCR behind one call. **Neither licence is verified**, and
-under this project's own rule in `docs/licences.md` a licence read through a summary is not
-verified — that must be cleared before either is adopted, the same as `sqlite-vec`.
+**Recommendation: (c) with Docling. SIGNED OFF, and the licence is VERIFIED** — MIT, read
+from the project's own LICENSE file by Amro on 11 September 2026 and pasted in full. That is
+a primary source under `docs/licences.md`'s rule, unlike the fetch-and-summarise reading that
+left `sqlite-vec` unverified. The row is green.
+
+**One thing the MIT does not cover, and 4.2 must not skip it.** Docling **downloads models at
+runtime** — layout, table structure, OCR — and *those carry their own terms*. The library
+being clear is necessary and not sufficient. 4.2's gate includes listing the models Docling
+actually pulls on this box and reading their terms the same way. An OCR engine is the one
+most likely to surprise; some are GPL.
 
 Three things follow:
 
@@ -172,13 +188,13 @@ Three things follow:
 | **b. A Step 2 producer** | **Recommended.** Exactly what the producer seam is for |
 | c. Inside `search.py` | The arrangement Step 2 spent five sub-steps ending |
 
-**Recommendation: (b).** `name="chunks"`, consuming the **text artifact** rather than the
+**Recommendation: (b). SIGNED OFF.** `name="chunks"`, consuming the **text artifact** rather than the
 source, so it splits exactly what was indexed and a document is never chunked from bytes the
 index never saw.
 
 ### 5.4 How is a chunk made?
 
-**Recursive character splitting, target 512 tokens, 64 of overlap.** 512 benchmarked best of
+**Recursive character splitting, target 512 tokens, 64 of overlap. SIGNED OFF.** 512 benchmarked best of
 seven strategies over 50 academic papers (Feb 2026) and divides the ~4,000-token retrieval
 budget into **eight passages**. Overlap at 12.5% is at the bottom of the industry range
 deliberately — the evidence for it is weak, the cost is small, and a sentence cut in half at
@@ -202,7 +218,7 @@ of the work of adopting it later.
 | b. One wins, the other is a fallback | Loses the case hybrid exists for: half a product code, half a paraphrase |
 | **c. Reciprocal Rank Fusion** | **Recommended.** Throw the scores away, keep the positions |
 
-**Recommendation: (c), k = 60, per-retriever weight defaulting to 1.0.**
+**Recommendation: (c), k = 60, per-retriever weight defaulting to 1.0. SIGNED OFF.**
 
 ```
 score(chunk) = Σ  weight[retriever] / (60 + rank[retriever][chunk])
@@ -228,7 +244,7 @@ The failure in section 4 is not hypothetical and it is not detectable by the cal
 | c. Classify the question with a model call | Another model call, another thing to be wrong, and it needs the conversation |
 | **d. Make the two paths separate tools, and make the passage path declare its own coverage** | **Recommended** |
 
-**Recommendation: (d), in two halves.**
+**Recommendation: (d). SIGNED OFF, in two halves.**
 
 - **Separate tools.** Path B is `run_sql` against an extracted fact table — a tool the model
   already has, returning exact rows. Path A is `retrieve`, returning passages. The model
@@ -245,29 +261,83 @@ one nobody can. Properly routing aggregate questions is its own step, named in s
 
 ### 5.7 What corpus is any of this measured against?
 
-**The decision with the least interesting content and the most consequence.** The bootstrap
-tenant holds **11 documents, 1,768 characters, about 505 tokens** — re-measured 11 September,
-and every one of them is a fixture written by a gate script. A retrieval plane gated against
-that proves nothing and would pass while being useless.
+**The decision with the least interesting content and the most consequence — and the one
+Amro amended, correctly.** The recommendation was to hand-build 40–60 documents and 25–30
+queries. The amendment: *"Can we download a small dataset that has this rather than building
+it? Surely there has to be something."*
+
+There is, and it is better than what would have been built by hand.
+
+The problem stands: the bootstrap tenant holds **11 documents, 1,768 characters, about 505
+tokens** — re-measured 11 September, every one a fixture written by a gate script. A
+retrieval plane gated against that proves nothing and would pass while being useless.
 
 | Option | Verdict |
 |---|---|
 | a. The client's real documents | A customer's. Not in the repository, and a gate that cannot run on a laptop stops being run |
 | b. Generate a corpus with the model | Reproducible only if the model is pinned, and the model is under test in half these checks |
-| **c. A committed synthetic corpus with a hand-written golden set** | **Recommended** |
+| c. Hand-build 40–60 documents and a golden set | What the first draft said. Slow, and the hand-written questions would be written by the same person who knows how the retriever works |
+| **d. Adopt CUAD v1, subsampled, and derive the golden set from its labels** | **Recommended, and SIGNED OFF** |
 
-**Recommendation: (c), and it is sub-step 4.1 rather than an afterthought.** 40–60 documents
-**across several formats now, not only PDF** — the format seam has to be exercised by the
-corpus that grades it — plus 25–30 queries whose correct document is written down. It must
-hold the four things that break retrieval:
+**Recommendation: (d). CUAD v1 — the Contract Understanding Atticus Dataset.** 510 real
+commercial contracts, drawn from public EDGAR filings, with **13,000+ annotations by lawyers
+across 41 clause categories**. Stated CC BY 4.0, commercial use permitted.
 
-- **Near-duplicates**, so precision means something
-- **Rare exact strings** — reference numbers, part codes, surnames — which keyword wins
-- **Paraphrase targets**, which will **fail** in this step and are written now anyway, because
-  that is how the vector retriever's benefit gets measured rather than asserted
-- **At least one aggregate question**, which Path A must be seen to answer *incompletely*
+Why it beats what 4.1 was going to build, point by point against the requirements the first
+draft set for itself:
 
-Metrics: **Recall@k and MRR**, both standard, both computable without a judge model.
+| What the corpus must hold | CUAD gives it |
+|---|---|
+| Real documents, not fixtures | **510 PDFs of genuine commercial contracts**, plus a TXT of each |
+| Several formats | PDF and TXT of every contract, plus 28 Excel files of labels — the parsing seam gets exercised by the thing that grades it |
+| Near-duplicates, so precision means something | Commercial contracts of the same type share boilerplate heavily. This is free and realistic |
+| Rare exact strings | Party names, dates, dollar amounts, section numbers, throughout |
+| A golden set | **Expert-annotated spans**, not questions invented by the person who built the retriever |
+| **Ground truth for an aggregate question** | **The 41 clause categories across 510 contracts.** "How many of these contracts have an exclusivity clause" has a *known, countable* answer. This is the Path B test case with real ground truth, and it is the thing I did not expect to get |
+
+That last row is the reason this is a better decision and not merely a faster one. Decision
+5.6 says a question about all of something must not be silently answered from eight passages.
+**Proving that requires a question whose true answer is known.** Hand-writing one means
+hand-writing the answer too. CUAD's labels supply both.
+
+**Three honest caveats, none fatal.**
+
+- **CUAD is an extraction benchmark, not a retrieval one.** Its questions are per-contract
+  ("highlight the parts related to exclusivity in *this* contract"), so used as-is they name
+  the document and make retrieval trivial. **4.1 must construct retrieval queries from the
+  annotated spans** — take a clause, ask a question it answers, and the correct result is
+  that contract and that span. That is real work, but it is *transcription with ground truth
+  attached* rather than invention.
+- **It is legal contracts, not the client's asset-removal records.** Retrieval quality on
+  contracts is not a promise about quality on their data. The corpus proves the *machinery*
+  and the *metrics*; only the client's own documents prove the fit, and those cannot live
+  here.
+- **510 is too many and the PDFs are not small.** 4.1 commits a **subsample of 40–60**, kept
+  under roughly 25 MB, with the CC BY 4.0 attribution in the corpus folder. Committed rather
+  than downloaded on demand, because a gate that needs the network is a gate that stops
+  running on a laptop — the same reasoning that keeps every other fixture in the repository.
+
+**Still hand-made, and deliberately: a small format pack.** CUAD is PDF, TXT and XLSX. The
+format seam in 5.2 claims more than that, so 4.1 adds perhaps five files — a `.docx`, a
+`.pptx`, an `.html`, a scanned image, and one deliberately corrupt file — to prove the parser
+handles them *and* fails honestly on the last one. Five files is an afternoon, against the
+forty the first draft asked for.
+
+**Paraphrase queries are still written by hand**, perhaps eight of them, and still expected
+to **fail** in this step. They are how Step 5's benefit gets measured rather than asserted. A
+golden set the current system passes completely cannot show an improvement.
+
+**The licence is not yet verified and that blocks nothing yet.** CC BY 4.0 is what the
+Atticus Project states, but that reading came through a search result, which
+`docs/licences.md` excludes exactly as it excluded sqlite-vec's. Somebody opens the licence
+before 4.1 commits a single PDF. The row is recorded.
+
+Metrics unchanged: **Recall@k and MRR**, both standard, both computable without a judge model.
+
+**Effect on effort: 4.1 stops being the longest sub-step.** The first draft called it the one
+that "will take longest and feel least like progress". Adopting CUAD removes the document
+authoring entirely and replaces question invention with question construction against
+existing labels. Section 11 is revised down.
 
 ---
 
@@ -437,16 +507,40 @@ each written by breaking the property first — two were decoration until that r
 426 → 471. Found and fixed two pre-existing bugs: `new_id()` generating ids the application
 refuses one time in four, and a non-ASCII bearer token being a 500 rather than a 401.
 
-**4.1 The corpus and the golden set.** `tests/fixtures/corpus/` across several formats, and a
-committed `golden.json`. Plus `scripts/check_retrieval.py` reporting Recall@k and MRR.
+**4.1 The corpus and the golden set.** A **40–60 contract subsample of CUAD v1** under
+`tests/fixtures/corpus/`, under ~25 MB, with its CC BY 4.0 attribution beside it and its
+licence verified first. A hand-made **format pack** of about five files — `.docx`, `.pptx`,
+`.html`, a scanned image, and one deliberately corrupt file. A `golden.json` built by
+**constructing retrieval queries from CUAD's annotated spans** (the dataset's own questions
+name their contract, which would make retrieval trivial), plus about eight hand-written
+paraphrase queries expected to fail. And **at least one aggregate question whose true answer
+is countable from the clause labels.** Plus `scripts/check_retrieval.py` reporting Recall@k
+and MRR.
+
 Gate: it runs, and **it reports today's document-level keyword numbers before any of this
-step's code exists.** A baseline measured after the change is not a baseline.
+step's code exists.** A baseline measured after the change is not a baseline. The aggregate
+question is recorded as **answered incompletely**, which is the number decision 5.6 exists to
+make visible and Step 9 exists to fix.
 
 **4.2 The parser and the source seam.** The `Source` protocol with `files` behind it, moved
-and not rewritten; the parsing library adopted behind `text` version 2, licence verified
-first. Gate: `check_ingest` grows a formats section; the corpus from 4.1 ingests in every
-format it holds; `git diff` on the consumers stays empty for the `files` move; a version bump
-re-derives everything.
+and not rewritten; **Docling** adopted behind `text` version 2.
+
+Gate: `check_ingest` grows a formats section; **every file in 4.1's corpus and format pack
+ingests, and the corrupt one fails honestly rather than silently producing empty text** — the
+distinction Step 2 paid for, where a missing parser and an unreadable file were told apart;
+`git diff` on the consumers stays empty for the `files` move; a version bump re-derives
+everything.
+
+**And one gate that is not about code: the models Docling downloads are listed and their
+terms read.** The library is MIT and verified; the layout, table-structure and OCR models it
+pulls at runtime are not covered by that, and an OCR engine is the one most likely to be GPL.
+`docs/licences.md` gets a row for each.
+
+**Watch for, and record either way: does this retire PyMuPDF?** If Docling reads every format
+the project needs, the AGPL-3.0 dependency that `docs/licences.md` calls the largest licence
+risk here can go. That is a real prize and it is *not* a reason to declare it true — it has to
+be demonstrated on the same documents, `check_search` and `check_tools` unchanged, the way
+that file already specifies for a pypdfium2 swap.
 
 **4.3 The chunk producer.** `producers.CHUNKS`, writing `chunks.json`. Gate: offsets resolve
 back to the real text; a version bump re-chunks; deleting `derived/` and rebuilding gives
@@ -512,8 +606,10 @@ genuinely concurrent writers. Both are recorded in `HANDOVER.md`; neither has a 
 | Risk | Mitigation |
 |---|---|
 | **An aggregate question is answered from 8 passages and looks right** | The sharpest risk in the project. Decision 5.6 makes it visible via `coverage`; Step 8 makes it answerable. **It is not fully solved by this step and must not be described as if it were** |
-| The golden set is written to make the current system look good | 4.1 writes it **before** the chunker, and includes paraphrase and aggregate queries known to fail today |
-| The parsing library's licence is not what a summary said | `docs/licences.md`'s own rule: verified means someone opened the licence file. Cleared in 4.2 *before* adoption |
+| The golden set is written to make the current system look good | Largely removed by 5.7: the labels are **lawyers' annotations**, not questions invented by whoever built the retriever. What remains hand-made — the paraphrase queries — is written **before** the chunker and expected to fail |
+| CUAD's licence is not what a search result said | Same rule as everything else: somebody opens it before a single PDF is committed. Recorded in `docs/licences.md` as unverified until then |
+| **Docling's MIT does not cover the models it downloads** | The library is verified; the runtime models are not. A 4.2 gate lists them and reads their terms. An OCR engine is the likely surprise |
+| Retrieval measures well on contracts and badly on the client's actual documents | Stated in 5.7 rather than hidden. The corpus proves the machinery and the metrics; only the client's own documents prove the fit, and they cannot live here |
 | Adopting a library means adopting its dependency tree | It goes behind one producer with our interface on both sides. If it has to be replaced, the blast radius is one file and a version bump |
 | Chunk-level retrieval is worse than document-level for some queries | Expected. 4.4's gate records both rather than asserting an improvement |
 | The chunker is not deterministic | Gated in 4.3 explicitly, because every citation depends on it |
@@ -523,13 +619,18 @@ genuinely concurrent writers. Both are recorded in `HANDOVER.md`; neither has a 
 
 ## 11. Effort
 
-**Six to eight sessions for Step 4 as written**, against four to five for the narrower first
-draft. The additions are 4.2 (the source and parser seam) and 4.7 (the role registry), plus
-`coverage` in 4.6.
+**Five to seven sessions for Step 4 as signed off.** The narrow first draft said four to
+five; the seams added 4.2 and 4.7 and `coverage` in 4.6, taking it to six to eight; **the
+5.7 amendment took roughly a session back off.**
 
-**4.1 is still the one that will take longest and feel least like progress**, and it is still
-the one that decides whether anything after it can be believed — more so now, because it has
-to cover several formats and include questions this step is expected to answer badly.
+**4.1 is no longer the longest sub-step, and that is entirely down to adopting CUAD.** The
+first draft had it authoring 40–60 documents and inventing 25–30 questions with their
+answers. What is left is subsampling a dataset, five hand-made format files, and
+*constructing* queries against annotations that already exist. It is still the sub-step that
+decides whether anything after it can be believed — it just no longer costs the most.
+
+**The longest is now 4.2**, because Docling changes what the ingestion pipeline reads and the
+licence work on its runtime models has to happen before it ships.
 
 The wider programme in section 9 is realistically **20–30 sessions**. That is the honest
 number for what has been described, and the reason for doing it as seams: each of those steps
