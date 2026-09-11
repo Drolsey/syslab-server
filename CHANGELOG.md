@@ -297,10 +297,13 @@ blocks a conversation; token authentication; the file tools; and the model bench
 
 ### Not yet started
 
-- **Step 2, the ingestion contract.** Designed in full in
-  `docs/plans/step-02-ingestion-contract.md`, awaiting sign-off on its five decisions. It is
-  the prerequisite for embeddings, vision and anything else that wants something out of a
-  document.
+- **Step 4, the retrieval plane.** Designed in full in
+  `docs/plans/step-04-retrieval-plane.md`, awaiting sign-off on its six decisions. It is the
+  first consumer the Step 2 pipeline was built for: a tenant-scoped surface answering which
+  *parts* of a customer's documents bear on a question, with offsets that let the caller
+  check them. Blocked on none of the code and on one missing table — `tenant_alias`, which
+  `docs/architecture.md` §6 designs and nothing has built, and without which nothing on the
+  plane can be tenant-scoped.
 - **Per-tenant database credentials.** `tenancy.database_for()` raises for any row it finds
   because no cipher was chosen. The table exists and nothing writes to it. Recorded as
   decision 4.5 in the Step 1 plan.

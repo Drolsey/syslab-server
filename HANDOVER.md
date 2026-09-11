@@ -852,7 +852,8 @@ than being re-derived next time.
 The 5090 box is real and serving. `syslab-server` is now three planes in one
 FastAPI process: the **inference plane** at `/v1` (no tenant, its own tokens),
 the **local plane** at `/api/...` (this install's own admin surface), and the
-retrieval plane, which is Step 4 and does not exist yet.
+retrieval plane, which is Step 4, is planned in full as of 10 September, and
+has not had a line of code written for it.
 
 Gated 9 September: **pytest 381 passed, 1 skipped**, `check_gateway_isolation`
 pass, `check_api_compat` pass, `check_remote` 13 of 16 with the public-surface
@@ -927,11 +928,65 @@ the short version:
    1 skipped, and `scripts/check_ingest.py` is the step's own gate.
 
    **What it unblocks is Step 4**, the retrieval plane, which is the consumer
-   this pipeline was designed for and which still has no plan document. Step 5
-   (embeddings) and Step 6 (speech) also have none — and both now fit in VRAM
-   again after the 14B swap, so the constraint recorded in `docs/models.md` is
-   stale. Writing the Step 4 plan to the standard of 0-3 is the natural next
-   piece of work here.
+   this pipeline was designed for. ~~It still has no plan document.~~
+   **`docs/plans/step-04-retrieval-plane.md`, written 10 September, awaiting
+   sign-off on its six decisions** — the section below has what it decided and
+   the one thing it found blocking. Step 5 (embeddings) and Step 6 (speech)
+   still have no plan — and both now fit in VRAM again after the 14B swap, so
+   the constraint recorded in `docs/models.md` is stale.
+
+## Step 4 is planned, and the plan found a prerequisite nobody had built
+
+10 September. `docs/plans/step-04-retrieval-plane.md`, to the standard of 0-3:
+six decisions with what loses, six sub-steps each with its own gate, risks,
+rollback. **PLANNED, NOT STARTED** — it needs sign-off before any of it is
+built.
+
+What it is: a tenant-scoped HTTP surface answering **which parts of this
+customer's documents bear on this question**, returning passages with offsets
+that point into the extracted text, so a caller can check a citation rather
+than trust it. Three endpoints already named in `docs/architecture.md` §5, and
+underneath them a chunk producer that is an ordinary Step 2 producer.
+
+**The one-line shape: retrievers become additive, the way producers did.**
+Keyword search is the first retriever; the vector retriever arrives in Step 5
+as a row in a fusion that already works, not as a second retrieval path.
+
+Three things in it are worth knowing without reading it:
+
+- **The step is blocked on a table that does not exist.** `tenant_alias` is
+  designed in `docs/architecture.md` §6 and marked PLANNED; the control plane
+  holds `tenants`, `tokens`, `users`, `tenant_database` and `meta` and nothing
+  else. The website's tenant is a row id from its own schema, and
+  `context.validate_tenant_id` turns what it is given into a directory name.
+  **Nothing on this plane can be tenant-scoped until the bridge is built**, so
+  it is sub-step 4.0 and nothing else can start. An unlinked id answers **404
+  and not 403**, following `jobs.Lane.get` rather than re-deciding it.
+
+- **Anthropic's "under 200,000 tokens, skip RAG" does not apply here, and the
+  real number is a factor of sixteen lower.** From `docs/models.md` and the
+  9 September tokenizer run: 16,384 window, minus a 4,213-token undroppable
+  floor (system prompt 2,069 + 12 tool schemas ~2,144), leaves **12,171 for the
+  whole conversation**. Retrieval starts paying here at roughly ten thousand
+  tokens of documents — perhaps twenty ordinary PDFs. That is the honest
+  justification for building it at all.
+
+- **Nothing here has ever exercised retrieval at a size where retrieval
+  matters.** The bootstrap tenant is **11 documents, 1,768 characters, about
+  505 tokens**, every one of them a fixture written by a gate script. A
+  retrieval plane gated against that would pass while being useless. So
+  sub-step 4.1 is a committed synthetic corpus and a hand-written golden set,
+  measured **before** the chunker exists — a baseline taken after the change is
+  not a baseline — and it deliberately includes paraphrase queries **known to
+  fail today**, because a golden set the current system passes completely
+  cannot show Step 5 an improvement.
+
+The decision most likely to be argued with is 4.4: **retrievers return ranks,
+not scores**, fused by Reciprocal Rank Fusion at k = 60. Fusing a single ranked
+list is that list in order, so Step 4 ships RRF that provably does nothing and
+Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
+machinery, prove it against known-good behaviour, then move the interesting
+thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
 
 ## Step 2 is complete, and 2.5 found the gate leaking into this install
 
