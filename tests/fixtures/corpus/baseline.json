@@ -1,0 +1,1167 @@
+{
+  "measured": "whole-document FTS5 keyword search (app/search.py), before Step 4.2",
+  "corpus": {
+    "documents": 52,
+    "source": "CUAD v1 (Contract Understanding Atticus Dataset)"
+  },
+  "summary": {
+    "overall": {
+      "queries": 42,
+      "mrr": 0.5758597883597883,
+      "recall@1": 0.4576719576719577,
+      "recall@3": 0.5634920634920635,
+      "recall@5": 0.6111111111111112,
+      "recall@10": 0.6851851851851852
+    },
+    "clause": {
+      "queries": 14,
+      "mrr": 0.2097222222222222,
+      "recall@1": 0.07142857142857142,
+      "recall@3": 0.2857142857142857,
+      "recall@5": 0.35714285714285715,
+      "recall@10": 0.5714285714285714
+    },
+    "exact": {
+      "queries": 20,
+      "mrr": 0.9375,
+      "recall@1": 0.9,
+      "recall@3": 0.95,
+      "recall@5": 1.0,
+      "recall@10": 1.0
+    },
+    "paraphrase": {
+      "queries": 8,
+      "mrr": 0.3125,
+      "recall@1": 0.027777777777777776,
+      "recall@3": 0.08333333333333333,
+      "recall@5": 0.08333333333333333,
+      "recall@10": 0.09722222222222221
+    }
+  },
+  "queries": [
+    {
+      "id": "exact-01",
+      "kind": "exact",
+      "relevant": [
+        "contract_01.pdf"
+      ],
+      "returned": [
+        "contract_01.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-02",
+      "kind": "exact",
+      "relevant": [
+        "contract_02.pdf"
+      ],
+      "returned": [
+        "contract_02.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-03",
+      "kind": "exact",
+      "relevant": [
+        "contract_03.pdf"
+      ],
+      "returned": [
+        "contract_03.pdf",
+        "contract_06.pdf",
+        "contract_38.pdf",
+        "contract_05.pdf",
+        "contract_29.pdf",
+        "contract_22.pdf",
+        "contract_33.pdf",
+        "contract_20.pdf",
+        "contract_21.pdf",
+        "contract_23.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-04",
+      "kind": "exact",
+      "relevant": [
+        "contract_04.pdf"
+      ],
+      "returned": [
+        "contract_13.pdf",
+        "contract_04.pdf",
+        "contract_16.pdf",
+        "contract_17.pdf",
+        "contract_07.pdf",
+        "contract_08.pdf",
+        "contract_10.pdf",
+        "contract_12.pdf",
+        "contract_11.pdf",
+        "contract_09.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 0.5
+    },
+    {
+      "id": "exact-05",
+      "kind": "exact",
+      "relevant": [
+        "contract_07.pdf"
+      ],
+      "returned": [
+        "contract_07.pdf",
+        "contract_06.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-06",
+      "kind": "exact",
+      "relevant": [
+        "contract_08.pdf"
+      ],
+      "returned": [
+        "contract_08.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-07",
+      "kind": "exact",
+      "relevant": [
+        "contract_09.pdf"
+      ],
+      "returned": [
+        "contract_09.pdf",
+        "contract_52.pdf",
+        "contract_36.pdf",
+        "contract_25.pdf",
+        "contract_10.pdf",
+        "contract_37.pdf",
+        "contract_44.pdf",
+        "contract_12.pdf",
+        "contract_22.pdf",
+        "contract_41.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-08",
+      "kind": "exact",
+      "relevant": [
+        "contract_11.pdf"
+      ],
+      "returned": [
+        "contract_11.pdf",
+        "contract_25.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-09",
+      "kind": "exact",
+      "relevant": [
+        "contract_12.pdf"
+      ],
+      "returned": [
+        "contract_12.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-10",
+      "kind": "exact",
+      "relevant": [
+        "contract_13.pdf"
+      ],
+      "returned": [
+        "contract_13.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-11",
+      "kind": "exact",
+      "relevant": [
+        "contract_14.pdf"
+      ],
+      "returned": [
+        "contract_14.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-12",
+      "kind": "exact",
+      "relevant": [
+        "contract_15.pdf"
+      ],
+      "returned": [
+        "contract_15.pdf",
+        "contract_21.pdf",
+        "contract_26.pdf",
+        "contract_25.pdf",
+        "contract_42.pdf",
+        "contract_44.pdf",
+        "contract_24.pdf",
+        "contract_22.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-13",
+      "kind": "exact",
+      "relevant": [
+        "contract_16.pdf"
+      ],
+      "returned": [
+        "contract_16.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-14",
+      "kind": "exact",
+      "relevant": [
+        "contract_17.pdf"
+      ],
+      "returned": [
+        "contract_17.pdf",
+        "contract_35.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-15",
+      "kind": "exact",
+      "relevant": [
+        "contract_18.pdf"
+      ],
+      "returned": [
+        "contract_18.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-16",
+      "kind": "exact",
+      "relevant": [
+        "contract_19.pdf"
+      ],
+      "returned": [
+        "contract_19.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-17",
+      "kind": "exact",
+      "relevant": [
+        "contract_20.pdf"
+      ],
+      "returned": [
+        "contract_20.pdf",
+        "contract_41.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-18",
+      "kind": "exact",
+      "relevant": [
+        "contract_21.pdf"
+      ],
+      "returned": [
+        "contract_23.pdf",
+        "contract_22.pdf",
+        "contract_26.pdf",
+        "contract_21.pdf",
+        "contract_25.pdf",
+        "contract_24.pdf",
+        "contract_47.pdf",
+        "contract_30.pdf",
+        "contract_20.pdf",
+        "contract_32.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 0.25
+    },
+    {
+      "id": "exact-19",
+      "kind": "exact",
+      "relevant": [
+        "contract_22.pdf"
+      ],
+      "returned": [
+        "contract_22.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "exact-20",
+      "kind": "exact",
+      "relevant": [
+        "contract_23.pdf"
+      ],
+      "returned": [
+        "contract_23.pdf",
+        "contract_42.pdf",
+        "contract_01.pdf",
+        "contract_04.pdf",
+        "contract_02.pdf",
+        "contract_03.pdf",
+        "contract_46.pdf",
+        "contract_09.pdf",
+        "contract_47.pdf",
+        "contract_11.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "clause-01",
+      "kind": "clause",
+      "relevant": [
+        "contract_01.pdf"
+      ],
+      "returned": [
+        "contract_52.pdf",
+        "contract_50.pdf",
+        "contract_02.pdf",
+        "contract_45.pdf",
+        "contract_28.pdf",
+        "contract_10.pdf",
+        "contract_40.pdf",
+        "contract_49.pdf",
+        "contract_21.pdf",
+        "contract_27.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "clause-02",
+      "kind": "clause",
+      "relevant": [
+        "contract_02.pdf"
+      ],
+      "returned": [
+        "contract_01.pdf",
+        "contract_02.pdf",
+        "contract_46.pdf",
+        "contract_03.pdf",
+        "contract_34.pdf",
+        "contract_07.pdf",
+        "contract_47.pdf",
+        "contract_38.pdf",
+        "contract_26.pdf",
+        "contract_22.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 0.5
+    },
+    {
+      "id": "clause-03",
+      "kind": "clause",
+      "relevant": [
+        "contract_03.pdf"
+      ],
+      "returned": [
+        "contract_45.pdf",
+        "contract_42.pdf",
+        "contract_48.pdf",
+        "contract_52.pdf",
+        "contract_12.pdf",
+        "contract_47.pdf",
+        "contract_51.pdf",
+        "contract_43.pdf",
+        "contract_36.pdf",
+        "contract_17.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "clause-04",
+      "kind": "clause",
+      "relevant": [
+        "contract_04.pdf"
+      ],
+      "returned": [
+        "contract_04.pdf",
+        "contract_26.pdf",
+        "contract_33.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "clause-05",
+      "kind": "clause",
+      "relevant": [
+        "contract_05.pdf"
+      ],
+      "returned": [
+        "contract_43.pdf",
+        "contract_05.pdf",
+        "contract_31.pdf",
+        "contract_04.pdf",
+        "contract_15.pdf",
+        "contract_38.pdf",
+        "contract_06.pdf",
+        "contract_08.pdf",
+        "contract_02.pdf",
+        "contract_01.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 0.5
+    },
+    {
+      "id": "clause-06",
+      "kind": "clause",
+      "relevant": [
+        "contract_06.pdf"
+      ],
+      "returned": [
+        "contract_43.pdf",
+        "contract_42.pdf",
+        "contract_20.pdf",
+        "contract_09.pdf",
+        "contract_06.pdf",
+        "contract_05.pdf",
+        "contract_03.pdf",
+        "contract_29.pdf",
+        "contract_33.pdf",
+        "contract_12.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 0.2
+    },
+    {
+      "id": "clause-07",
+      "kind": "clause",
+      "relevant": [
+        "contract_07.pdf"
+      ],
+      "returned": [
+        "contract_46.pdf",
+        "contract_04.pdf",
+        "contract_08.pdf",
+        "contract_28.pdf",
+        "contract_29.pdf",
+        "contract_52.pdf",
+        "contract_15.pdf",
+        "contract_21.pdf",
+        "contract_23.pdf",
+        "contract_22.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "clause-08",
+      "kind": "clause",
+      "relevant": [
+        "contract_08.pdf"
+      ],
+      "returned": [
+        "contract_52.pdf",
+        "contract_42.pdf",
+        "contract_47.pdf",
+        "contract_48.pdf",
+        "contract_45.pdf",
+        "contract_06.pdf",
+        "contract_05.pdf",
+        "contract_49.pdf",
+        "contract_50.pdf",
+        "contract_04.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "clause-09",
+      "kind": "clause",
+      "relevant": [
+        "contract_09.pdf"
+      ],
+      "returned": [
+        "contract_45.pdf",
+        "contract_42.pdf",
+        "contract_19.pdf",
+        "contract_17.pdf",
+        "contract_12.pdf",
+        "contract_37.pdf",
+        "contract_13.pdf",
+        "contract_43.pdf",
+        "contract_09.pdf",
+        "contract_31.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 1.0
+      },
+      "rr": 0.1111111111111111
+    },
+    {
+      "id": "clause-10",
+      "kind": "clause",
+      "relevant": [
+        "contract_10.pdf"
+      ],
+      "returned": [
+        "contract_27.pdf",
+        "contract_45.pdf",
+        "contract_31.pdf",
+        "contract_42.pdf",
+        "contract_52.pdf",
+        "contract_10.pdf",
+        "contract_12.pdf",
+        "contract_38.pdf",
+        "contract_47.pdf",
+        "contract_08.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 1.0
+      },
+      "rr": 0.16666666666666666
+    },
+    {
+      "id": "clause-11",
+      "kind": "clause",
+      "relevant": [
+        "contract_11.pdf"
+      ],
+      "returned": [
+        "contract_10.pdf",
+        "contract_31.pdf",
+        "contract_16.pdf",
+        "contract_43.pdf",
+        "contract_13.pdf",
+        "contract_51.pdf",
+        "contract_17.pdf",
+        "contract_11.pdf",
+        "contract_19.pdf",
+        "contract_41.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 1.0
+      },
+      "rr": 0.125
+    },
+    {
+      "id": "clause-12",
+      "kind": "clause",
+      "relevant": [
+        "contract_12.pdf"
+      ],
+      "returned": [
+        "contract_42.pdf",
+        "contract_48.pdf",
+        "contract_12.pdf",
+        "contract_45.pdf",
+        "contract_43.pdf",
+        "contract_17.pdf",
+        "contract_16.pdf",
+        "contract_52.pdf",
+        "contract_36.pdf",
+        "contract_47.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "rr": 0.3333333333333333
+    },
+    {
+      "id": "clause-13",
+      "kind": "clause",
+      "relevant": [
+        "contract_13.pdf"
+      ],
+      "returned": [
+        "contract_46.pdf",
+        "contract_42.pdf",
+        "contract_35.pdf",
+        "contract_52.pdf",
+        "contract_14.pdf",
+        "contract_19.pdf",
+        "contract_11.pdf",
+        "contract_34.pdf",
+        "contract_06.pdf",
+        "contract_43.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "clause-14",
+      "kind": "clause",
+      "relevant": [
+        "contract_14.pdf"
+      ],
+      "returned": [
+        "contract_22.pdf",
+        "contract_37.pdf",
+        "contract_10.pdf",
+        "contract_36.pdf",
+        "contract_16.pdf",
+        "contract_51.pdf",
+        "contract_52.pdf",
+        "contract_44.pdf",
+        "contract_17.pdf",
+        "contract_08.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "para-01",
+      "kind": "paraphrase",
+      "relevant": [
+        "contract_07.pdf",
+        "contract_08.pdf",
+        "contract_33.pdf",
+        "contract_49.pdf",
+        "contract_52.pdf"
+      ],
+      "returned": [
+        "contract_21.pdf",
+        "contract_36.pdf",
+        "contract_03.pdf",
+        "contract_34.pdf",
+        "contract_25.pdf",
+        "contract_26.pdf",
+        "contract_23.pdf",
+        "contract_41.pdf",
+        "contract_22.pdf",
+        "contract_35.pdf"
+      ],
+      "matched_on": "any term",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "para-02",
+      "kind": "paraphrase",
+      "relevant": [
+        "contract_27.pdf",
+        "contract_28.pdf",
+        "contract_29.pdf",
+        "contract_30.pdf",
+        "contract_34.pdf",
+        "contract_46.pdf",
+        "contract_47.pdf",
+        "contract_51.pdf"
+      ],
+      "returned": [
+        "contract_03.pdf",
+        "contract_25.pdf",
+        "contract_38.pdf",
+        "contract_43.pdf",
+        "contract_16.pdf",
+        "contract_33.pdf",
+        "contract_26.pdf",
+        "contract_37.pdf",
+        "contract_23.pdf",
+        "contract_44.pdf"
+      ],
+      "matched_on": "any term",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "para-03",
+      "kind": "paraphrase",
+      "relevant": [
+        "contract_01.pdf",
+        "contract_18.pdf",
+        "contract_20.pdf",
+        "contract_23.pdf",
+        "contract_24.pdf",
+        "contract_26.pdf",
+        "contract_32.pdf",
+        "contract_33.pdf",
+        "contract_38.pdf"
+      ],
+      "returned": [
+        "contract_23.pdf",
+        "contract_20.pdf",
+        "contract_29.pdf",
+        "contract_15.pdf",
+        "contract_04.pdf",
+        "contract_39.pdf",
+        "contract_14.pdf",
+        "contract_33.pdf",
+        "contract_22.pdf",
+        "contract_21.pdf"
+      ],
+      "matched_on": "any term",
+      "error": null,
+      "recall": {
+        "1": 0.1111111111111111,
+        "3": 0.2222222222222222,
+        "5": 0.2222222222222222,
+        "10": 0.3333333333333333
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "para-04",
+      "kind": "paraphrase",
+      "relevant": [
+        "contract_08.pdf",
+        "contract_21.pdf",
+        "contract_22.pdf",
+        "contract_23.pdf",
+        "contract_26.pdf",
+        "contract_27.pdf",
+        "contract_34.pdf",
+        "contract_47.pdf",
+        "contract_50.pdf"
+      ],
+      "returned": [
+        "contract_22.pdf",
+        "contract_36.pdf",
+        "contract_29.pdf",
+        "contract_13.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.1111111111111111,
+        "3": 0.1111111111111111,
+        "5": 0.1111111111111111,
+        "10": 0.1111111111111111
+      },
+      "rr": 1.0
+    },
+    {
+      "id": "para-05",
+      "kind": "paraphrase",
+      "relevant": [
+        "contract_01.pdf",
+        "contract_03.pdf",
+        "contract_15.pdf",
+        "contract_21.pdf",
+        "contract_22.pdf",
+        "contract_24.pdf",
+        "contract_25.pdf",
+        "contract_26.pdf",
+        "contract_36.pdf",
+        "contract_51.pdf"
+      ],
+      "returned": [
+        "contract_12.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "para-06",
+      "kind": "paraphrase",
+      "relevant": [
+        "contract_07.pdf",
+        "contract_08.pdf",
+        "contract_10.pdf",
+        "contract_12.pdf",
+        "contract_13.pdf",
+        "contract_19.pdf",
+        "contract_22.pdf",
+        "contract_37.pdf",
+        "contract_42.pdf",
+        "contract_51.pdf"
+      ],
+      "returned": [
+        "contract_17.pdf",
+        "contract_21.pdf",
+        "contract_31.pdf",
+        "contract_20.pdf",
+        "contract_38.pdf",
+        "contract_26.pdf",
+        "contract_23.pdf",
+        "contract_24.pdf",
+        "contract_41.pdf",
+        "contract_43.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    },
+    {
+      "id": "para-07",
+      "kind": "paraphrase",
+      "relevant": [
+        "contract_29.pdf",
+        "contract_35.pdf",
+        "contract_37.pdf"
+      ],
+      "returned": [
+        "contract_46.pdf",
+        "contract_29.pdf",
+        "contract_31.pdf",
+        "contract_17.pdf",
+        "contract_41.pdf",
+        "contract_03.pdf",
+        "contract_45.pdf",
+        "contract_10.pdf",
+        "contract_43.pdf",
+        "contract_34.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.3333333333333333,
+        "5": 0.3333333333333333,
+        "10": 0.3333333333333333
+      },
+      "rr": 0.5
+    },
+    {
+      "id": "para-08",
+      "kind": "paraphrase",
+      "relevant": [
+        "contract_27.pdf",
+        "contract_28.pdf"
+      ],
+      "returned": [
+        "contract_35.pdf",
+        "contract_34.pdf",
+        "contract_26.pdf",
+        "contract_42.pdf",
+        "contract_19.pdf"
+      ],
+      "matched_on": "all terms",
+      "error": null,
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "rr": 0.0
+    }
+  ],
+  "aggregates": [
+    {
+      "id": "agg-01",
+      "question": "How many of these contracts contain an exclusivity commitment?",
+      "documents_carrying_it": 41,
+      "of": 52,
+      "a_search_returning_k": {
+        "1": 1,
+        "3": 3,
+        "5": 5,
+        "10": 10
+      },
+      "shortfall_at_8": 33
+    },
+    {
+      "id": "agg-02",
+      "question": "How many of these contracts grant audit rights?",
+      "documents_carrying_it": 47,
+      "of": 52,
+      "a_search_returning_k": {
+        "1": 1,
+        "3": 3,
+        "5": 5,
+        "10": 10
+      },
+      "shortfall_at_8": 39
+    },
+    {
+      "id": "agg-03",
+      "question": "How many of these contracts cap liability?",
+      "documents_carrying_it": 51,
+      "of": 52,
+      "a_search_returning_k": {
+        "1": 1,
+        "3": 3,
+        "5": 5,
+        "10": 10
+      },
+      "shortfall_at_8": 43
+    },
+    {
+      "id": "agg-04",
+      "question": "Which governing law is most common across these contracts, and in how many?",
+      "note": "not a count; no shortfall to compute",
+      "true_answer": {
+        "most_common": "New York",
+        "count": 13,
+        "distinct_values": 18
+      }
+    }
+  ]
+}

@@ -69,6 +69,31 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Exact now.
 
 ### Added
+- **The retrieval corpus, the golden set and a measured baseline**
+  (`tests/fixtures/corpus/`, `scripts/check_retrieval.py`), Step 4.1. 52 real commercial
+  contracts from **CUAD v1** with their reference text, a five-file format pack, **42 queries
+  whose ground truth is verified rather than asserted**, and 4 aggregate questions whose true
+  answers are counted from lawyers' annotations. ~23 MB, committed rather than downloaded,
+  because a gate that needs the network is a gate that stops being run.
+  - **The baseline: overall MRR 0.576**, and the kinds are as far apart as the design
+    predicted — rare strings **0.938**, quoted clauses **0.210**, paraphrases **0.312 MRR but
+    Recall@1 of 0.028**. Taken **before** any of this step's code exists, because a baseline
+    measured after the change is not a baseline.
+  - **`app/search.py` cannot do phrase search, and the baseline is how that surfaced.**
+    `_terms()` quotes each word *individually*, so a 14-word quotation from a contract becomes
+    nine unrelated tokens joined by AND — and every one of them appears in nearly every
+    commercial contract, so the contract the sentence was copied from does not reach the top
+    six. **Quoting a passage you are holding is the most natural thing a user does, and it is
+    what today's retrieval is worst at.** Not fixed here and `app/search.py` was not touched;
+    it is a prediction for 4.4, where the same nine words inside a 512-token chunk should be
+    far more selective.
+  - **MRR is flattered on multi-relevant queries** — 0.312 against a Recall@1 of 0.028 — so
+    for the paraphrase set Recall is the honest metric. Recorded beside the numbers rather
+    than left for someone to rediscover.
+  - `tests/test_corpus.py`, 14 tests: every contract hashed, every single-answer query
+    re-derived from the text rather than trusted, the scanned PDF still has no text layer and
+    the corrupt one still fails to open. The corpus is the ruler for everything measured from
+    4.2 onward, and a ruler nobody checks drifts.
 - **The tenant bridge** (`app/plane.py`, `tenant_alias`), Step 4.0. A foreign tenant id
   becomes one of ours through an explicit table and nothing else — no regex over another
   system's primary key, no hash of it, no "sanitise it and hope". The rule it exists to

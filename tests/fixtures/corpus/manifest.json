@@ -1,0 +1,531 @@
+{
+  "source": "CUAD v1 (Contract Understanding Atticus Dataset)",
+  "curator": "The Atticus Project, Inc.",
+  "licence": "CC BY 4.0",
+  "obtained_from": "https://zenodo.org/records/4595826",
+  "subsampled": "11 September 2026, for syslab-server Step 4.1",
+  "why_neutral_names": "app/search.py indexes the document name alongside its text. A fixture named after its parties would let a party-name query match the filename, which measures the naming rather than the retrieval.",
+  "documents": 52,
+  "contracts": [
+    {
+      "name": "contract_01.pdf",
+      "cuad_filename": "DigitalCinemaDestinationsCorp_20111220_S-1_EX-10.10_7346719_EX-10.10_Affiliate Agreement",
+      "contract_type": "Affiliate_Agreements",
+      "bytes": 217908,
+      "sha256": "bdb7d1532a642920cd915516243718bfbcf6c436248902c58b97c4cc005b317d",
+      "labelled_categories": 21,
+      "reference_text": "contract_01.txt",
+      "reference_chars": 109014
+    },
+    {
+      "name": "contract_02.pdf",
+      "cuad_filename": "TubeMediaCorp_20060310_8-K_EX-10.1_513921_EX-10.1_Affiliate Agreement",
+      "contract_type": "Affiliate_Agreements",
+      "bytes": 275856,
+      "sha256": "8a4eff8f8bcb90448999218e65ee08a5676a60d1df9e0a6f31631c5e1861f3b1",
+      "labelled_categories": 16,
+      "reference_text": "contract_02.txt",
+      "reference_chars": 69973
+    },
+    {
+      "name": "contract_03.pdf",
+      "cuad_filename": "InvendaCorp_20000828_S-1A_EX-10.2_2588206_EX-10.2_Co-Branding Agreement",
+      "contract_type": "Co_Branding",
+      "bytes": 193002,
+      "sha256": "bcaaec57a03879a525971374efdc6474ad0ba1764736367b6cc1da078904e56b",
+      "labelled_categories": 17,
+      "reference_text": "contract_03.txt",
+      "reference_chars": 114759
+    },
+    {
+      "name": "contract_04.pdf",
+      "cuad_filename": "MusclepharmCorp_20170208_10-KA_EX-10.38_9893581_EX-10.38_Co-Branding Agreement",
+      "contract_type": "Co_Branding",
+      "bytes": 275429,
+      "sha256": "2a449f040e6b724bc4de62c5901b78ede23c6df75df91c36a476ee11cb06a38b",
+      "labelled_categories": 16,
+      "reference_text": "contract_04.txt",
+      "reference_chars": 87795
+    },
+    {
+      "name": "contract_05.pdf",
+      "cuad_filename": "NeoformaInc_19991202_S-1A_EX-10.26_5224521_EX-10.26_Co-Branding Agreement",
+      "contract_type": "Co_Branding",
+      "bytes": 176956,
+      "sha256": "72f393359cb96a1a7d5048b026cb4e17aa5e65a47454f407f3652a50d4538383",
+      "labelled_categories": 14,
+      "reference_text": "contract_05.txt",
+      "reference_chars": 98907
+    },
+    {
+      "name": "contract_06.pdf",
+      "cuad_filename": "PaperexchangeComInc_20000322_S-1A_EX-10.4_5202103_EX-10.4_Co-Branding Agreement",
+      "contract_type": "Co_Branding",
+      "bytes": 229986,
+      "sha256": "a36c0e93ad85a759bace823a2a888ec12f36c8fa09b8ab9d27258a7689df0e7f",
+      "labelled_categories": 16,
+      "reference_text": "contract_06.txt",
+      "reference_chars": 92875
+    },
+    {
+      "name": "contract_07.pdf",
+      "cuad_filename": "TomOnlineInc_20060501_20-F_EX-4.46_749700_EX-4.46_Co-Branding Agreement",
+      "contract_type": "Co_Branding",
+      "bytes": 278409,
+      "sha256": "79d7376a8d3961ab2e72632a919735da62e4bdc1d30aaf573ed24479980b7611",
+      "labelled_categories": 16,
+      "reference_text": "contract_07.txt",
+      "reference_chars": 112361
+    },
+    {
+      "name": "contract_08.pdf",
+      "cuad_filename": "BERKELEYLIGHTS,INC_06_26_2020-EX-10.12-COLLABORATION AGREEMENT",
+      "contract_type": "Collaboration",
+      "bytes": 443021,
+      "sha256": "288276e927b2841d09459a337ffb9d107865ec3f040e20864845deb5238addc7",
+      "labelled_categories": 22,
+      "reference_text": "contract_08.txt",
+      "reference_chars": 209067
+    },
+    {
+      "name": "contract_09.pdf",
+      "cuad_filename": "BIOCEPTINC_08_19_2013-EX-10-COLLABORATION AGREEMENT",
+      "contract_type": "Collaboration",
+      "bytes": 201326,
+      "sha256": "f9c8a7c001f0233fc3e2b33cd607d6f9b0f8aee0ada7351576daf350db1a8b87",
+      "labelled_categories": 14,
+      "reference_text": "contract_09.txt",
+      "reference_chars": 79052
+    },
+    {
+      "name": "contract_10.pdf",
+      "cuad_filename": "FIBROGENINC_10_01_2014-EX-10.11-COLLABORATION AGREEMENT",
+      "contract_type": "Collaboration",
+      "bytes": 298633,
+      "sha256": "e4bd78f0b944b611bfdf98b708d4f30468c80930a5d9c29c1335d8c1eda70723",
+      "labelled_categories": 16,
+      "reference_text": "contract_10.txt",
+      "reference_chars": 155655
+    },
+    {
+      "name": "contract_11.pdf",
+      "cuad_filename": "MACROGENICSINC_08_02_2013-EX-10-COLLABORATION AGREEMENT",
+      "contract_type": "Collaboration",
+      "bytes": 266151,
+      "sha256": "cc1844ccd1de23caf9ce14cdcd5886f9e0c67c60111f769864b75f81a324b44a",
+      "labelled_categories": 14,
+      "reference_text": "contract_11.txt",
+      "reference_chars": 163199
+    },
+    {
+      "name": "contract_12.pdf",
+      "cuad_filename": "AimmuneTherapeuticsInc_20200205_8-K_EX-10.3_11967170_EX-10.3_Development Agreement",
+      "contract_type": "Development",
+      "bytes": 418283,
+      "sha256": "c4af82e1da4bc66a56b6a4533286c3e677e8f578eef0ea42c1087df116ae8f6b",
+      "labelled_categories": 19,
+      "reference_text": "contract_12.txt",
+      "reference_chars": 167973
+    },
+    {
+      "name": "contract_13.pdf",
+      "cuad_filename": "Array BioPharma Inc. - LICENSE, DEVELOPMENT AND COMMERCIALIZATION AGREEMENT",
+      "contract_type": "Development",
+      "bytes": 553266,
+      "sha256": "5d339dfdc809ceeab28dc8b3ec17f041365febac0c7f3b715d9bcc75d8a186f7",
+      "labelled_categories": 17,
+      "reference_text": "contract_13.txt",
+      "reference_chars": 272018
+    },
+    {
+      "name": "contract_14.pdf",
+      "cuad_filename": "CoherusBiosciencesInc_20200227_10-K_EX-10.29_12021376_EX-10.29_Development Agreement",
+      "contract_type": "Development",
+      "bytes": 364388,
+      "sha256": "538dd56ae45df2c3bfa7176af8f76f0c561ca83b996bfd00db190d44d31c0d9e",
+      "labelled_categories": 19,
+      "reference_text": "contract_14.txt",
+      "reference_chars": 146058
+    },
+    {
+      "name": "contract_15.pdf",
+      "cuad_filename": "LegacyEducationAllianceInc_20200330_10-K_EX-10.18_12090678_EX-10.18_Development Agreement",
+      "contract_type": "Development",
+      "bytes": 209321,
+      "sha256": "319cd0a660408baa6c43d2fbb1c1f68f7a6f946789d43599575524f1bfc2628f",
+      "labelled_categories": 16,
+      "reference_text": "contract_15.txt",
+      "reference_chars": 46255
+    },
+    {
+      "name": "contract_16.pdf",
+      "cuad_filename": "PhasebioPharmaceuticalsInc_20200330_10-K_EX-10.21_12086810_EX-10.21_Development Agreement",
+      "contract_type": "Development",
+      "bytes": 529547,
+      "sha256": "547717aded05b26b2828f9ca0f2ba2f5972c3e470f401aa1f3ec8ca50115aced",
+      "labelled_categories": 16,
+      "reference_text": "contract_16.txt",
+      "reference_chars": 291873
+    },
+    {
+      "name": "contract_17.pdf",
+      "cuad_filename": "RevolutionMedicinesInc_20200117_S-1_EX-10.1_11948417_EX-10.1_Development Agreement",
+      "contract_type": "Development",
+      "bytes": 500981,
+      "sha256": "c121e4ad5edd67dfc1f829441964529d4ff2bf1f3a2f0402bdcc457bdd1f2768",
+      "labelled_categories": 19,
+      "reference_text": "contract_17.txt",
+      "reference_chars": 266213
+    },
+    {
+      "name": "contract_18.pdf",
+      "cuad_filename": "StaarSurgicalCompany_20180801_10-Q_EX-10.37_11289449_EX-10.37_Distributor Agreement",
+      "contract_type": "Distributor",
+      "bytes": 191632,
+      "sha256": "12750d64058315ed46eece50e6b864b9cdc285278392e7bbae3fd549adf9f2af",
+      "labelled_categories": 14,
+      "reference_text": "contract_18.txt",
+      "reference_chars": 49760
+    },
+    {
+      "name": "contract_19.pdf",
+      "cuad_filename": "ZogenixInc_20190509_10-Q_EX-10.2_11663313_EX-10.2_Distributor Agreement",
+      "contract_type": "Distributor",
+      "bytes": 447391,
+      "sha256": "851e4e747a64d82c3c4ab64afe2c7956fd260b815af7818694d89015f6e0d41e",
+      "labelled_categories": 18,
+      "reference_text": "contract_19.txt",
+      "reference_chars": 175770
+    },
+    {
+      "name": "contract_20.pdf",
+      "cuad_filename": "PapaJohnsInternationalInc_20190617_8-K_EX-10.1_11707365_EX-10.1_Endorsement Agreement",
+      "contract_type": "Endorsement",
+      "bytes": 221663,
+      "sha256": "4236af0547d44a4279125452d0bd29b6fcac69b8d2dff8b23a5e0746d1e0108e",
+      "labelled_categories": 14,
+      "reference_text": "contract_20.txt",
+      "reference_chars": 68204
+    },
+    {
+      "name": "contract_21.pdf",
+      "cuad_filename": "BUFFALOWILDWINGSINC_06_05_1998-EX-10.3-FRANCHISE AGREEMENT",
+      "contract_type": "Franchise",
+      "bytes": 171289,
+      "sha256": "5418839d90e0d2b924e9dbfa71a2a61382527226af7f82469f797c7e9fd1586b",
+      "labelled_categories": 19,
+      "reference_text": "contract_21.txt",
+      "reference_chars": 154495
+    },
+    {
+      "name": "contract_22.pdf",
+      "cuad_filename": "GOOSEHEADINSURANCE,INC_04_02_2018-EX-10.6-Franchise Agreement",
+      "contract_type": "Franchise",
+      "bytes": 654719,
+      "sha256": "578e5bc41ea4a37cdf1d1b3cfb7a1c3265acdb071239157abf228a0bc3121683",
+      "labelled_categories": 21,
+      "reference_text": "contract_22.txt",
+      "reference_chars": 300768
+    },
+    {
+      "name": "contract_23.pdf",
+      "cuad_filename": "JOINTCORP_09_19_2014-EX-10.15-FRANCHISE AGREEMENT",
+      "contract_type": "Franchise",
+      "bytes": 395438,
+      "sha256": "3b51bf5c09286fcf0de1420d302c6730bc79fb70b05309cc9f4c6f76d533d7ce",
+      "labelled_categories": 18,
+      "reference_text": "contract_23.txt",
+      "reference_chars": 167259
+    },
+    {
+      "name": "contract_24.pdf",
+      "cuad_filename": "MRSFIELDSORIGINALCOOKIESINC_01_29_1998-EX-10-FRANCHISE AGREEMENT",
+      "contract_type": "Franchise",
+      "bytes": 240569,
+      "sha256": "b33a2c2de56069ee326fc9df4e0dc48dcc1640c2488c2816c4d73e828dd17cbe",
+      "labelled_categories": 20,
+      "reference_text": "contract_24.txt",
+      "reference_chars": 249359
+    },
+    {
+      "name": "contract_25.pdf",
+      "cuad_filename": "PfHospitalityGroupInc_20150923_10-12G_EX-10.1_9266710_EX-10.1_Franchise Agreement1",
+      "contract_type": "Franchise",
+      "bytes": 373486,
+      "sha256": "74c17bbd0db5536cf09e6eb2826f765954d4e1624f93448245d28e0bc36cc552",
+      "labelled_categories": 18,
+      "reference_text": "contract_25.txt",
+      "reference_chars": 152649
+    },
+    {
+      "name": "contract_26.pdf",
+      "cuad_filename": "SoupmanInc_20150814_8-K_EX-10.1_9230148_EX-10.1_Franchise Agreement1",
+      "contract_type": "Franchise",
+      "bytes": 348836,
+      "sha256": "fabe82ff8946649d5ad789d0ec3028efdcafe1f57e3e503abd0e3067a246dfa0",
+      "labelled_categories": 21,
+      "reference_text": "contract_26.txt",
+      "reference_chars": 144235
+    },
+    {
+      "name": "contract_27.pdf",
+      "cuad_filename": "CHANGEPOINTCORP_03_08_2000-EX-10.6-LICENSE AND HOSTING AGREEMENT",
+      "contract_type": "Hosting",
+      "bytes": 162550,
+      "sha256": "38c558681f151ce76793fef1dd5637b713bbdf9165d28b2b6c475021b9a0b521",
+      "labelled_categories": 17,
+      "reference_text": "contract_27.txt",
+      "reference_chars": 161066
+    },
+    {
+      "name": "contract_28.pdf",
+      "cuad_filename": "CORIOINC_07_20_2000-EX-10.5-LICENSE AND HOSTING AGREEMENT",
+      "contract_type": "Hosting",
+      "bytes": 92765,
+      "sha256": "98c493b6aac332db7301762510c591168a6e7c2f6e2d8aac59ae7d713e4486b6",
+      "labelled_categories": 16,
+      "reference_text": "contract_28.txt",
+      "reference_chars": 62324
+    },
+    {
+      "name": "contract_29.pdf",
+      "cuad_filename": "HEALTHGATEDATACORP_11_24_1999-EX-10.1-HOSTING AND MANAGEMENT AGREEMENT (1)",
+      "contract_type": "Hosting",
+      "bytes": 164793,
+      "sha256": "a55ca7b2dca2d31487beb2e8022a49449a8f637a5e2c5933441e768e80546a80",
+      "labelled_categories": 16,
+      "reference_text": "contract_29.txt",
+      "reference_chars": 148691
+    },
+    {
+      "name": "contract_30.pdf",
+      "cuad_filename": "INKTOMICORP_06_08_1998-EX-10.14-SOFTWARE HOSTING AGREEMENT",
+      "contract_type": "Hosting",
+      "bytes": 102110,
+      "sha256": "6e2b2de9570b3c5700731532238c140a7f6a4ca7706a10f9dd8cf87bfb646203",
+      "labelled_categories": 14,
+      "reference_text": "contract_30.txt",
+      "reference_chars": 70664
+    },
+    {
+      "name": "contract_31.pdf",
+      "cuad_filename": "CytodynInc_20200109_10-Q_EX-10.5_11941634_EX-10.5_License Agreement",
+      "contract_type": "License_Agreements",
+      "bytes": 346013,
+      "sha256": "7338829142b4005fa66bc899505d56e6ce46ab8e5ccde9fa69a5e2a9cfcb1452",
+      "labelled_categories": 17,
+      "reference_text": "contract_31.txt",
+      "reference_chars": 159488
+    },
+    {
+      "name": "contract_32.pdf",
+      "cuad_filename": "GluMobileInc_20070319_S-1A_EX-10.09_436630_EX-10.09_Content License Agreement1",
+      "contract_type": "License_Agreements",
+      "bytes": 327959,
+      "sha256": "fee1c562facd69bcb9d76c614d36fc83bf9d69f8299d6a2bdb83e09789807c93",
+      "labelled_categories": 16,
+      "reference_text": "contract_32.txt",
+      "reference_chars": 112794
+    },
+    {
+      "name": "contract_33.pdf",
+      "cuad_filename": "PlayboyEnterprisesInc_20090220_10-QA_EX-10.2_4091580_EX-10.2_Content License Agreement_ Marketing Agreement_ Sales-Purchase Agreement1",
+      "contract_type": "License_Agreements",
+      "bytes": 583647,
+      "sha256": "48ebf5d163f8412d8cd20bfc9aa39de5ae0ede22dffa0337207b5e1ea30a43a9",
+      "labelled_categories": 19,
+      "reference_text": "contract_33.txt",
+      "reference_chars": 117118
+    },
+    {
+      "name": "contract_34.pdf",
+      "cuad_filename": "CardlyticsInc_20180112_S-1_EX-10.16_11002987_EX-10.16_Maintenance Agreement1",
+      "contract_type": "Maintenance",
+      "bytes": 394482,
+      "sha256": "4765b84564a06932e38726ee204da005bc9c141870ef2138a1957f7ab5891909",
+      "labelled_categories": 17,
+      "reference_text": "contract_34.txt",
+      "reference_chars": 165322
+    },
+    {
+      "name": "contract_35.pdf",
+      "cuad_filename": "KitovPharmaLtd_20190326_20-F_EX-4.15_11584449_EX-4.15_Manufacturing Agreement",
+      "contract_type": "Manufacturing",
+      "bytes": 216322,
+      "sha256": "5850e801153af9b95cc558739ba1aef8d094042edf928163c8bbf5f8f00ef746",
+      "labelled_categories": 14,
+      "reference_text": "contract_35.txt",
+      "reference_chars": 57436
+    },
+    {
+      "name": "contract_36.pdf",
+      "cuad_filename": "Sonos, Inc. - Manufacturing Agreement ",
+      "contract_type": "Manufacturing",
+      "bytes": 289650,
+      "sha256": "9d4722ce576f9a1582f0d95b6aad0e33f3d219dfe66a0a915615361acfb2117b",
+      "labelled_categories": 14,
+      "reference_text": "contract_36.txt",
+      "reference_chars": 109219
+    },
+    {
+      "name": "contract_37.pdf",
+      "cuad_filename": "UpjohnInc_20200121_10-12G_EX-2.6_11948692_EX-2.6_Manufacturing Agreement_ Supply Agreement",
+      "contract_type": "Manufacturing",
+      "bytes": 484132,
+      "sha256": "893909bf198d75e1b608756b10eea3b698b42cc0d5de30d984f0da48e797ecbb",
+      "labelled_categories": 16,
+      "reference_text": "contract_37.txt",
+      "reference_chars": 225094
+    },
+    {
+      "name": "contract_38.pdf",
+      "cuad_filename": "AudibleInc_20001113_10-Q_EX-10.32_2599586_EX-10.32_Co-Branding Agreement_ Marketing Agreement_ Investment Distribution Agreement",
+      "contract_type": "Marketing",
+      "bytes": 215150,
+      "sha256": "2ab89366577641abbe500556af56ee3f81c02ca14f84643fdd7e059613d1ce2b",
+      "labelled_categories": 16,
+      "reference_text": "contract_38.txt",
+      "reference_chars": 77102
+    },
+    {
+      "name": "contract_39.pdf",
+      "cuad_filename": "TodosMedicalLtd_20190328_20-F_EX-4.10_11587157_EX-4.10_Marketing Agreement_ Reseller Agreement",
+      "contract_type": "Marketing",
+      "bytes": 197615,
+      "sha256": "e0e2e96e105138d030e44a2d0d94072264bb166a54ac1f7272fd6cff952bf578",
+      "labelled_categories": 15,
+      "reference_text": "contract_39.txt",
+      "reference_chars": 32321
+    },
+    {
+      "name": "contract_40.pdf",
+      "cuad_filename": "XpresspaGroupInc_20190401_10-K_EX-10.28_11599457_EX-10.28_Marketing Agreement",
+      "contract_type": "Marketing",
+      "bytes": 216432,
+      "sha256": "f58e78e987e71bdb8c3756fa5d0980b04a667bb47ba016c4e5c435e3cd88745d",
+      "labelled_categories": 15,
+      "reference_text": "contract_40.txt",
+      "reference_chars": 52106
+    },
+    {
+      "name": "contract_41.pdf",
+      "cuad_filename": "DovaPharmaceuticalsInc_20181108_10-Q_EX-10.2_11414857_EX-10.2_Promotion Agreement",
+      "contract_type": "Promotion",
+      "bytes": 381686,
+      "sha256": "d54efd8362343a72cedc73f0430bdb2568cc33d46ab7edfab8823ecc81a71bf0",
+      "labelled_categories": 19,
+      "reference_text": "contract_41.txt",
+      "reference_chars": 175580
+    },
+    {
+      "name": "contract_42.pdf",
+      "cuad_filename": "ExactSciencesCorp_20180822_8-K_EX-10.1_11331629_EX-10.1_Promotion Agreement",
+      "contract_type": "Promotion",
+      "bytes": 387154,
+      "sha256": "78dd8c5b0a62eb5e2882313414cda9d77997b369d6bf19bb970d344790a169c7",
+      "labelled_categories": 16,
+      "reference_text": "contract_42.txt",
+      "reference_chars": 159187
+    },
+    {
+      "name": "contract_43.pdf",
+      "cuad_filename": "IMMUNOMEDICSINC_08_07_2019-EX-10.1-PROMOTION AGREEMENT",
+      "contract_type": "Promotion",
+      "bytes": 801907,
+      "sha256": "8b812e3f10ff0e00a5ed297ae4091cab6caf95bc494390f77bda53b272030f53",
+      "labelled_categories": 15,
+      "reference_text": "contract_43.txt",
+      "reference_chars": 154812
+    },
+    {
+      "name": "contract_44.pdf",
+      "cuad_filename": "KINGPHARMACEUTICALSINC_08_09_2006-EX-10.1-PROMOTION AGREEMENT",
+      "contract_type": "Promotion",
+      "bytes": 306155,
+      "sha256": "441259654d79dbb6d805c7b9204abd80757925368d18ebe9d81b1a976e58dc89",
+      "labelled_categories": 14,
+      "reference_text": "contract_44.txt",
+      "reference_chars": 173240
+    },
+    {
+      "name": "contract_45.pdf",
+      "cuad_filename": "SigaTechnologiesInc_20190603_8-K_EX-10.1_11695818_EX-10.1_Promotion Agreement",
+      "contract_type": "Promotion",
+      "bytes": 409969,
+      "sha256": "61faf0deb528449f54b4183562084d6e807ea7beea7f141a9be753d21fa4be4f",
+      "labelled_categories": 15,
+      "reference_text": "contract_45.txt",
+      "reference_chars": 144443
+    },
+    {
+      "name": "contract_46.pdf",
+      "cuad_filename": "DIVERSINETCORP_03_01_2012-EX-4-RESELLER AGREEMENT",
+      "contract_type": "Reseller",
+      "bytes": 152791,
+      "sha256": "675ed4dfbe020b185d8550fd48b653c3ff4067222d5d85fe1522d5928e7e9a5e",
+      "labelled_categories": 14,
+      "reference_text": "contract_46.txt",
+      "reference_chars": 75389
+    },
+    {
+      "name": "contract_47.pdf",
+      "cuad_filename": "EhaveInc_20190515_20-F_EX-4.44_11678816_EX-4.44_License Agreement_ Reseller Agreement",
+      "contract_type": "Reseller",
+      "bytes": 237959,
+      "sha256": "4ccb55a3acf3506841e0e670fb114aaf6573b70d9d67b3d28c75deab83df0b2f",
+      "labelled_categories": 18,
+      "reference_text": "contract_47.txt",
+      "reference_chars": 87070
+    },
+    {
+      "name": "contract_48.pdf",
+      "cuad_filename": "WORLDWIDESTRATEGIESINC_11_02_2005-EX-10-RESELLER AGREEMENT",
+      "contract_type": "Reseller",
+      "bytes": 107633,
+      "sha256": "a509401f251726f012c7fd8f6606a9c32ee7e959258721936ed7aa4d72de9798",
+      "labelled_categories": 17,
+      "reference_text": "contract_48.txt",
+      "reference_chars": 84618
+    },
+    {
+      "name": "contract_49.pdf",
+      "cuad_filename": "AURASYSTEMSINC_06_16_2010-EX-10.25-STRATEGIC ALLIANCE AGREEMENT",
+      "contract_type": "Strategic Alliance",
+      "bytes": 86737,
+      "sha256": "309e83921f5899a2bd05238c05c67b120254b03f360fb5143abcd98e53dbbb14",
+      "labelled_categories": 16,
+      "reference_text": "contract_49.txt",
+      "reference_chars": 45033
+    },
+    {
+      "name": "contract_50.pdf",
+      "cuad_filename": "DUOSTECHNOLOGIESGROUP,INC_04_21_2009-EX-10.1-STRATEGIC ALLIANCE AGREEMENT",
+      "contract_type": "Strategic Alliance",
+      "bytes": 83359,
+      "sha256": "af6accfdda570ccf5d50e1ae02c30aed84cfcf0e1d7750fd4f282467c451ebed",
+      "labelled_categories": 14,
+      "reference_text": "contract_50.txt",
+      "reference_chars": 46298
+    },
+    {
+      "name": "contract_51.pdf",
+      "cuad_filename": "ENERGOUSCORP_03_16_2017-EX-10.24-STRATEGIC ALLIANCE AGREEMENT",
+      "contract_type": "Strategic Alliance",
+      "bytes": 207400,
+      "sha256": "3d9a7bf76d1e9cae275d69df41cf5646d34c775702edc5fb7c1831e6c34d6066",
+      "labelled_categories": 24,
+      "reference_text": "contract_51.txt",
+      "reference_chars": 81926
+    },
+    {
+      "name": "contract_52.pdf",
+      "cuad_filename": "VERICELCORP_08_06_2019-EX-10.10-SUPPLY AGREEMENT",
+      "contract_type": "Supply",
+      "bytes": 272163,
+      "sha256": "020d229861103c9005f5d42d6fe452cfea26b19f09767411769acde1703167df",
+      "labelled_categories": 14,
+      "reference_text": "contract_52.txt",
+      "reference_chars": 102006
+    }
+  ]
+}

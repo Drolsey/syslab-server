@@ -937,14 +937,11 @@ the short version:
    stale.
 
    **The plan was rewritten on 11 September** around seams rather than
-   features — see the section below for why, and for the finding that drove it.
-   **Next here is 4.1**, the committed synthetic corpus and the hand-written
-   golden set, measured against today's document-level keyword retrieval
-   **before** the chunker exists. It now has to span several formats and include
-   at least one aggregate question this step is expected to answer *badly*. The
-   plan warns it is the longest sub-step and the one that feels least like
-   progress, and it is the one that decides whether anything after it can be
-   believed.
+   features, and **4.0 and 4.1 are both done** — see the sections below.
+   **Next here is 4.2**, the parser and source seam: Docling behind
+   `text` version 2, `Source` with `files` moved and not rewritten, and the
+   licence work on the models Docling downloads at runtime, which its own MIT
+   does not cover. It is now the longest sub-step in the step.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
@@ -998,6 +995,77 @@ list is that list in order, so Step 4 ships RRF that provably does nothing and
 Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
+
+## 4.1: there is a baseline now, and it found what retrieval is worst at
+
+11 September. `tests/fixtures/corpus/` holds **52 real commercial contracts**
+from CUAD v1 with their reference text, a five-file format pack, **42 queries
+with verified ground truth** and 4 aggregate questions counted from lawyers'
+annotations. ~23 MB, committed rather than fetched. `scripts/check_retrieval.py`
+is the gate and `tests/test_corpus.py` guards the fixtures — suite 471 to 485.
+
+**The baseline, taken against `app/search.py` exactly as it is:**
+
+| | queries | MRR | R@1 | R@5 | R@10 |
+|---|---|---|---|---|---|
+| overall | 42 | 0.576 | 0.458 | 0.611 | 0.685 |
+| exact — rare strings | 20 | **0.938** | 0.900 | 1.000 | 1.000 |
+| clause — quoted passages | 14 | **0.210** | 0.071 | 0.357 | 0.571 |
+| paraphrase | 8 | 0.312 | **0.028** | 0.083 | 0.097 |
+
+Keyword search wins rare strings almost perfectly, which is what it is for, and
+loses paraphrases almost completely, which is what Step 5 is for. Both were
+predicted. **The middle row was not.**
+
+**THE FINDING: `app/search.py` cannot do phrase search.**
+
+`_terms()` splits a query into words and quotes each one **individually**, which
+in FTS5 means "this token", not "this phrase". So a 14-word sentence copied
+straight out of a contract becomes nine unrelated tokens joined by AND — and
+"This / Agreement / shall / be / binding / Parties / as / date / hereof" each
+appear somewhere in nearly every commercial contract. Ten contracts match, bm25
+ranks them by frequency, and **the contract the sentence was literally copied
+from does not reach the top six.**
+
+Quoting a passage you are holding and asking "where is this from" is the most
+natural thing a user does with a document search, and it is the thing today's
+retrieval is worst at. Nobody had measured it, which is the entire argument for
+taking a baseline before doing the work rather than after.
+
+**Not fixed, and `app/search.py` was not touched.** It is a prediction for 4.4:
+ANDing nine common legal words inside a **512-token chunk** is far more
+selective than inside a fifty-page contract, so chunk-level retrieval should
+move `clause` substantially. If it does not, the chunker is wrong rather than
+the theory, and that is a much more useful thing to learn than a number that
+drifted for no stated reason.
+
+**Two notes about the numbers themselves, recorded so nobody re-derives them.**
+
+- **MRR is flattered on multi-relevant queries.** The paraphrase set scores
+  0.312 MRR against a Recall@1 of **0.028**, because a query with eight right
+  answers can hit one by luck. For those queries **Recall is honest and MRR is
+  not**, and quoting the MRR alone would make the paraphrase set look half
+  solved when it is essentially unsolved.
+- **The gate's first run reported 0.000 for everything**, which looked exactly
+  like a finding and was a bug: it read hits from `found["documents"]` when
+  `search()` returns them under `results`. That is lesson 5 in this file —
+  *read a return shape, do not infer it from the name* — now paid for twice.
+  The gate says loudly when a query RAISED rather than averaging the silence,
+  because a uniform zero is far more likely to be a broken gate than a broken
+  retriever.
+
+**The corpus is the ruler and a ruler nobody checks drifts**, so
+`tests/test_corpus.py` hashes every contract, re-derives the ground truth for
+all 34 single-answer queries from the reference text rather than trusting the
+golden file, and asserts the scanned PDF still has no text layer and the corrupt
+one still refuses to open. The filenames are `contract_NN.pdf` deliberately:
+`app/search.py` indexes a document's name alongside its text, so a fixture named
+after its parties would let a party-name query match the **filename**, and the
+score would measure the naming rather than the retrieval.
+
+**The aggregate questions are in the report and answered by nothing.** 41 of 52
+contracts carry an exclusivity commitment; a search returning 8 can see at most
+8. That is decision 5.6's argument as a number, and Step 9 is where it is fixed.
 
 ## Step 4: signed off, and the corpus decision got better under challenge
 
@@ -1615,9 +1683,10 @@ views, not client data.
 
 ## Run these to confirm the state
 
-    py -m pytest -q                           # 471 passed, 1 skipped
+    py -m pytest -q                           # 485 passed, 1 skipped
     py scripts/check_api_compat.py
     py scripts/check_gateway_isolation.py
     py scripts/check_isolation.py             # 54 passed, 1 not tested on Windows
+    py scripts/check_retrieval.py             # MRR 0.576 against the committed baseline
     py scripts/check_agent.py                 # needs the model up
     py scripts/check_remote.py

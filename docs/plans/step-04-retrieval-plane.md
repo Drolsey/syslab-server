@@ -1,9 +1,14 @@
 # Step 4: The Retrieval Plane, and the Seams Everything Else Plugs Into
 
-Status: **IN PROGRESS.** 4.0 is built and gated. **Rewritten 11 September 2026**, after the
+Status: **IN PROGRESS. 4.0 and 4.1 are done.** **Rewritten 11 September 2026**, after the
 requirements turned out to be wider than the first draft assumed. **All seven decisions
 signed off the same day**, 5.1 to 5.6 as recommended and 5.7 amended by Amro — see below,
 because the amendment is the best thing that happened to this plan.
+
+**The baseline exists as of 11 September**: overall **MRR 0.576**, and the three query kinds
+are as far apart as the design predicted — rare strings **0.938**, quoted clauses **0.210**,
+paraphrases **0.312 with Recall@1 of 0.028**. `scripts/check_retrieval.py` is the gate.
+Next is 4.2.
 
 4.0 stands unchanged and is done — the tenant bridge is needed under every version of this.
 Everything from 4.1 onward is new.
@@ -521,6 +526,42 @@ Gate: it runs, and **it reports today's document-level keyword numbers before an
 step's code exists.** A baseline measured after the change is not a baseline. The aggregate
 question is recorded as **answered incompletely**, which is the number decision 5.6 exists to
 make visible and Step 9 exists to fix.
+
+**DONE, 11 September 2026.** 52 CUAD contracts (~16 MB) with their reference text, a
+five-file format pack, 42 verified queries, 4 aggregate questions,
+`scripts/check_retrieval.py`, and `tests/test_corpus.py` — 14 tests that hash every contract,
+because the corpus is the ruler and a ruler nobody checks drifts. Suite 471 → 485.
+
+**The baseline, `tests/fixtures/corpus/baseline.json`:**
+
+| | queries | MRR | R@1 | R@5 | R@10 |
+|---|---|---|---|---|---|
+| overall | 42 | 0.576 | 0.458 | 0.611 | 0.685 |
+| exact (rare strings) | 20 | **0.938** | 0.900 | 1.000 | 1.000 |
+| clause (quoted passages) | 14 | **0.210** | 0.071 | 0.357 | 0.571 |
+| paraphrase | 8 | 0.312 | **0.028** | 0.083 | 0.097 |
+
+**And the finding that makes the baseline worth having already: `app/search.py` cannot do
+phrase search.** `_terms()` splits a query into words and quotes each one *individually*, so
+a 14-word quotation from a contract becomes nine unrelated tokens joined by AND. Every one of
+"This / Agreement / shall / be / binding / Parties / as / date / hereof" appears somewhere in
+nearly every commercial contract, so ten of them match and the contract the sentence was
+literally copied from does not reach the top six. **Quoting a passage you are holding is the
+single most natural thing a user does, and it is what today's retrieval is worst at.**
+
+That is not a bug to fix in 4.1 and `app/search.py` was not touched. It is a **prediction for
+4.4**: ANDing nine common legal words inside a 512-token chunk is far more selective than
+inside a fifty-page contract, so chunk-level retrieval should move `clause` substantially.
+If it does not, something is wrong with the chunker rather than with the theory.
+
+**Two methodological notes recorded with the numbers, because they change how to read them.**
+MRR is **flattered on multi-relevant queries**: the paraphrase set scores 0.312 MRR while
+Recall@1 is 0.028, because a query with eight right answers can hit one by luck. For
+paraphrase, **Recall is the honest metric and MRR is not**. And the gate's first run reported
+**0.000 for everything**, which looked like a finding and was a bug — it read the hits from
+`found["documents"]` when `search()` returns them under `results`. Lesson 5 in `HANDOVER.md`,
+paid for twice now. The gate now says loudly when queries raised, rather than averaging the
+silence.
 
 **4.2 The parser and the source seam.** The `Source` protocol with `files` behind it, moved
 and not rewritten; **Docling** adopted behind `text` version 2.
