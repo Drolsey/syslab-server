@@ -112,7 +112,10 @@ not any step of the build.
 | Kokoro-82M | Apache-2.0 | Yes | unverified — **verify before Step 6**, it is the default |
 | Silero VAD | MIT | Yes | unverified |
 | sqlite-vec | Apache-2.0 **and** MIT, dual | Yes | unverified — **verify before Step 5**; see the note below |
-| Docling | MIT | Yes | **verified 11 September 2026** — the LICENSE file itself, read by Amro. See the note below |
+| Docling (`docling-slim`, `docling-core`, `docling-parse`) | MIT | Yes | **verified 11 September 2026** — the LICENSE file itself, read by Amro. See the note below |
+| pypdfium2 | Apache-2.0 / BSD-3-Clause | Yes | unverified — **installed as of 4.2**, it is what `docling-parse` reads PDFs with. Already named above as the PyMuPDF escape route |
+| python-docx | MIT | Yes | unverified — installed 4.2, `.docx` only |
+| beautifulsoup4 | MIT | Yes | unverified — installed 4.2, `.html` only |
 | CUAD v1 (test corpus) | CC BY 4.0 | Yes, with attribution | unverified — **verify before 4.1**; it is data, not code, and the note below says why that matters |
 | cloudflared | Apache-2.0 | Yes | unverified |
 | Docker Engine | Apache-2.0 | Yes | unverified |
@@ -125,6 +128,14 @@ sqlite-vec below was not, and the difference is the whole reason the rule exists
 the document parser in Step 4.2. **If it retires PyMuPDF, it also retires this project's
 largest licence risk** — see the AGPL entry above — but that has to be demonstrated on the
 same documents, not assumed.
+
+**RESOLVED 11 September 2026, by not installing them.** The note below was written expecting
+Docling to download models. **It does not, in the configuration adopted in 4.2.** Docling's
+`DocumentConverter` pulls the full ML pipeline — scipy, transformers, torch, 85 packages —
+and with it the models this note worried about. `app/parse.py` uses Docling's **backends**
+directly instead: 35 packages, 211 MB, **no torch and no model downloads at all**. So the
+question does not arise yet. **It returns with OCR in Step 10**, and it returns as a `text`
+version bump, at which point this note applies again in full and should be read as written.
 
 **One thing the MIT licence does not cover, and it is not a quibble.** Docling *downloads
 models* at runtime — layout, table structure, and an OCR engine. **Those carry their own

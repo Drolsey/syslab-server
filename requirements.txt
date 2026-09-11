@@ -1,7 +1,26 @@
 # Phase 02+ : tool functions
-pymupdf==1.24.10
+pymupdf==1.24.10          # AGPL-3.0. Step 4.2 no longer READS with it -- see below --
+                          # but tools.py still writes and renders PDFs with it.
 openpyxl==3.1.5
 reportlab==4.2.5
+
+# Step 4.2 : one parser for many formats (app/parse.py)
+#
+# Docling's BACKENDS, deliberately not its DocumentConverter. That API imports
+# the whole pipeline -- ASR, OCR, picture description -- and through it scipy,
+# transformers and torch: 85 packages and a multi-gigabyte GPU stack installed
+# on the HOST, on a machine whose GPU stack already lives in a container.
+# Backends only: 35 packages, 211 MB, no torch, and NO MODELS DOWNLOADED.
+#
+# What that gives up is ML layout analysis, table-structure recognition and
+# OCR. All three are Step 10, and all three arrive as a `text` version bump,
+# because everything under derived/ is rebuildable by design.
+docling-slim==2.126.0     # MIT, verified 11 Sep 2026 from its LICENSE file
+docling-core==2.96.0      # MIT
+docling-parse==7.19.0     # MIT -- the PDF backend
+pypdfium2==5.13.0         # Apache-2.0 / BSD-3-Clause -- what docling-parse reads PDFs with
+python-docx==1.2.0        # MIT -- .docx
+beautifulsoup4==4.15.0    # MIT -- .html
 
 # Phase 03 needs no new dependency: app/llm.py talks to Ollama's REST
 # API with the standard library.

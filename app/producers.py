@@ -37,7 +37,7 @@ import importlib
 import sys
 from pathlib import Path
 
-from app import ingest
+from app import ingest, parse
 
 # Moved verbatim from app/search.py. The suffixes a producer handles are now a
 # property of the producer rather than of the index, which is what lets a later
@@ -82,58 +82,20 @@ def _reader(module: str, what: str):
 def require_readers(suffixes) -> None:
     """Check the parsers for these file types are present, before doing work.
 
-    Exists because rebuild() used to DELETE the index and discover the missing
-    parser afterwards, so a run under the wrong interpreter cost the whole
-    index and put nothing in its place. Same shape as the row cap that was
-    applied after the fetch: a limit enforced after the cost is paid is not a
-    limit.
+    Kept as the name every caller already uses; app/parse owns the answer now.
     """
-    for suffix in sorted({str(s).lower() for s in suffixes}):
-        if suffix == ".pdf":
-            _reader("pymupdf", "no PDF can be read")
-        elif suffix in {".xlsx", ".xlsm"}:
-            _reader("openpyxl", "no spreadsheet can be read")
+    parse.require_readers(suffixes)
 
 
 def extract(path: Path) -> str:
-    """Pull readable text out of one file. Empty string if there is none.
+    """Text out of one file, or "" -- the version 1 signature, kept for callers.
 
-    Raises ProducerUnavailable if the parser for this file type is not
-    installed. That is deliberately not the same outcome as a file that cannot
-    be read.
+    DEPRECATED in favour of parse.extract, which returns an OUTCOME as well as
+    the text. This shape cannot tell a damaged file from a scan, and the whole
+    point of 4.2 was that those are different. Nothing in the app calls it;
+    it stays because tests and gates written against version 1 do.
     """
-    suffix = path.suffix.lower()
-
-    if suffix == ".pdf":
-        pymupdf = _reader("pymupdf", "no PDF can be read")
-        try:
-            with pymupdf.open(path) as document:
-                pages = [document.load_page(i).get_text("text") for i in range(document.page_count)]
-            return "\n".join(pages)[:MAX_TEXT_PER_FILE]
-        except Exception:  # noqa: BLE001 - this one file is unreadable, never fatal
-            return ""
-
-    if suffix in {".xlsx", ".xlsm"}:
-        openpyxl = _reader("openpyxl", "no spreadsheet can be read")
-        try:
-            book = openpyxl.load_workbook(path, data_only=True, read_only=True)
-            try:
-                parts: list[str] = []
-                for sheet in book.worksheets:
-                    parts.append(sheet.title)
-                    for row in sheet.iter_rows(values_only=True):
-                        cells = [str(v) for v in row if v is not None]
-                        if cells:
-                            parts.append(" ".join(cells))
-                        if sum(len(p) for p in parts) > MAX_TEXT_PER_FILE:
-                            break
-            finally:
-                book.close()
-            return "\n".join(parts)[:MAX_TEXT_PER_FILE]
-        except Exception:  # noqa: BLE001
-            return ""
-
-    return ""
+    return parse.extract(path).text
 
 
 # --------------------------------------------------------------------------
@@ -141,25 +103,50 @@ def extract(path: Path) -> str:
 # --------------------------------------------------------------------------
 
 def _run_text(source: Path, out_dir: Path) -> ingest.Result:
-    text = extract(source)
-    if not text.strip():
+    found = parse.extract(source)
+
+    if found.outcome is parse.Outcome.UNREADABLE:
+        # RAISED, not returned. ingest.Result says it plainly -- "what a
+        # producer says it did. Never how it failed -- that is an exception" --
+        # and the pipeline catches this, records FAILED against this one
+        # document, and carries on with the folder.
+        #
+        # New in version 2. Until now a damaged file returned "nothing
+        # extractable", which is the same answer a SCAN gets, so a folder with
+        # one corrupt document was indistinguishable from a folder with one
+        # scanned document. tests/fixtures/corpus/formats/ holds one of each.
+        raise ValueError(f"{source.name} could not be read: {found.detail}")
+
+    if found.outcome is parse.Outcome.UNSUPPORTED:
+        return ingest.Result.nothing(found.detail)
+
+    if found.outcome is parse.Outcome.EMPTY:
         # Not a failure. "Nobody has looked at this" and "we looked, and there
         # is nothing here" are different states, and the reason deliberately
-        # does not name a cause it has not established -- a scan is ONE
-        # explanation for a file with no text in it.
-        return ingest.Result.nothing("no text could be extracted from it")
+        # does not name a cause it has not established -- though version 2 CAN
+        # now say the file itself was fine, which is what an OCR producer will
+        # act on when Step 10 gives us one.
+        return ingest.Result.nothing(found.detail or "no text could be extracted from it")
+
     written = out_dir / TEXT_ARTIFACT
-    written.write_text(text, encoding="utf-8")
+    written.write_text(found.text, encoding="utf-8")
     return ingest.Result.made(
         written.relative_to(out_dir.parent.parent),
-        f"{len(text)} characters",
+        f"{len(found.text)} characters via {found.backend}",
     )
 
 
 TEXT = ingest.register(ingest.Producer(
     name="text",
-    version=1,
-    handles=frozenset(SEARCHABLE),
+    # VERSION 2, Step 4.2: the same artifact, produced by a different reader.
+    # Every document re-extracts on next ingest, which is the machinery Step
+    # 2.4 built and gated, and it is why swapping a parser is a one-line
+    # change rather than a migration.
+    version=2,
+    # Asked of app/parse rather than kept here, so the list of formats this
+    # project claims and the list it can actually read cannot drift apart.
+    # SEARCHABLE survives as what the INDEX considers worth indexing.
+    handles=parse.handles(),
     # Fast, and it stays in the request. Decision 4.3: extracting text from a
     # 2 MB PDF is already fast enough that "upload then immediately ask about
     # it" works, and that must go on working. The slow producers that arrive
