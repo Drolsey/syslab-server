@@ -1,6 +1,6 @@
 # Step 4: The Retrieval Plane, and the Seams Everything Else Plugs Into
 
-Status: **IN PROGRESS. 4.0 and 4.1 are done.** **Rewritten 11 September 2026**, after the
+Status: **IN PROGRESS. 4.0, 4.1 and 4.2 are done.** **Rewritten 11 September 2026**, after the
 requirements turned out to be wider than the first draft assumed. **All seven decisions
 signed off the same day**, 5.1 to 5.6 as recommended and 5.7 amended by Amro — see below,
 because the amendment is the best thing that happened to this plan.
@@ -8,7 +8,10 @@ because the amendment is the best thing that happened to this plan.
 **The baseline exists as of 11 September**: overall **MRR 0.576**, and the three query kinds
 are as far apart as the design predicted — rare strings **0.938**, quoted clauses **0.210**,
 paraphrases **0.312 with Recall@1 of 0.028**. `scripts/check_retrieval.py` is the gate.
-Next is 4.2.
+**Next is 4.3, the chunk producer** — and 4.1's prediction is still standing: ANDing nine
+common legal words inside a 512-token chunk should be far more selective than inside a
+fifty-page contract, so `clause` should move substantially at 4.4. If it does not, something
+is wrong with the chunker rather than with the theory.
 
 4.0 stands unchanged and is done — the tenant bridge is needed under every version of this.
 Everything from 4.1 onward is new.
@@ -88,7 +91,7 @@ rewrite.**
 
 | Seam | Exists? | What it is | What plugs in later |
 |---|---|---|---|
-| **Source** | **No — 4.2 builds it** | Where a tenant's material comes from | Customer SQL, Google Docs, Drive, cloud storage |
+| **Source** | **Yes — 4.2 built it** | Where a tenant's material comes from | Customer SQL, Google Docs, Drive, cloud storage |
 | **Producer** | **Yes — Step 2 built it** | What is derived from a source, at a declared version | OCR, page images, extracted fields, embeddings |
 | **Retriever** | **No — 4.6 builds it** | How a question finds material, fused by rank | Vector search, structured lookup, graph |
 | **Model role** | **No — 4.7 declares it** | Which model fills which job | Embedding, vision, STT, TTS |
@@ -582,6 +585,41 @@ the project needs, the AGPL-3.0 dependency that `docs/licences.md` calls the lar
 risk here can go. That is a real prize and it is *not* a reason to declare it true — it has to
 be demonstrated on the same documents, `check_search` and `check_tools` unchanged, the way
 that file already specifies for a pypdfium2 swap.
+
+**DONE, 11 September 2026, in two parts.**
+
+*Part one* replaced the two hardcoded branches in `producers.extract` with `app/parse.py`'s
+suffix → backend table, adopted Docling's **backends** rather than its `DocumentConverter`
+(35 packages and no torch, against 85 and a multi-gigabyte GPU stack), bumped `text` to
+version 2, and separated `ok` / `empty` / `unreadable` / `unsupported` so that a corrupt file
+and a scan stopped producing the same answer.
+
+*Part two* built the **source seam** (`app/sources.py`) — `files` moved and not rewritten,
+`git diff` on the consumers empty — and grew `check_ingest` from 14 checks to **31**.
+
+**And the formats section immediately found that two of part one's rows were broken.**
+`.pptx` and `.md` were in the table with no library behind them, and the reason nothing had
+noticed is worth the space: **docling-slim imports a format's reader when the file is read,
+not when the backend module is imported.** So `docling.backend.mspowerpoint_backend` imports
+perfectly on a machine with no `python-pptx`, `require_readers()` passed, and the
+`ImportError` arrived from inside `convert()` — where it landed in `except Exception` and was
+written to the manifest as **`unreadable`**, against a document that was perfectly fine.
+
+That is the third time this project has paid for *a missing library reported as a broken
+document*. It is now structural rather than remembered: `Backend.needs` names the package
+each row actually defers to, `require_readers()` checks it, `parse._call` converts a
+call-time `ImportError` into `ProducerUnavailable`, and the gate reads one file of **every**
+suffix in the table looking for a sentinel *inside* the extracted text. Asserting that
+ingestion "succeeded" is what let it through — a producer that writes an empty artifact
+succeeds.
+
+**PyMuPDF: not retired, and the exposure is much smaller.** `app/search.py` no longer reads a
+PDF at all, so `docs/licences.md`'s *"it is the PDF reader for the entire search path"* is no
+longer true. One use remains — `app/tools.py:213`, rendering page images for `read_pdf` — so
+the AGPL-3.0 question is now one module and one tool, and the pypdfium2 swap that file
+specifies is a small gated change rather than a rewrite. Recorded with its cost: the project
+currently ships two PDF libraries. Retrieval is **unchanged against the 4.1 baseline**, MRR
+0.576 to three decimals, which is the right outcome for a parser swap. Suite 485 → 513.
 
 **4.3 The chunk producer.** `producers.CHUNKS`, writing `chunks.json`. Gate: offsets resolve
 back to the real text; a version bump re-chunks; deleting `derived/` and rebuilding gives

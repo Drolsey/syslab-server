@@ -18,6 +18,38 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 ## [Unreleased]
 
 ### Fixed
+- **Every `.pptx` and every `.md` was being recorded as a damaged document, and both
+  were perfectly fine.** Step 4.2 part one added rows for them to `app/parse.py`'s backend
+  table without adding the libraries that read them, and nothing noticed, because
+  **docling-slim does not import a format's reader when its backend module is imported —
+  it imports it when the file is read**, and raises a plain `ImportError` from inside the
+  call. So `docling.backend.mspowerpoint_backend` imports perfectly on a machine with no
+  `python-pptx`, `require_readers()` passed, and the failure arrived one document at a
+  time, landing in `except Exception` and being written to the manifest as
+  `unreadable` — *"this file could not be read"*.
+  - **This is the third time this project has paid for the same distinction**, and the
+    first two are already written down: a missing library affects **every** document of
+    that type and is an environment fault; an unreadable file affects **one** document and
+    is a data fault. Reporting the first as the second is what indexed nineteen good PDFs
+    as empty and blamed the documents. The difference is not cosmetic — `unreadable` is
+    written against each document, so installing the package afterwards fixes nothing
+    until somebody works out which rows were lies, whereas `ProducerUnavailable` is
+    reported once, against nothing, and the documents are simply retried.
+  - **Fixed structurally rather than by remembering.** `parse.Backend` gained a `needs`
+    column naming the package each row actually defers to, `require_readers()` checks it
+    (it had been checking the backend module, which proves nothing), and `parse._call`
+    turns a call-time `ImportError` into `ProducerUnavailable` wherever it surfaces. So
+    the next row added with a missing library is caught by the gate rather than by a
+    customer.
+  - `python-pptx` 1.0.2 (MIT) and `marko` 2.2.4 (MIT) added to requirements, both
+    **verified from their own LICENSE files**, along with `XlsxWriter` 3.2.9
+    (BSD-2-Clause) which python-pptx pulls in and nothing here imports.
+- **`scripts/check_ingest.py` could poison its own next run.** It writes a deliberately
+  corrupt PDF into the install's real data folder, and a run that died before tidying up
+  left it there — where section 2's *"Nothing failed on the way"* then failed on every
+  later run, for a reason with nothing to do with what that section tests. Found by
+  springing it. The corrupt file is now removed the moment it has been asserted on, so the
+  window is two statements wide rather than the rest of the script.
 - **`tenancy.new_id()` was generating tenant ids the rest of the application refuses,
   about one in four.** The id alphabet holds eight digits and the first character was
   drawn from all 31, while `context.VALID_TENANT_ID` requires an id to start with a letter
@@ -69,6 +101,47 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Exact now.
 
 ### Added
+- **The source seam** (`app/sources.py`), Step 4.2 part two. `Source` — a name, `list()`
+  and `fetch()` — with `files` behind it: **today's behaviour moved and not rewritten**,
+  the same discipline as Step 2.1. `ingest.py`'s three separate sentences about local
+  files (`_source`, `rebuild`, `forget_missing`) now go through one place, so a customer
+  SQL database or a Google Drive connector becomes a new source in an existing pipeline
+  rather than a second pipeline. **`git diff` on the consumers is empty**, which was the
+  gate; the only files that changed are `ingest.py` itself and the gate's own module list.
+  - **`active()` refuses when a second source is registered rather than picking one**, and
+    the refusal is the point. The manifest keys on `(source_name, producer)` with no column
+    for which source a name came from, so two sources each holding a `contract.pdf` would
+    share one row and one folder of derived bytes — corruption that surfaces months later
+    as a document whose text belongs to a different document. The day a connector lands,
+    the schema change that must come first announces itself.
+  - **Credentials are named, not hidden.** Every cloud source needs *that customer's*
+    credentials stored encrypted, and `tenancy.database_for()` still raises for every row
+    it finds because **no cipher was ever chosen** — Step 1's decision 4.5, still open, and
+    now on the critical path rather than in a footnote.
+  - Caught while building it: `_source` translated `SourceError` into `IngestError` but
+    `rebuild` and `forget_missing` did not, so a source that could not answer would have
+    been a **500 in the two paths that walk the whole folder** and a clean 404 in the one
+    that opens a single file. One boundary, or it is not a boundary.
+- **`scripts/check_ingest.py` grows a formats section, a scan-vs-damage section and a
+  source-seam section** — 14 checks to **31**. The formats section reads **one file of
+  every suffix `app/parse.py` claims** and looks for a sentinel string *inside* the
+  extracted text, because asserting that ingestion "succeeded" is exactly what let two
+  broken rows ship: a producer that writes an empty artifact succeeds. It also asserts
+  that the corrupt fixture **fails loudly** while the scanned one **does not fail at all**
+  and says *why* — the distinction 4.2 exists to make.
+  - `scripts/_fixtures.py` gained `build_pptx()`, standard library only like the rest of
+    that file. A row nothing ever reads is a claim rather than a fact, which is how `.pptx`
+    shipped broken.
+- **`tests/test_sources.py` and `tests/test_parse.py`** — 28 tests, each written by
+  breaking the property first. Suite **485 → 513**.
+- **The PyMuPDF question, answered rather than deferred** (`docs/licences.md`). **No, it
+  is not retired — but the read path is off it entirely.** `app/search.py` no longer reads
+  a PDF at all, so *"it is the PDF reader for the entire search path"* is no longer true;
+  the single remaining use is `app/tools.py:213`, rendering page images for the agent's
+  `read_pdf` tool. That makes the AGPL-3.0 exposure **one module and one tool** instead of
+  the whole search path, and moving it to the already-installed `pypdfium2` is now a small
+  gated change rather than a rewrite. Recorded with the cost too: the project currently
+  ships **two** PDF libraries, and that is what the narrowing bought.
 - **The retrieval corpus, the golden set and a measured baseline**
   (`tests/fixtures/corpus/`, `scripts/check_retrieval.py`), Step 4.1. 52 real commercial
   contracts from **CUAD v1** with their reference text, a five-file format pack, **42 queries

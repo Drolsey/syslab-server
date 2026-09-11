@@ -76,20 +76,42 @@ class Extraction:
 # --------------------------------------------------------------------------
 # which backend reads what
 # --------------------------------------------------------------------------
-#
-# Adding a format is a ROW, which is the whole point of the module. The value
-# is (module path, class name, InputFormat member, needs_pagination).
-_BACKENDS: dict[str, tuple[str, str, str, bool]] = {
-    ".pdf":  ("docling.backend.docling_parse_backend", "DoclingParseDocumentBackend", "PDF", True),
-    ".docx": ("docling.backend.msword_backend", "MsWordDocumentBackend", "DOCX", False),
-    ".xlsx": ("docling.backend.msexcel_backend", "MsExcelDocumentBackend", "XLSX", False),
-    ".xlsm": ("docling.backend.msexcel_backend", "MsExcelDocumentBackend", "XLSX", False),
-    ".pptx": ("docling.backend.mspowerpoint_backend", "MsPowerpointDocumentBackend", "PPTX", False),
-    ".html": ("docling.backend.html_backend", "HTMLDocumentBackend", "HTML", False),
-    ".htm":  ("docling.backend.html_backend", "HTMLDocumentBackend", "HTML", False),
-    ".csv":  ("docling.backend.csv_backend", "CsvDocumentBackend", "CSV", False),
-    ".md":   ("docling.backend.md_backend", "MarkdownDocumentBackend", "MD", False),
-    ".txt":  ("", "", "", False),   # read directly; no parser earns its keep here
+
+@dataclass(frozen=True)
+class Backend:
+    """One row of the table. Adding a format is adding one of these.
+
+    `needs` is the field that is not obvious, and it is here because leaving it
+    out was a bug -- see the note on `_call` below. docling-slim does not
+    import a format's third-party reader when its backend module is imported.
+    It imports it when the file is actually read, and raises a plain
+    ImportError from inside the call. So the module importing cleanly proves
+    NOTHING about whether that format can be read, and `needs` names the
+    package that actually has to be there.
+    """
+
+    module: str
+    cls: str
+    fmt: str
+    paginated: bool = False
+    needs: str = ""
+
+
+# Read directly. No parser earns its keep on a .txt, so there is no backend to
+# be missing and nothing to check before a rebuild.
+PLAIN = Backend("", "", "")
+
+_BACKENDS: dict[str, Backend] = {
+    ".pdf":  Backend("docling.backend.docling_parse_backend", "DoclingParseDocumentBackend", "PDF", paginated=True),
+    ".docx": Backend("docling.backend.msword_backend", "MsWordDocumentBackend", "DOCX", needs="docx"),
+    ".xlsx": Backend("docling.backend.msexcel_backend", "MsExcelDocumentBackend", "XLSX", needs="openpyxl"),
+    ".xlsm": Backend("docling.backend.msexcel_backend", "MsExcelDocumentBackend", "XLSX", needs="openpyxl"),
+    ".pptx": Backend("docling.backend.mspowerpoint_backend", "MsPowerpointDocumentBackend", "PPTX", needs="pptx"),
+    ".html": Backend("docling.backend.html_backend", "HTMLDocumentBackend", "HTML", needs="bs4"),
+    ".htm":  Backend("docling.backend.html_backend", "HTMLDocumentBackend", "HTML", needs="bs4"),
+    ".csv":  Backend("docling.backend.csv_backend", "CsvDocumentBackend", "CSV"),
+    ".md":   Backend("docling.backend.md_backend", "MarkdownDocumentBackend", "MD", needs="marko"),
+    ".txt":  PLAIN,
 }
 
 
@@ -126,27 +148,67 @@ def require_readers(suffixes) -> None:
     Exists because rebuild() used to delete the index and discover the missing
     parser afterwards, so a run under the wrong interpreter cost the whole
     index and put nothing in its place.
+
+    IT USED TO CHECK THE WRONG THING, and the fix is the `needs` column.
+    Importing a docling backend module succeeds whether or not the library that
+    module reads files with is installed, because docling-slim defers that
+    import to the read itself. So this passed for .pptx and .md on an
+    interpreter that could not read either -- and the index was already deleted
+    by the time the first file proved it.
     """
     wanted = {str(s).lower() for s in suffixes}
     if not wanted & set(_BACKENDS):
         return
     _module("docling.datamodel.document", "no document of any kind can be read")
-    if ".pdf" in wanted:
-        _module("docling.backend.docling_parse_backend", "no PDF can be read")
+    for suffix in sorted(wanted):
+        spec = _BACKENDS.get(suffix)
+        if spec is None or spec is PLAIN:
+            continue
+        _module(spec.module, f"no {suffix} can be read")
+        if spec.needs:
+            _module(spec.needs, f"no {suffix} can be read")
 
 
-def _open_backend(path: Path, spec: tuple[str, str, str, bool]):
-    module_path, class_name, format_name, _ = spec
+def _call(what: str, suffix: str, run):
+    """Run a piece of backend work, and keep a missing package out of the
+    UNREADABLE bucket.
+
+    THE BUG THIS EXISTS FOR, because it is the one this module was written to
+    prevent and it got back in anyway. `_module` catches an ImportError at
+    IMPORT time, which is where the old parser raised it. docling-slim raises
+    it at READ time instead: `import pptx` lives inside the backend call, so
+    `docling.backend.mspowerpoint_backend` imports perfectly on a machine with
+    no python-pptx, and the ImportError arrives from inside convert().
+
+    It was landing in `except Exception` and being recorded as UNREADABLE --
+    "this file is damaged" -- for every .pptx and every .md a customer sent.
+    That is precisely the fault named at the top of this file: a missing
+    library reported as a broken document, one environment problem wearing the
+    costume of hundreds of data problems. Third time this project has paid for
+    this distinction; first time it is structural rather than remembered.
+    """
+    try:
+        return run()
+    except ImportError as exc:
+        raise ingest.ProducerUnavailable(
+            f"{exc} That is a missing package in the interpreter running this "
+            f"({sys.executable}), not a problem with this file: every {suffix} "
+            "would be recorded as damaged. Install the project's requirements, "
+            "or run this with the virtualenv's python."
+        ) from exc
+
+
+def _open_backend(path: Path, spec: Backend):
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.document import InputDocument
 
-    backend_cls = getattr(_module(module_path, f"no {path.suffix} can be read"), class_name)
-    document = InputDocument(
+    backend_cls = getattr(_module(spec.module, f"no {path.suffix} can be read"), spec.cls)
+    document = _call("open", path.suffix.lower(), lambda: InputDocument(
         path_or_stream=path,
-        format=getattr(InputFormat, format_name),
+        format=getattr(InputFormat, spec.fmt),
         backend=backend_cls,
         filename=path.name,
-    )
+    ))
     # Docling refuses a document it cannot open by never attaching a backend.
     # Reading that as an AttributeError and letting it escape as a crash is
     # how a damaged file would become a 500 rather than a recorded fact.
@@ -183,14 +245,14 @@ def extract(path: Path) -> Extraction:
         return Extraction("", Outcome.UNSUPPORTED, "none",
                           f"nothing here reads {suffix or 'a file with no suffix'}")
 
-    if suffix == ".txt":
+    if spec is PLAIN:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")[:MAX_TEXT_PER_FILE]
         except OSError as exc:
             return Extraction("", Outcome.UNREADABLE, "plain", str(exc))
         return Extraction(text, Outcome.OK if text.strip() else Outcome.EMPTY, "plain")
 
-    backend_name = f"docling:{spec[1]}"
+    backend_name = f"docling:{spec.cls}"
     try:
         backend = _open_backend(path, spec)
     except ingest.ProducerUnavailable:
@@ -200,10 +262,12 @@ def extract(path: Path) -> Extraction:
                           f"{type(exc).__name__}: {exc}")
 
     try:
-        if spec[3]:
-            text = _pdf_text(backend)
+        if spec.paginated:
+            text = _call("read", suffix, lambda: _pdf_text(backend))
         else:
-            text = backend.convert().export_to_markdown()
+            text = _call("read", suffix, lambda: backend.convert().export_to_markdown())
+    except ingest.ProducerUnavailable:
+        raise
     except Exception as exc:  # noqa: BLE001
         return Extraction("", Outcome.UNREADABLE, backend_name,
                           f"{type(exc).__name__}: {exc}")

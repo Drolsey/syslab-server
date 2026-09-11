@@ -37,6 +37,14 @@ FORBIDDEN = [
     (r"^\s*from\s+app\s+import\s+.*\bingest\b", "imports app.ingest"),
     (r"^\s*from\s+app\s+import\s+.*\bproducers\b", "imports app.producers"),
     (r"^\s*from\s+app\s+import\s+.*\bintake\b", "imports app.intake"),
+    # Step 4.2 added the source seam, and it is the most direct reach of the
+    # lot: sources.active().list() enumerates a tenant's material and
+    # .fetch() hands back a path into it, neither of which needs any other
+    # storage import to be useful. Named the moment it existed -- this list
+    # has twice been found stale AFTER the fact, and both times it was a
+    # module Step 2 added.
+    (r"^\s*from\s+app\s+import\s+.*\bsources\b", "imports app.sources"),
+    (r"^\s*from\s+app\.sources\s+import", "imports from app.sources"),
     # Step 4.0 added the retrieval plane, which is this one's opposite: it
     # cannot do anything WITHOUT a tenant, so importing it would hand the
     # inference plane a ready-made way to get one. Named here the moment it

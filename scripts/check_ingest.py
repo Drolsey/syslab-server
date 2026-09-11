@@ -36,13 +36,17 @@ from _deps import require  # noqa: E402
 
 require("pymupdf", "openpyxl", "reportlab")
 
-from app import context, ingest, intake, search, tools  # noqa: E402
+import _fixtures  # noqa: E402
+
+from app import context, ingest, intake, parse, search, sources, tools  # noqa: E402
 from app.config import (  # noqa: E402
     BOOTSTRAP_TENANT,
     data_dir,
     derived_dir,
     ensure_data_dir,
 )
+
+CORPUS = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "corpus"
 
 LINE = "-" * 66
 results: list[tuple[str, bool, str]] = []
@@ -192,6 +196,141 @@ def main() -> int:
         "Swept as well, though no row ever named it",
         not ghost.exists() and f"ghost_{tag}.pdf" in swept["gone"],
         "sweeping only the manifest would leave this with nothing pointing at it",
+    )
+
+    # ---- 5. the formats table --------------------------------------------
+    #
+    # Step 4.2's gate. app/parse.py's claim is that a new format is a ROW, and
+    # a row nothing ever reads is a claim rather than a fact. Two of them
+    # shipped broken in 4.2 part one for exactly that reason: docling-slim
+    # imports a format's reader when the FILE is read rather than when the
+    # backend module is imported, so .pptx and .md passed every import check
+    # this project had and then recorded every such document as damaged.
+    #
+    # So this reads one file of every suffix in the table and looks for a
+    # sentinel string INSIDE the extracted text. Asserting only that ingestion
+    # "succeeded" is what let that through: a producer that writes an empty
+    # artifact succeeds.
+    section("5. Every format the parser claims, read end to end")
+
+    samples: dict[str, bytes] = {
+        ".pdf":  _fixtures.build_pdf("Formats", [f"ZARAFMT{tag}PDF in the body"]),
+        ".xlsx": _fixtures.build_xlsx([[f"ZARAFMT{tag}XLSX", 42]]),
+        ".xlsm": _fixtures.build_xlsx([[f"ZARAFMT{tag}XLSM", 42]]),
+        ".pptx": _fixtures.build_pptx([f"ZARAFMT{tag}PPTX", "a second line"]),
+        ".docx": (CORPUS / "formats" / "format_docx.docx").read_bytes(),
+        ".html": f"<html><body><p>ZARAFMT{tag}HTML here</p></body></html>".encode(),
+        ".htm":  f"<html><body><p>ZARAFMT{tag}HTM here</p></body></html>".encode(),
+        ".csv":  f"col_a,col_b\nZARAFMT{tag}CSV,7\n".encode(),
+        ".md":   f"# Heading\n\nZARAFMT{tag}MD in a paragraph.\n".encode(),
+        ".txt":  f"ZARAFMT{tag}TXT plain words.\n".encode(),
+    }
+    missing = sorted(parse.handles() - set(samples))
+    record(
+        "Every suffix in the table has a sample to read",
+        not missing,
+        f"no sample for {', '.join(missing)}" if missing else f"{len(samples)} formats",
+    )
+
+    # The .docx comes from the corpus rather than being generated, so its
+    # sentinel is the corpus's own and not this run's tag.
+    docx_sentinel = "ZARAMANDA-DOCX-9028"
+
+    for suffix in sorted(samples):
+        name = f"formats_{tag}{suffix}"
+        (data_dir() / name).write_bytes(samples[suffix])
+        made.append(name)
+        report = ingest.ingest(name)
+        wanted = docx_sentinel if suffix == ".docx" else f"ZARAFMT{tag}{suffix[1:].upper()}"
+
+        artifact = derived_dir() / "text" / name / "text.txt"
+        text = artifact.read_text(encoding="utf-8") if artifact.is_file() else ""
+        detail = ""
+        if report["failed"]:
+            detail = f"failed: {list(report['failed'].values())[0][:70]}"
+        elif report["unavailable"]:
+            detail = f"unavailable: {list(report['unavailable'].values())[0][:70]}"
+        elif not text:
+            detail = "ingested, and the text artifact is empty or absent"
+        record(f"{suffix:6} is read, and the words inside it arrive", wanted in text, detail)
+
+    # ---- 6. the two files that must NOT behave the same -------------------
+    #
+    # The distinction 4.2 was built to make. Before it, a corrupt file and a
+    # scan both produced "" and both were recorded as a success, so a folder
+    # with one damaged document looked exactly like a folder with one scan.
+    section("6. A damaged file and a scan are told apart")
+
+    pack = {
+        "corrupt": CORPUS / "formats" / "format_corrupt.pdf",
+        "scan": CORPUS / "formats" / "format_scanned.pdf",
+    }
+    outcomes = {}
+    for kind, source in pack.items():
+        name = f"formats_{tag}_{kind}.pdf"
+        shutil.copy2(source, data_dir() / name)
+        made.append(name)
+        outcomes[kind] = ingest.ingest(name)
+
+    record(
+        "The damaged file fails, loudly and against itself",
+        "text" in outcomes["corrupt"]["failed"],
+        (list(outcomes["corrupt"]["failed"].values())[0][:70]
+         if outcomes["corrupt"]["failed"] else "it was recorded as a success"),
+    )
+    record(
+        "The scan does NOT fail -- it is a good file with no text layer",
+        not outcomes["scan"]["failed"] and not outcomes["scan"]["unavailable"],
+        "an OCR producer is what this is waiting for, not a repair",
+    )
+    # status()["producers"] is a dict KEYED by producer name, not a list of
+    # rows. Read from the real shape rather than from what the name suggests --
+    # the lesson check_retrieval paid for by scoring every query 0.000.
+    # The corrupt file goes NOW, not in the tidy-up at the end, and this is a
+    # trap that was sprung rather than foreseen. It is the one file here whose
+    # whole purpose is to fail, it lives in the install's real data folder, and
+    # a run that dies after writing it leaves it there -- where section 2's
+    # "Nothing failed on the way" then fails on every later run, for a reason
+    # that has nothing to do with what that section tests. Removing it the
+    # moment it has been asserted on means the window is two statements wide
+    # instead of the rest of the script.
+    corrupt_name = f"formats_{tag}_corrupt.pdf"
+    (data_dir() / corrupt_name).unlink(missing_ok=True)
+    made.remove(corrupt_name)
+    ingest.forget_missing()
+
+    scan_rows = ingest.status(f"formats_{tag}_scan.pdf")["producers"]
+    scan_detail = scan_rows.get("text", {}).get("detail") or ""
+    record(
+        "And the pipeline says which of the two it is, rather than 'empty'",
+        "no text layer" in scan_detail,
+        scan_detail[:70] or "no detail recorded",
+    )
+
+    # ---- 7. the source seam ----------------------------------------------
+    #
+    # Step 4.2's other half. The seam's whole claim is that the pipeline no
+    # longer knows where material comes from, and the cheap honest way to check
+    # that is to confirm the pipeline agrees with the source about what exists.
+    section("7. The pipeline reaches its material through the source seam")
+
+    source = sources.active()
+    record(
+        "One source is registered, and it is the tenant's own folder",
+        source.name == "files",
+        f"{', '.join(sorted(sources.registered()))}",
+    )
+    listed = {item.id for item in source.list()}
+    on_disk = {p.name for p in data_dir().iterdir() if p.is_file()}
+    record(
+        "It lists exactly what is in the folder, unfiltered",
+        listed == on_disk,
+        f"{len(listed)} item(s)" if listed == on_disk
+        else f"source {sorted(listed - on_disk)}, disk {sorted(on_disk - listed)}",
+    )
+    record(
+        "And fetching one gives back the bytes that are there",
+        source.fetch(staying).read_bytes() == (data_dir() / staying).read_bytes(),
     )
 
     # ---- tidying up ------------------------------------------------------

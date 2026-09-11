@@ -49,6 +49,79 @@ def build_pdf(title: str, lines: list[str]) -> bytes:
     return bytes(out)
 
 
+_OOXML = "http://schemas.openxmlformats.org/"
+
+
+def build_pptx(lines: list[str]) -> bytes:
+    """A one-slide deck with a text box per line.
+
+    Here for Step 4.2's formats gate. `.pptx` is a row in app/parse.py's
+    backend table, and a row nothing ever reads is a claim rather than a fact
+    -- which is exactly how that row shipped broken. Written against the OOXML
+    parts docling's backend actually walks, with the standard library only, for
+    the same reason as everything else in this file.
+    """
+    shapes = []
+    for n, line in enumerate(lines, start=1):
+        text = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        shapes.append(
+            f'<p:sp><p:nvSpPr><p:cNvPr id="{n + 1}" name="TextBox {n}"/>'
+            '<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>'
+            f'<p:spPr><a:xfrm><a:off x="838200" y="{900000 * n}"/>'
+            '<a:ext cx="7772400" cy="800000"/></a:xfrm>'
+            '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>'
+            '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/>'
+            f"<a:t>{text}</a:t></a:r></a:p></p:txBody></p:sp>"
+        )
+    slide = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<p:sld xmlns:a="{_OOXML}drawingml/2006/main" '
+        f'xmlns:r="{_OOXML}officeDocument/2006/relationships" '
+        f'xmlns:p="{_OOXML}presentationml/2006/main">'
+        '<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/>'
+        "<p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>"
+        + "".join(shapes)
+        + "</p:spTree></p:cSld></p:sld>"
+    )
+    files = {
+        "[Content_Types].xml":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<Types xmlns="{_OOXML}package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>'
+            '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+            "</Types>",
+        "_rels/.rels":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<Relationships xmlns="{_OOXML}package/2006/relationships">'
+            f'<Relationship Id="rId1" Type="{_OOXML}officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>'
+            "</Relationships>",
+        "ppt/presentation.xml":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<p:presentation xmlns:a="{_OOXML}drawingml/2006/main" '
+            f'xmlns:r="{_OOXML}officeDocument/2006/relationships" '
+            f'xmlns:p="{_OOXML}presentationml/2006/main">'
+            '<p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>'
+            '<p:sldSz cx="9144000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/>'
+            "</p:presentation>",
+        "ppt/_rels/presentation.xml.rels":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<Relationships xmlns="{_OOXML}package/2006/relationships">'
+            f'<Relationship Id="rId1" Type="{_OOXML}officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>'
+            "</Relationships>",
+        "ppt/slides/slide1.xml": slide,
+        "ppt/slides/_rels/slide1.xml.rels":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<Relationships xmlns="{_OOXML}package/2006/relationships"/>',
+    }
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, text in files.items():
+            archive.writestr(name, text)
+    return buffer.getvalue()
+
+
 def _cell(column: int, row: int, value) -> str:
     letter = ""
     n = column

@@ -19,8 +19,21 @@ docling-slim==2.126.0     # MIT, verified 11 Sep 2026 from its LICENSE file
 docling-core==2.96.0      # MIT
 docling-parse==7.19.0     # MIT -- the PDF backend
 pypdfium2==5.13.0         # Apache-2.0 / BSD-3-Clause -- what docling-parse reads PDFs with
+#
+# ONE PER FORMAT, AND THIS LIST IS LOAD-BEARING RATHER THAN INFORMATIVE.
+# docling-slim does not import a format's reader when its backend module is
+# imported -- it imports it when the file is read, and raises a plain
+# ImportError from inside the call. So a missing entry here does not fail at
+# startup, does not fail `require_readers`, and does not fail the import: it
+# fails once per document, as UNREADABLE, which reads as "the customer sent us
+# a damaged file". python-pptx and marko were both missing when 4.2 part one
+# shipped, and every .pptx and .md was being recorded as damaged. `needs` in
+# app/parse.py's table is the other half of the fix.
 python-docx==1.2.0        # MIT -- .docx
-beautifulsoup4==4.15.0    # MIT -- .html
+beautifulsoup4==4.15.0    # MIT -- .html, .htm
+python-pptx==1.0.2        # MIT, verified 11 Sep 2026 from its LICENSE file -- .pptx
+marko==2.2.4              # MIT, verified 11 Sep 2026 from its LICENSE file -- .md
+XlsxWriter==3.2.9         # BSD-2-Clause, verified -- pulled in by python-pptx, unused here
 
 # Phase 03 needs no new dependency: app/llm.py talks to Ollama's REST
 # API with the standard library.

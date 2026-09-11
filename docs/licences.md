@@ -87,6 +87,36 @@ for a lawyer rather than an engineer.
 It is not a hypothetical dependency. `app/search.py` and `app/tools.py` both use it, and it
 is the PDF reader for the entire search path.
 
+### What Step 4.2 actually changed here, measured rather than hoped
+
+**The read path is off PyMuPDF. The dependency stays. The exposure is narrowed, not closed.**
+
+4.2 asked whether adopting Docling retires PyMuPDF, and the honest answer is no — but it is
+worth being precise about what did move, because the remaining use is a much smaller target
+than the one this section was written about.
+
+| | Before 4.2 | Now |
+|---|---|---|
+| Reads PDFs for the index and search | PyMuPDF | **Docling / pypdfium2** |
+| `tools.read_pdf`, page rendering | PyMuPDF | **PyMuPDF** — unchanged |
+| `tools.write_pdf` | PyMuPDF + reportlab | **unchanged** |
+
+So *"it is the PDF reader for the entire search path"*, written above, **is no longer true**
+and the sentence is kept only so the change is visible. `app/search.py` no longer reads a PDF
+at all; it consumes what `app/parse.py` produced. The single remaining import is
+`app/tools.py:213`, where PyMuPDF renders page images and extracts per-page text for the
+agent's `read_pdf` tool.
+
+**Why that is still not a retirement.** Rendering is the part pypdfium2 does well and the
+part Docling's backends do not expose, so option 3 below is now a *much* smaller change than
+it was — one module, one tool, gated by `check_tools` — rather than a rewrite of the search
+path. It is not done here because 4.2 is a parser step and swapping a renderer on the way
+past is how a step stops being reviewable.
+
+**One thing that got worse and is recorded rather than buried:** `pypdfium2` is now installed
+*as well*, so the project currently ships two PDF libraries. That is the cost of the
+narrowing, and it goes away with option 3.
+
 Three options, none urgent, all cheaper now than after launch:
 
 1. **Keep it and accept the obligation.** Reasonable if the product is open source anyway.
@@ -95,9 +125,13 @@ Three options, none urgent, all cheaper now than after launch:
 3. **Move the read path to `pypdfium2`** (Apache-2.0 / BSD). A different library with
    different text extraction behaviour, so the swap must be gated: `check_search` at 9 of 9
    and `check_tools` at 12 of 12 on the same documents, before and after.
+   — **Half of this is done as of 4.2**, and pypdfium2 is already installed. What is left is
+   `tools.read_pdf` and page rendering, which is where pypdfium2 is strongest.
 
-**Status: undecided.** Record it in an ADR when decided. It blocks selling to a third party,
-not any step of the build.
+**Status: undecided, and the decision got cheaper.** Record it in an ADR when decided. It
+blocks selling to a third party, not any step of the build. The one thing that would change
+this from "undecided" to "urgent" is a customer contract requiring source disclosure terms
+the AGPL would trigger.
 
 ---
 
@@ -115,7 +149,10 @@ not any step of the build.
 | Docling (`docling-slim`, `docling-core`, `docling-parse`) | MIT | Yes | **verified 11 September 2026** — the LICENSE file itself, read by Amro. See the note below |
 | pypdfium2 | Apache-2.0 / BSD-3-Clause | Yes | unverified — **installed as of 4.2**, it is what `docling-parse` reads PDFs with. Already named above as the PyMuPDF escape route |
 | python-docx | MIT | Yes | unverified — installed 4.2, `.docx` only |
-| beautifulsoup4 | MIT | Yes | unverified — installed 4.2, `.html` only |
+| beautifulsoup4 | MIT | Yes | unverified — installed 4.2, `.html`, `.htm` |
+| python-pptx | MIT | Yes | **verified 11 September 2026** — its own LICENSE file, MIT, Steve Canny. Installed 4.2 part two, `.pptx` only |
+| marko | MIT | Yes | **verified 11 September 2026** — its own LICENSE file, MIT, Frost Ming. Installed 4.2 part two, `.md` only |
+| XlsxWriter | BSD-2-Clause | Yes | **verified 11 September 2026** — its own LICENSE.txt. Pulled in by python-pptx; **nothing in this project imports it** |
 | CUAD v1 (test corpus) | CC BY 4.0 | Yes, with attribution | unverified — **verify before 4.1**; it is data, not code, and the note below says why that matters |
 | cloudflared | Apache-2.0 | Yes | unverified |
 | Docker Engine | Apache-2.0 | Yes | unverified |

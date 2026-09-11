@@ -58,12 +58,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from app.config import (
-    UnsafePathError,
-    ensure_derived_dir,
-    manifest_path,
-    resolve_in_data_dir,
-)
+from app import sources
+from app.config import ensure_derived_dir, manifest_path
 
 # A recorded error is read by a person scanning a manifest and, later, by a
 # model deciding whether a document is usable. A stack trace pasted whole
@@ -382,13 +378,33 @@ def _prune(folder: Path) -> None:
 # --------------------------------------------------------------------------
 
 def _source(name: str) -> Path:
+    """One item, on local disk, whatever kind of source it came from.
+
+    Step 4.2's source seam. The resolution itself moved to app/sources.py and
+    was not rewritten; what stays here is the translation, so that every caller
+    of this module still sees IngestError and nothing downstream learned a new
+    exception type the day sources became a thing.
+    """
     try:
-        path = resolve_in_data_dir(name)
-    except UnsafePathError as exc:
+        return sources.active().fetch(name)
+    except sources.SourceError as exc:
         raise IngestError(str(exc)) from exc
-    if not path.is_file():
-        raise IngestError(f"No file named {name!r} in this tenant's folder.")
-    return path
+
+
+def _items() -> list[sources.Item]:
+    """Everything this tenant has, translated at the same boundary as _source.
+
+    A separate function because the first version of this seam translated only
+    `fetch` and let `list` raise SourceError straight through rebuild() and
+    forget_missing(). Callers of those catch IngestError -- so a source that
+    could not answer would have been a 500 in the two paths that walk the
+    WHOLE folder, and a clean 404 in the one that opens a single file. One
+    boundary, or it is not a boundary.
+    """
+    try:
+        return sources.active().list()
+    except sources.SourceError as exc:
+        raise IngestError(str(exc)) from exc
 
 
 def ingest(name: str, *, only_fast: bool = False) -> dict:
@@ -598,10 +614,8 @@ def forget_missing() -> dict:
     every search would buy tidiness at the cost of the hot path. It runs at
     rebuild, and when someone asks.
     """
-    from app.config import ensure_data_dir
-
-    folder = ensure_data_dir()
     root = ensure_derived_dir()
+    present = {item.id for item in _items()}
 
     known: set[str] = set()
     connection = connect()
@@ -615,7 +629,11 @@ def forget_missing() -> dict:
     for producer_folder in (p for p in root.iterdir() if p.is_dir()):
         known.update(p.name for p in producer_folder.iterdir() if p.is_dir())
 
-    gone = sorted(name for name in known if not (folder / name).is_file())
+    # Set membership rather than `(folder / name).is_file()`. Same answer for
+    # every name the pipeline can produce -- source_name is always a bare
+    # filename -- and it no longer turns a manifest row into a path lookup,
+    # which is the sort of thing a hand-edited control plane gets to exploit.
+    gone = sorted(known - present)
     removed = []
     for name in gone:
         removed.append(forget(name))
@@ -633,26 +651,28 @@ def rebuild(only_fast: bool = False, report: Callable[[float, str], None] | None
     search.rebuild() for the same reason: something that can always be rebuilt
     cannot accumulate anything irreplaceable.
     """
-    from app.config import ensure_data_dir  # local: keeps the import graph flat
-
     # Reconcile before producing. A rebuild that added what is missing but left
     # what should not be there would make "rebuilt" mean less every time it
     # ran, and this is the one moment the whole folder is already being walked.
     swept = forget_missing()
 
+    # The filtering is HERE and not in the source, deliberately: a source that
+    # returned only what some producer handles would make an unhandled item
+    # look deleted to forget_missing() above, which would then sweep the
+    # artifacts of a file sitting right there.
     suffixes = {s for p in _PRODUCERS.values() for s in p.handles}
-    files = sorted(
-        p for p in ensure_data_dir().iterdir()
-        if p.is_file() and p.suffix.lower() in suffixes and not p.name.startswith(".")
-    )
+    items = [
+        item for item in _items()
+        if item.suffix in suffixes and not item.id.startswith(".")
+    ]
     started = time.time()
     reports = []
-    for number, path in enumerate(files, start=1):
-        reports.append(ingest(path.name, only_fast=only_fast))
+    for number, item in enumerate(items, start=1):
+        reports.append(ingest(item.id, only_fast=only_fast))
         if report:
-            report(number / max(1, len(files)), f"{number} of {len(files)}: {path.name}")
+            report(number / max(1, len(items)), f"{number} of {len(items)}: {item.id}")
     return {
-        "files_seen": len(files),
+        "files_seen": len(items),
         "ran": sum(len(r["ran"]) for r in reports),
         "failed": sum(len(r["failed"]) for r in reports),
         "deferred": sum(len(r["deferred"]) for r in reports),

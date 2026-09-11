@@ -996,6 +996,65 @@ Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
 
+## 4.2 is done, and the gate it was told to build found two rows lying
+
+11 September. Two parts. *Part one* put one parser behind many formats
+(`app/parse.py`, a suffix → backend table, Docling's **backends** rather than its
+`DocumentConverter` — 35 packages and no torch against 85 and a multi-gigabyte
+GPU stack). *Part two* built the **source seam** and the gate.
+
+**`app/sources.py`.** `Source` is a name, `list()` and `fetch()`. `files` is
+today's behaviour **moved and not rewritten**, the Step 2.1 discipline, and the
+gate was that `git diff` on the consumers stays empty — it does. The three
+separate sentences `ingest.py` used to contain about local files (`_source`,
+`rebuild`, `forget_missing`) now go through one place, so a customer SQL
+database or a Drive connector is a new source rather than a second pipeline.
+
+**`active()` refuses a second source rather than picking one**, and that refusal
+is the design. The manifest keys on `(source_name, producer)` with **no column
+for which source a name came from**, so two sources each holding a
+`contract.pdf` would share one row and one folder of derived bytes. The day a
+connector lands, the schema change that must come first announces itself instead
+of quietly corrupting a manifest. Credentials are the other blocker and are
+named in the module: `tenancy.database_for()` still raises for every row because
+**no cipher was ever chosen** — Step 1's decision 4.5, still open, and now on the
+critical path.
+
+**And then the formats gate found that two of part one's rows were broken.**
+`.pptx` and `.md` were in the table with no library behind them. Nothing had
+noticed because **docling-slim imports a format's reader when the file is read,
+not when the backend module is imported** — so
+`docling.backend.mspowerpoint_backend` imports perfectly on a machine with no
+`python-pptx`, `require_readers()` passed, and the `ImportError` arrived from
+inside `convert()`, landed in `except Exception`, and was written to the
+manifest as **`unreadable`**: *"this file could not be read"*, about a file that
+was perfectly fine.
+
+That is **the third time** this project has paid for *a missing library reported
+as a broken document*. It is structural now rather than remembered:
+`Backend.needs` names the package each row actually defers to,
+`require_readers()` checks it, `parse._call` converts a call-time `ImportError`
+into `ProducerUnavailable`, and `check_ingest` reads one file of **every** suffix
+in the table looking for a sentinel *inside* the extracted text. Asserting that
+ingestion "succeeded" is exactly what let it through — **a producer that writes
+an empty artifact succeeds.**
+
+`check_ingest` went 14 → 31 checks. Suite 485 → 513. Retrieval **unchanged**
+against the 4.1 baseline, MRR 0.576 to three decimals, which is the right
+outcome for a parser swap.
+
+**PyMuPDF: not retired, and the question is much smaller.** `app/search.py` no
+longer reads a PDF at all, so `docs/licences.md`'s *"it is the PDF reader for the
+entire search path"* is no longer true. One use remains — `app/tools.py:213`,
+rendering page images for `read_pdf` — so the AGPL-3.0 exposure is one module and
+one tool, and the pypdfium2 swap that file specifies is a small gated change
+rather than a rewrite. The cost is recorded too: the project currently ships
+**two** PDF libraries.
+
+**Next is 4.3, the chunk producer**, where determinism is the property worth
+gating — a chunker that splits differently on Tuesday invalidates every citation
+ever issued.
+
 ## 4.1: there is a baseline now, and it found what retrieval is worst at
 
 11 September. `tests/fixtures/corpus/` holds **52 real commercial contracts**
@@ -1669,6 +1728,24 @@ Three more from Step 3, same class of thing:
    interpolates before it filters. Reasoning said otherwise; `docker compose
    config` said this.
 
+Two more from Step 4.2, and the first is the most expensive class in this file
+because it has now recurred three times:
+
+9. **A missing library is an environment fault; an unreadable file is a data
+   fault. Reporting the first as the second blames the customer's documents.**
+   It cost nineteen good PDFs indexed as empty, then `.pptx` and `.md` recorded
+   as damaged. **The subtlety that got it through the second time: a library
+   can defer its import to the call.** docling-slim imports a format's reader
+   when the file is read, so import-time checks prove nothing — the backend
+   module imports fine, and the `ImportError` arrives later from inside a
+   generic `except`. Check what a row *needs*, not what it *imports*.
+10. **"It succeeded" is not a gate. A producer that writes an empty artifact
+    succeeds.** Both broken format rows would have passed any check that
+    asserted on the outcome. What caught them was asserting on a sentinel
+    string *inside* the extracted text. **A row nothing ever reads is a claim,
+    not a fact** — which is also why the formats gate loops over the whole
+    table rather than a chosen few.
+
 ## The client database
 
 A client PostgreSQL instance on GCP; host, name and credentials live in
@@ -1683,10 +1760,11 @@ views, not client data.
 
 ## Run these to confirm the state
 
-    py -m pytest -q                           # 485 passed, 1 skipped
+    py -m pytest -q                           # 513 passed, 1 skipped
     py scripts/check_api_compat.py
     py scripts/check_gateway_isolation.py
     py scripts/check_isolation.py             # 54 passed, 1 not tested on Windows
+    py scripts/check_ingest.py                # 31 of 31, incl. every format in the table
     py scripts/check_retrieval.py             # MRR 0.576 against the committed baseline
     py scripts/check_agent.py                 # needs the model up
     py scripts/check_remote.py
