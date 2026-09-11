@@ -1,312 +1,321 @@
-# Step 4: The Retrieval Plane
+# Step 4: The Retrieval Plane, and the Seams Everything Else Plugs Into
 
-Status: **IN PROGRESS.** Signed off 11 September 2026, all six decisions taken as
-recommended. **4.0 is built and gated**; 4.1 is next and is the long one.
-Written 10 September 2026, after Step 2 completed.
+Status: **IN PROGRESS.** 4.0 is built and gated. **Rewritten 11 September 2026**, after the
+requirements turned out to be wider than the first draft assumed. Needs sign-off on the
+seven decisions in section 5.
 
-Step 2 built the pipeline that makes derived things out of a tenant's documents and can
-say whether one is ready. This step is the first consumer that pipeline was designed for,
-and the first thing here a website can call to get a passage out of a document.
-
----
-
-## 1. What this step is
-
-**A tenant-scoped HTTP surface that answers "which parts of this customer's documents bear
-on this question", and returns those parts with enough citation to check them.**
-
-Three endpoints, already named in `docs/architecture.md` §5:
-
-| | |
-|---|---|
-| `POST /api/v1/retrieve` | a query in, ranked passages out |
-| `GET /api/v1/documents` | what this tenant has, and whether it is ready |
-| `POST /api/v1/ingest/{name}` | make it ready |
-
-And, underneath them, the thing that makes the answer possible: **a chunk producer**, which
-is an ordinary Step 2 producer turning the text artifact into retrievable passages.
-
-**The one-line summary of the design: retrievers become additive, the way producers did.**
-Step 2's payoff was that vision, embeddings and field extraction each become a new producer
-rather than a fourth reader of the same PDF. Step 4's payoff is the same shape one level
-up: keyword search is the first retriever, the vector retriever arrives in Step 5, and it
-arrives as a row in a fusion that already works rather than as a second retrieval path.
-
-## 2. What this step is not
-
-- **Not embeddings, and not vector search.** That is Step 5. This step defines where a
-  second retriever plugs in and proves the plug with one retriever in it.
-- **Not a reranker.** A cross-encoder is a second model on the GPU and belongs with Step
-  5's model work. The response contract leaves room for it; nothing in this step runs one.
-- **Not an answer.** This plane returns passages, never prose. The boundary rule in
-  `README.md` is the reason and it is not negotiable here: *this server never learns what a
-  conversation is.* Query rewriting from conversation history, answer synthesis and
-  citation formatting are the website's, because they need the turn before this one.
-- **Not a new ingestion path.** Everything it serves comes out of `app/ingest.py`. If this
-  step finds itself opening a PDF, it has gone wrong.
-- **Not a change to `search_files`.** The local agent's tool keeps working exactly as it
-  does. The retrieval plane is a second consumer of the same index, not a replacement.
+4.0 stands unchanged and is done — the tenant bridge is needed under every version of this.
+Everything from 4.1 onward is new.
 
 ---
 
-## 3. What retrieval is today, and what it can and cannot do
+## 1. Why this plan was rewritten
 
-`app/search.py` is SQLite FTS5 over the whole extracted text of each document, one row per
-document, ranked by `bm25()`. It is genuinely good at what it does and two properties of it
-decide most of this step:
+The first draft assumed text-only PDFs and spreadsheets, one way in, and questions answerable
+from a handful of passages. The actual requirement is:
 
-**It returns documents, not passages.** A hit means "this file contains these words". The
-model then calls `read_pdf` and reads the whole thing. That is fine for a 300-word invoice
-and useless for a 90-page contract, because the whole thing does not fit in the window and
-nothing says which page mattered.
+- Customer data in **SQL databases, Google Docs and other cloud services**, not only files
+- **Many formats, including media**, and *"it seems stupid to hardcode all data types"*
+- **OCR from images**
+- Questions like *"which vendors has this client used across all their contracts, ranked by
+  spend"* and *"connect the dots across 200 contracts"*
+- *"find the chart that shows Q3 revenue"*
+- Speech to text and text to speech, possibly Kokoro
+- All of it **per customer, in isolation**
 
-**It cannot match a paraphrase.** `search_files` already says so out loud in its own
-result payload — *"This is a text match, not a filter"* — and that honesty is the reason
-the gap is worth closing rather than papering over.
+And one instruction that shapes the whole document more than any of the above:
 
-**What the window allows, measured on this box rather than assumed.** This is the number
-that decides how much retrieval is worth doing, and it comes from `docs/models.md` and the
-9 September tokenizer run, not from a rule of thumb:
+> **"I want to build the skeleton that allows for all these systems to be added as features
+> later on. Build this right, focused on scalability."**
 
-| | tokens |
-|---|---|
-| `--max-model-len` (Qwen3-14B-AWQ) | 16,384 |
-| Undroppable floor (system prompt 2,069 + 12 tool schemas ~2,144) | 4,213 |
-| Left for the whole conversation | **12,171** |
-| A sane retrieval budget inside that | **~4,000** |
+So this step does not build vision, speech, connectors or graph reasoning. **It builds the
+four places they attach**, and proves each one by putting the cheapest possible thing in it.
+The measure of success is not what this step can do. It is **how little has to change when
+the next thing arrives.**
 
-**So the interesting derivation: Anthropic's published advice is that under ~200,000 tokens
-you should skip RAG and put the whole corpus in the prompt. This deployment cannot. Its
-whole-corpus ceiling is about 12,000 tokens, not 200,000** — a factor of sixteen earlier.
-Retrieval starts earning its keep here at roughly **ten thousand tokens of documents**,
-which is perhaps twenty ordinary PDFs. That is a much lower bar than the industry number
-and it is the honest justification for building this at all.
-
-**And the uncomfortable fact, recorded rather than hidden.** The bootstrap tenant's corpus
-today is **11 documents totalling 1,768 characters — about 505 tokens.** Every one of them
-is a test fixture written by a gate script. Nothing in this project has ever exercised
-retrieval at a size where retrieval matters, and no amount of careful design substitutes
-for that. **Decision 4.6 is about fixing this before anything else in the step is
-believed**, and it is deliberately the decision with the least interesting content and the
-most consequence.
+That is the same bet Step 2 made and won: vision, embeddings and field extraction each
+became a *producer* rather than a fourth reader of the same PDF.
 
 ---
 
-## 4. Six decisions
+## 2. What this step is
 
-### 4.1 What is the unit that comes back?
+**A tenant-scoped HTTP surface that answers "which parts of this customer's material bear on
+this question", returns them with enough citation to check, and is built so that a new
+source, a new format, a new retriever or a new model is a registration rather than a
+rewrite.**
 
-| Option | Shape | Verdict |
-|---|---|---|
-| a. Documents, as today | `{name, snippet, score}` | The status quo. It cannot answer "where in the contract", which is the question a retrieval plane exists for. |
-| **b. Passages with a citation** | `{document, chunk_id, text, offsets, score}` | **Recommended.** The caller can quote it, show it, and check it. The offsets are what let a website highlight the source rather than assert it. |
-| c. An answer | `{answer, sources}` | Crosses the boundary rule. It needs the conversation, and the conversation is not here. |
+## 3. What this step is not
 
-**Recommendation: (b).** And one thing that follows from it and is worth stating separately,
-because it is the difference between a citation and a decoration: **the offsets must point
-into the source document's extracted text, not into the chunk.** A chunk that says "chars
-4,096–4,608 of `contract.pdf`" can be checked by anyone holding the file. A chunk that
-knows only its own index cannot.
+- **Not vision, speech, OCR or cloud connectors.** Each gets a named slot in section 7 and
+  a VRAM budget in section 8. None is built here.
+- **Not an answer.** This plane returns passages and rows, never prose. The boundary rule in
+  `README.md` holds: *this server never learns what a conversation is.* Query rewriting from
+  conversation history and answer synthesis are the website's, because they need the turn
+  before this one.
+- **Not a change to `search_files`.** The local agent's tool keeps working exactly as it does.
 
-### 4.2 Where do chunks come from?
+---
 
-| Option | Cost |
-|---|---|
-| a. Chunk at query time | The same PDF re-split on every question, and a chunk boundary that moves when the code changes under a cache nobody invalidated. |
-| **b. A Step 2 producer** | **Recommended.** Chunks are exactly what decision 4.1 of the Step 2 plan describes: something derived from a source file, by a named producer, at a declared version, which can be thrown away and made again. |
-| c. Inside `search.py` | The arrangement Step 2 spent five sub-steps ending. |
+## 4. The skeleton: four seams, and the two answer paths
 
-**Recommendation: (b), and it is the reason Step 2 came first.** The chunker declares
-`name="chunks"`, `version=1`, `handles={".pdf", ".xlsx", ".xlsm"}`, `slow=False`, and
-consumes the **text artifact** rather than the source file — so it splits exactly what the
-index indexed, and a document is never chunked from bytes the index never saw.
+### The four seams
 
-Three things fall out for free, and they are the whole argument:
+```
+        SOURCE  ──►  PRODUCER  ──►  RETRIEVER  ──►  /api/v1/retrieve
+          │             │              │
+      where data    what gets      how a question
+      comes from    derived        finds material
+          │             │              │
+        files       text, chunks,   keyword
+        (today)     fields          (today)
+          │             │              │
+        SQL,        OCR, page       vector, structured,
+        Google      images,         graph
+        Docs,       embeddings      (later)
+        cloud       (later)
+        (later)
+                          MODEL ROLE
+                    which model does what
+                    chat (today) │ embed, vision, stt, tts (later)
+```
 
-- **Re-chunking is a version bump.** Changing the chunk size from 512 to 384 is
-  `version=2`, and every document re-chunks on next ingest. That is the machinery from
-  Step 2.4, already built and gated.
-- **`status(name)` already answers "is this retrievable".** A document whose `chunks` row
-  is `ok` is; one whose row is missing or failed is not, and says which.
-- **A tenant delete already takes the chunks with it**, because `scripts/tenant.py` removes
-  `derived/<tenant>/` wholesale. Step 2.5 paid for that.
+| Seam | Exists? | What it is | What plugs in later |
+|---|---|---|---|
+| **Source** | **No — 4.2 builds it** | Where a tenant's material comes from | Customer SQL, Google Docs, Drive, cloud storage |
+| **Producer** | **Yes — Step 2 built it** | What is derived from a source, at a declared version | OCR, page images, extracted fields, embeddings |
+| **Retriever** | **No — 4.6 builds it** | How a question finds material, fused by rank | Vector search, structured lookup, graph |
+| **Model role** | **No — 4.7 declares it** | Which model fills which job | Embedding, vision, STT, TTS |
 
-### 4.3 How is a chunk made?
+The producer seam already works and is gated, which is the evidence that this shape is
+worth repeating. `Producer` declares `name`, `version`, `handles` and `slow`; `ingest.py`
+records what was asked for, whether it worked, and against which version; a version bump
+re-derives everything; and a tenant delete takes it all with it.
 
-The evidence, because this is the one place in the step where the wider field has actually
-measured things and the answer is not obvious:
+### The two answer paths, and why one of them is not RAG
 
-| Strategy | Finding |
-|---|---|
-| Recursive character splitting, 512 tokens | Best end-to-end accuracy (69%) of seven strategies benchmarked over 50 academic papers, Feb 2026. Fast and cheap. |
-| Semantic chunking | Sometimes better recall for dense retrieval, but produces chunks too small or too large for BM25 to score well — and it needs an embedding model at ingest time, which this project does not have until Step 5. |
-| Overlap | Contested. Industry practice says 10–25%; a Jan 2026 systematic analysis found no measurable benefit and only added indexing cost. |
+This is the most important thing in the document.
 
-**Recommendation: recursive splitting, target 512 tokens, 64 tokens of overlap.**
+**Path A — passages.** *"What do the documents say about the Meridian payment terms?"*
+Retrieval finds the passages that bear on it, returns them with citations, and the website
+turns them into an answer. This is RAG and this step builds it.
 
-- **512** because it is the benchmarked default and because it divides the ~4,000-token
-  retrieval budget derived in section 3 into **eight passages**, which is a number a
-  reader can actually look at.
-- **Recursive**, meaning: split on paragraph breaks; if a piece is still too long, split on
-  sentence ends; if still too long, split on whitespace; only then split mid-word. Structure
-  is preferred to size, and size is the fallback.
-- **64 tokens of overlap (12.5%)**, at the bottom of the industry range and deliberately so.
-  The evidence for overlap is weak; the cost is small; a sentence cut in half at a boundary
-  is a real failure and this is the cheapest insurance against it. **If a later measurement
-  shows it buying nothing, it is a `version` bump to remove.**
-- **Tokens are counted with the model's own tokenizer where the box is reachable**
-  (`/tokenize`, already used on 9 September) and estimated at 3.5 characters per token where
-  it is not. The estimator is already shared (`llm.estimate_prompt_tokens`) and a second one
-  would drift, which is the reasoning Step 3 recorded when it made one estimator serve two
-  paths.
+**Path B — facts.** *"Which vendors has this client used across all their contracts, ranked
+by spend?"*
 
-**Deliberately not doing contextual retrieval yet, and designed so it is a version bump.**
-Anthropic's method — an LLM writing 50–100 tokens of "where this chunk sits in the document"
-and prepending it before indexing — is the single best-evidenced improvement in the field:
-failure rates 5.7% → 3.7% with contextual embeddings, → 2.9% adding contextual BM25, → 1.9%
-adding reranking. It costs about $1.02 per million document tokens against a hosted model,
-and near-nothing against a GPU already sitting here. **It is the obvious Step 5.x upgrade,
-it needs a model call per chunk, and it lands as `chunks` version 2.** Building the producer
-now with that in mind is most of the work of adopting it later.
+**Retrieval cannot answer this, and will not say so.** It finds the top-k relevant chunks —
+eight of them — hands them to a model, and the model produces a confident, well-formatted
+ranking **derived from 4% of the contracts**. No error is raised. It looks exactly like a
+correct answer.
 
-### 4.4 How do several retrievers combine?
+This project has already been bitten by this exact failure. `HANDOVER.md`, on the deployed
+site: *"fabricates rows without calling a tool, and the UI renders that as a result grid —
+so the gate passes on the screen while nothing has run."*
 
-They will not for a while — there is one — but the shape decided now is what Step 5 plugs
-into, and getting it wrong means Step 5 rewrites this instead of extending it.
+The answer to a question about *all* the data is not better retrieval. It is **structured
+extraction at ingest time**: a producer pulls `(vendor, amount, date, document)` out of each
+contract into a real table as it arrives, and the question is answered with **SQL** — exact,
+complete, and checkable against the rows. `app/db.py` already runs read-only SQL with a
+four-layer safety model, and `run_sql` is already a tool the model has.
+
+**Both paths are built on the same seams.** The extraction producer is a producer. The fact
+table is a retriever of a different shape. What this step must get right is that **a question
+needing Path B never gets silently answered from Path A** — decision 5.6.
+
+---
+
+## 5. Seven decisions
+
+### 5.1 What is the unit that comes back?
 
 | Option | Verdict |
 |---|---|
-| a. Blend the scores | Wrong, and confidently so. BM25 is an unbounded positive number; cosine similarity is −1 to 1. Averaging them is arithmetic on incompatible units, and the result is dominated by whichever scale happens to be larger. |
-| b. One retriever wins, the other is a fallback | Loses the case hybrid exists for: a query that is half a product code and half a paraphrase. |
-| **c. Reciprocal Rank Fusion** | **Recommended.** Throw the scores away, keep the positions. A document at rank *r* contributes `1/(k + r)`. Something both retrievers like accumulates from both and rises above anything only one liked. |
+| a. Documents, as today | Cannot answer "where in the contract", which is the question a retrieval plane exists for |
+| **b. Passages with a citation** | **Recommended.** `{source, chunk_id, text, offsets, score}` — quotable, showable, checkable |
+| c. An answer | Crosses the boundary rule. Needs the conversation, which is not here |
 
-**Recommendation: (c), with k = 60 and a per-retriever weight defaulting to 1.0.**
+**Recommendation: (b).** And the part that separates a citation from a decoration: **the
+offsets point into the source's extracted text, not into the chunk.** "Characters 4,096–4,608
+of `contract.pdf`" can be verified by anyone holding the file. A chunk that knows only its
+own index cannot.
+
+### 5.2 Where does format-agnostic parsing come from? *(new)*
+
+The requirement is explicit: many formats, media included, and no hardcoded list. Today
+`producers.py` has `SEARCHABLE = {".pdf", ".xlsx", ".xlsm"}` and hand-rolled readers.
+
+| Option | Verdict |
+|---|---|
+| a. Keep adding readers per format | Does not scale to "I cannot list you all data types", and each new format is a code change |
+| b. Write one abstraction over several parsers ourselves | Rebuilding a solved problem. Nobody should hand-write an `.odt` parser |
+| **c. Adopt a document-parsing library behind ONE producer** | **Recommended.** Formats become a property of the library, not of our code |
+
+**Recommendation: (c).** Candidates are **Docling** and **`unstructured`**; both cover PDF,
+Office formats, HTML, images and OCR behind one call. **Neither licence is verified**, and
+under this project's own rule in `docs/licences.md` a licence read through a summary is not
+verified — that must be cleared before either is adopted, the same as `sqlite-vec`.
+
+Three things follow:
+
+- **It is a producer, not a framework.** It sits behind `Producer(name="text", version=2)`,
+  the ingestion contract is unchanged, and a version bump re-derives every document.
+- **`handles` stops being a hardcoded set** and starts being "what the library reports it can
+  read", so a new format is a library upgrade.
+- **It may retire PyMuPDF, which is AGPL-3.0** and the most serious licence risk in
+  `docs/licences.md`. That is a real secondary win, not the reason.
+
+### 5.3 Where do chunks come from?
+
+| Option | Verdict |
+|---|---|
+| a. Chunk at query time | The same document re-split on every question, with boundaries that move under a cache nobody invalidated |
+| **b. A Step 2 producer** | **Recommended.** Exactly what the producer seam is for |
+| c. Inside `search.py` | The arrangement Step 2 spent five sub-steps ending |
+
+**Recommendation: (b).** `name="chunks"`, consuming the **text artifact** rather than the
+source, so it splits exactly what was indexed and a document is never chunked from bytes the
+index never saw.
+
+### 5.4 How is a chunk made?
+
+**Recursive character splitting, target 512 tokens, 64 of overlap.** 512 benchmarked best of
+seven strategies over 50 academic papers (Feb 2026) and divides the ~4,000-token retrieval
+budget into **eight passages**. Overlap at 12.5% is at the bottom of the industry range
+deliberately — the evidence for it is weak, the cost is small, and a sentence cut in half at
+a boundary is a real failure. **If a measurement shows it buying nothing, it is a version
+bump to remove.**
+
+Tokens counted with the model's own tokenizer where the box is reachable, estimated at 3.5
+characters per token where it is not, using the shared `llm.estimate_prompt_tokens`.
+
+**Contextual retrieval is deliberately deferred and designed for.** Anthropic's method — an
+LLM writing 50–100 tokens of "where this chunk sits" before indexing — is the best-evidenced
+improvement in the field: failure rates 5.7% → 3.7% → 2.9% → 1.9%. It needs a model call per
+chunk and lands as `chunks` version 2. Building the producer now with that in mind is most
+of the work of adopting it later.
+
+### 5.5 How do several retrievers combine? *(the retriever seam)*
+
+| Option | Verdict |
+|---|---|
+| a. Blend the scores | Wrong, confidently. BM25 is unbounded; cosine is −1 to 1. Averaging them is arithmetic on incompatible units |
+| b. One wins, the other is a fallback | Loses the case hybrid exists for: half a product code, half a paraphrase |
+| **c. Reciprocal Rank Fusion** | **Recommended.** Throw the scores away, keep the positions |
+
+**Recommendation: (c), k = 60, per-retriever weight defaulting to 1.0.**
 
 ```
 score(chunk) = Σ  weight[retriever] / (60 + rank[retriever][chunk])
 ```
 
-Two properties make this the right thing to build with one retriever in the list:
+**A retriever returns ranks, not scores** — the decision expressed in the type. A retriever
+that cannot leak its scale into the fusion cannot break it, and the next person cannot
+"improve" it by blending.
 
-- **Fusion of a single ranked list is that list, in order.** So Step 4 ships RRF that
-  provably does nothing, and Step 5 turns it on by appending to a list. This is exactly the
-  2.1 pattern — build the machinery, prove it against known-good behaviour, then move the
-  interesting thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
-- **k = 60 is the value from the original RRF paper and every implementation since.** It is
-  not tuned here and should not be, until something measures it.
+**Fusion of a single ranked list is that list, in order.** So this step ships RRF that
+provably does nothing, and the vector retriever turns it on by appending to a list. That is
+the 2.1 pattern — build the machinery, prove it against known-good behaviour, then move the
+interesting thing behind it — and 2.1 is where the gate caught two real bugs.
 
-Expected payoff, for the record, so Step 5 can be checked against it rather than assumed:
-hybrid retrieval plus reranking measured **Recall@5 = 0.816 and MRR@3 = 0.605** against
-single-stage methods in a 2026 benchmark, roughly nine points of MRR over semantic-only.
-**This step will not see any of that**, because it has one retriever. Its job is to make
-those numbers measurable when the second one arrives.
+### 5.6 How is a question that needs all the data kept out of the passage path? *(new)*
 
-### 4.5 How does a foreign tenant id become a local one?
-
-**And this is a prerequisite, not a detail: the bridge does not exist.** `docs/architecture.md`
-§6 designs a `tenant_alias` table and marks it PLANNED; the control plane holds `tenants`,
-`tokens`, `users`, `tenant_database` and `meta`, and nothing else. **Nothing on this plane
-can be tenant-scoped until it is built**, and the retrieval plane is meaningless untenanted.
-
-The rule it exists to enforce is already written down and is the sharpest one in the
-project: **a foreign id must never become a filesystem path.** `context.validate_tenant_id`
-requires `^[a-z][a-z0-9_-]{0,31}$` and that value becomes a directory name. The website's
-tenant is a row id from its own schema, chosen by a system that has never heard of this
-constraint.
+The failure in section 4 is not hypothetical and it is not detectable by the caller.
 
 | Option | Verdict |
 |---|---|
-| a. Validate the foreign id and use it directly | One regex between another system's primary key and this filesystem. It would hold until the day their ids change shape. |
-| b. Hash the foreign id into a local one | No lookup table to keep, and no way to answer "whose folder is this" from the folder name. |
-| **c. An explicit `tenant_alias` table** | **Recommended, and already designed.** `(external_system, external_id) -> local tenant id`, the local id generated here by `tenancy.new_id()`. |
+| a. Trust the model to notice | It will not. A confident ranking from 8 of 200 contracts is indistinguishable from a correct one |
+| b. Raise `k` until it fits | 200 contracts do not fit in 12,171 tokens. This fails silently at the exact moment it matters |
+| c. Classify the question with a model call | Another model call, another thing to be wrong, and it needs the conversation |
+| **d. Make the two paths separate tools, and make the passage path declare its own coverage** | **Recommended** |
 
-**Recommendation: (c), with an unlinked id answering 404 and not 403.** "That tenant exists
-but is not yours" confirms an id someone guessed, and over enough guesses it counts another
-customer's tenants. The job lane already set this precedent (`jobs.Lane.get`) and the
-retrieval plane inherits it rather than re-deciding it.
+**Recommendation: (d), in two halves.**
 
-### 4.6 What corpus is any of this measured against?
+- **Separate tools.** Path B is `run_sql` against an extracted fact table — a tool the model
+  already has, returning exact rows. Path A is `retrieve`, returning passages. The model
+  chooses, the same way it already chooses between `search_files` and `read_pdf`.
+- **The passage response states its own coverage**, and this is the load-bearing half:
+  `searched`, `matched` and `returned` counts, plus `truncated`. A caller — or a reader of
+  the trace — can see that a question about 200 contracts was answered from 8 passages. The
+  response also carries `what_this_means`, carried over in spirit from `search_files`, which
+  already says out loud that a text match is not a filter.
 
-**The decision with the least interesting content and the most consequence.** Section 3's
-number: the bootstrap tenant holds 505 tokens of test fixtures. A retrieval plane gated
-against that proves nothing, and would pass while being useless.
+**This does not fully solve it and the plan should not claim it does.** It makes the shortfall
+*visible* rather than invisible, which is the difference between a bug someone can find and
+one nobody can. Properly routing aggregate questions is its own step, named in section 9.
+
+### 5.7 What corpus is any of this measured against?
+
+**The decision with the least interesting content and the most consequence.** The bootstrap
+tenant holds **11 documents, 1,768 characters, about 505 tokens** — re-measured 11 September,
+and every one of them is a fixture written by a gate script. A retrieval plane gated against
+that proves nothing and would pass while being useless.
 
 | Option | Verdict |
 |---|---|
-| a. The client's real documents | They are a customer's. They are not in the repository and must not be, and a gate that cannot run on a laptop is a gate that stops being run. |
-| b. Generate a corpus with the model | Reproducible only if the model is pinned, and the model is the thing under test in half of these checks. |
-| **c. A committed synthetic corpus with a hand-written golden set** | **Recommended.** Perhaps 40–60 documents of a few pages each, deliberately containing near-duplicates, shared vocabulary and a few rare exact strings; plus 25–30 queries whose correct document is written down. |
+| a. The client's real documents | A customer's. Not in the repository, and a gate that cannot run on a laptop stops being run |
+| b. Generate a corpus with the model | Reproducible only if the model is pinned, and the model is under test in half these checks |
+| **c. A committed synthetic corpus with a hand-written golden set** | **Recommended** |
 
-**Recommendation: (c), and it is sub-step 4.1 rather than an afterthought.** It has to hold
-the three things that break retrieval, because a corpus that lacks them makes any method
-look good:
+**Recommendation: (c), and it is sub-step 4.1 rather than an afterthought.** 40–60 documents
+**across several formats now, not only PDF** — the format seam has to be exercised by the
+corpus that grades it — plus 25–30 queries whose correct document is written down. It must
+hold the four things that break retrieval:
 
-- **Near-duplicates**, so precision means something. `check_search.py` already does this
-  with its 40 decoy invoices and it is the reason that gate is worth running.
-- **Rare exact strings** — reference numbers, part codes, surnames — which is what keyword
-  retrieval wins and dense retrieval loses.
-- **Paraphrase targets**, where the query shares no content word with the document. These
-  will **fail** in Step 4 and are written now anyway, because they are how Step 5's benefit
-  gets measured rather than asserted. A golden set that the current system passes completely
-  is a golden set that cannot show an improvement.
+- **Near-duplicates**, so precision means something
+- **Rare exact strings** — reference numbers, part codes, surnames — which keyword wins
+- **Paraphrase targets**, which will **fail** in this step and are written now anyway, because
+  that is how the vector retriever's benefit gets measured rather than asserted
+- **At least one aggregate question**, which Path A must be seen to answer *incompletely*
 
 Metrics: **Recall@k and MRR**, both standard, both computable without a judge model.
 
 ---
 
-## 5. The design, concretely
+## 6. The design, concretely
 
 ```
-data/<tenant>/                              source documents, unchanged
+data/<tenant>/                              source material, unchanged
 derived/<tenant>/manifest.sqlite3           what has been produced, unchanged
-derived/<tenant>/text/<file>/text.txt       Step 2.1, unchanged
-derived/<tenant>/chunks/<file>/chunks.json  NEW: the passages
+derived/<tenant>/text/<item>/text.txt       Step 2.1; producer swapped in 4.2
+derived/<tenant>/chunks/<item>/chunks.json  NEW: the passages
 index/<tenant>.sqlite3                      FTS5, gains a `chunks` table
-control/control.sqlite3                     gains `tenant_alias`
+control/control.sqlite3                     tenant_alias (4.0, done)
+models.toml                                 NEW: which model fills which role
 ```
 
-### The chunk
+### The source seam
+
+```python
+@dataclass(frozen=True)
+class Source:
+    name: str                   # "files", later "postgres", "gdrive"
+    def list(self) -> list[Item]: ...
+    def fetch(self, item_id: str) -> Path: ...
+```
+
+`files` is the only one implemented, and it is today's behaviour moved behind the interface
+and **not rewritten** — the same discipline as Step 2.1, whose gate was that `git diff` on
+the consumer stayed empty. A connector arriving later registers a `Source` and produces into
+the same pipeline, with the same manifest and the same tenant delete.
+
+**Credentials are the real blocker and are named, not hidden.** Any source that is not local
+files needs *that customer's* credentials stored encrypted. `tenancy.database_for()` raises
+for any row it finds because **no cipher was ever chosen** — Step 1's decision 4.5, still
+open, `tenant_database` still empty. **Every cloud connector sits behind it**, and it is now
+on the critical path rather than a footnote. Section 9 gives it a step of its own.
+
+### The chunk and the retriever
 
 ```python
 @dataclass(frozen=True)
 class Chunk:
-    document: str       # the filename in data/<tenant>/
-    ordinal: int        # 0, 1, 2 ... within the document
+    source: str         # the item in data/<tenant>/
+    ordinal: int
     text: str
-    start: int          # character offset into derived/<tenant>/text/<file>/text.txt
+    start: int          # character offset into the text artifact
     end: int
-    tokens: int         # counted, or estimated, and which is recorded
-```
+    tokens: int
 
-`chunk_id` is `f"{document}#{ordinal}"`. Stable across a re-chunk at the same producer
-version, and deliberately **not** stable across a version bump — because it is not the same
-passage any more, and a citation that survives its own text changing is worse than one that
-breaks.
-
-### The FTS5 side
-
-A second virtual table in the same per-tenant index file, beside `documents`:
-
-```sql
-CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
-    chunk_id UNINDEXED,
-    document,
-    text,
-    ordinal UNINDEXED,
-    start UNINDEXED,
-    end UNINDEXED,
-    tokens UNINDEXED,
-    tokenize = 'porter unicode61'
-);
-```
-
-`document` is indexed as well as `text` so a filename term still matches, which is what
-users type. Same file as the document index because it is the same cache with the same
-disposability rule, and a second file would be a second thing to forget to delete.
-
-### The retriever interface
-
-```python
 @dataclass(frozen=True)
 class Hit:
     chunk_id: str
@@ -317,17 +326,9 @@ class Retriever(Protocol):
     def search(self, query: str, limit: int) -> list[Hit]: ...
 ```
 
-**A retriever returns ranks, not scores.** Not a simplification — it is decision 4.4
-expressed in the type. A retriever that cannot leak its scores into the fusion cannot break
-the fusion by having a different scale, and the next person cannot "improve" it by blending.
-
-`app/retrieve.py`:
-
-```python
-def register(retriever: Retriever, weight: float = 1.0) -> None
-def fuse(results: dict[str, list[Hit]], weights: dict[str, float]) -> list[str]
-def retrieve(query: str, *, k: int = 8, budget_tokens: int | None = None) -> dict
-```
+`chunk_id` is `f"{source}#{ordinal}"`, stable across a re-chunk at the same version and
+deliberately **not** across a version bump — it is not the same passage any more, and a
+citation that survives its own text changing is worse than one that breaks.
 
 ### The wire contract
 
@@ -337,9 +338,7 @@ X-Syslab-Tenant: <external id>
 Authorization: Bearer <service token>
 
 { "query": "what were the payment terms on the Meridian contract",
-  "k": 8,
-  "budget_tokens": 4000,
-  "documents": ["meridian_contract.pdf"] }      # optional filter
+  "k": 8, "budget_tokens": 4000, "sources": ["meridian_contract.pdf"] }
 ```
 
 ```json
@@ -347,142 +346,200 @@ Authorization: Bearer <service token>
   "retrievers": ["keyword"],
   "passages": [
     { "chunk_id": "meridian_contract.pdf#12",
-      "document": "meridian_contract.pdf",
-      "ordinal": 12,
+      "source": "meridian_contract.pdf",
       "text": "Payment falls due thirty days from invoice date ...",
       "start": 6144, "end": 6698, "tokens": 138,
-      "rank": 1,
-      "found_by": ["keyword"] }
+      "rank": 1, "found_by": ["keyword"] }
   ],
+  "coverage": { "searched": 214, "matched": 31, "returned": 8 },
   "tokens_returned": 138,
   "truncated": false,
-  "what_this_means": "These passages CONTAIN or RESEMBLE the words asked about..." }
+  "what_this_means": "These passages CONTAIN or RESEMBLE the words asked about. This is a
+                      sample, not a census: 8 of 31 matching passages were returned. Do not
+                      answer a question about ALL of something from this." }
 ```
 
-Four things in that payload are load-bearing:
+Five things are load-bearing:
 
-- **`found_by`** names which retrievers ranked it. When Step 5 lands, this is how anyone
-  can see whether the vector side is contributing anything, without instrumenting the box.
-- **`tokens_returned` and `truncated`** exist because the caller has a 12,171-token
-  conversation budget and needs to know what it just spent. `truncated` says "the budget
-  stopped this", never "that was all there was" — the distinction Step 2 learned when a
-  skipped file and an unreadable file were told apart.
-- **`what_this_means`** is carried over verbatim in spirit from `search_files`, which
-  already says a text match is not a filter. A retrieval result reads like an answer, and
-  it is not one.
-- **No score.** Ranks and `found_by`, nothing else. A float labelled "score" invites a
-  caller to threshold on it, and it would mean something different the day a second
-  retriever joins.
+- **`found_by`** names which retrievers ranked it — how anyone sees whether the vector side
+  contributes, without instrumenting the box.
+- **`coverage`** is decision 5.6 made visible. It is the difference between a wrong aggregate
+  answer nobody can detect and one anybody can.
+- **`tokens_returned` / `truncated`** — the caller has a 12,171-token conversation budget and
+  needs to know what it just spent. `truncated` says "the budget stopped this", never "that
+  was all there was".
+- **`what_this_means`** — a retrieval result reads like an answer and is not one.
+- **No score.** A float labelled "score" invites thresholding, and it would mean something
+  different the day a second retriever joins.
 
-### The frozen surface
-
-**`/api/v1/*` gets frozen the way `/v1` is, and for the same reason.** Step 3.5 froze the
-inference plane because the website deploys separately, so a narrowing here is found by a
-customer rather than by a test. Every word of that applies to the retrieval plane. It
-extends `docs/api/gateway-v1.released.json` and `scripts/check_api_compat.py` rather than
-inventing a second mechanism.
-
-The local `/api/*` surface stays unfrozen. It is this install's own admin surface and its
-caller ships with it.
+**`/api/v1/*` is frozen** the way `/v1` is, through `docs/api/gateway-v1.released.json` and
+`scripts/check_api_compat.py`. The website deploys separately, so a narrowing is found by a
+customer rather than by a test. A field may be **added**; the freeze forbids narrowing.
 
 ---
 
-## 6. Step by step
+## 7. Where the extra models fit
 
-**4.0 The tenant bridge. DONE, 11 September 2026.** `tenant_alias` in the control plane,
-`tenancy.resolve_alias`, `app/plane.py` with the dependency and an empty `/api/v1` router,
-`RETRIEVAL_TOKENS` as `system:token` pairs, and `scripts/tenant.py alias link|unlink|list`.
-Gate: `check_isolation` § 7b, **38 → 54 checks**, each written by breaking the property
-first — and two of them were decoration until that run, which is the whole argument for
-the habit. Suite 426 → 471.
+Not built here. **Declared here**, so adding one is filling a row rather than designing a
+mechanism. This is `models.toml`, deferred from Step 3.4 because one model gave it nothing to
+hold — it now has five roles to hold.
 
-One thing the plan did not anticipate and one bug found on the way:
+```toml
+[roles.chat]      # filled: Qwen3-14B-AWQ, 16384, via vLLM
+[roles.embed]     # empty
+[roles.vision]    # empty
+[roles.stt]       # empty
+[roles.tts]       # empty
+```
 
-- **The service token had to be decided here**, because a dependency with no credential is
-  a plane anyone can call. `RETRIEVAL_TOKENS` follows the `GATEWAY_TOKENS` precedent but is
-  a *mapping*, so the external system comes from the token and never from a header. The
-  `kind` column on real tokens that `app/config.py` promised to Step 4 is still not built;
-  it is wanted when a service token needs revoking without a restart.
-- **`tenancy.new_id()` was generating ids the rest of the application refuses**, about one
-  in four. See the Fixed entry in `CHANGELOG.md`; it is the bug this sub-step is most glad
-  to have found, because the retrieval plane is the first thing that would have created a
-  tenant without choosing its id by hand.
+**An empty value means unavailable, never a silent fallback.** That is the rule the file
+exists for, and it is the same rule as `current_tenant()` raising rather than defaulting.
 
-**4.1 The corpus and the golden set.** `tests/fixtures/corpus/` and a committed
-`golden.json`: 25–30 queries, each with the document that answers it and, where it is
-unambiguous, the passage. Plus `scripts/check_retrieval.py` reporting Recall@k and MRR.
+**This moves `models.toml` back out of Step 5**, where Step 3.4 deferred it — recorded in
+`CHANGELOG.md` and `HANDOVER.md`, both updated. The reason for deferring was that one model
+gave the file nothing to hold. That reason is gone: the file now holds the *shape* of four
+models that have been asked for, and declaring the slot before filling it is the whole
+request this plan exists to answer. It is the same order Step 2.0 used — the pipeline
+existed, gated and unimported, before its first producer moved behind it.
+
+| Role | What it unlocks | How it attaches | Rough VRAM |
+|---|---|---|---|
+| **embed** | Paraphrase matching — the second retriever | `Retriever` + an `embeddings` producer | ~2 GiB |
+| **vision** | "Find the chart showing Q3 revenue"; OCR of scans | A `page_images` producer, then a captioning producer whose output is indexed as text | ~3–4 GiB |
+| **stt** | Speech in | A producer over audio items | ~1–2 GiB, or CPU |
+| **tts** | Speech out | Not a producer — a response path | ~0.3 GiB, CPU is fine |
+
+**The VRAM arithmetic, and it is arithmetic, not a measurement.** 32 GiB card; the 14B at
+`--gpu-memory-utilization 0.70` takes ~22 GiB; **~9.4 GiB free**, recorded in
+`docs/models.md`. The four roles above come to roughly **6.5–8 GiB**. It fits, narrowly.
+
+Two things that must not be glossed:
+
+- **Each is a separate container**, not a flag. `--runner pooling` is not a mode the
+  generative server can also be in, so the embedding model is a second vLLM instance — a
+  compose change and a boot-order question.
+- **`docs/models.md` already records a projection of this kind missing.** At
+  `--gpu-memory-utilization 0.85` the estimate was 3.4x and the delivery was 2.58x, because
+  vLLM's overhead grows with the budget. **Read the startup log and record the real numbers**
+  before believing this table.
+
+**The honest summary: they fit on paper, with no room for a bad estimate.** If vision turns
+out to need a larger model, something moves to CPU or the chat model gets quantised further —
+and that is a trade to make with measurements, not now.
+
+---
+
+## 8. Step by step
+
+**4.0 The tenant bridge. DONE, 11 September 2026.** `tenant_alias`, `tenancy.resolve_alias`,
+`app/plane.py`, `RETRIEVAL_TOKENS`, the CLI. Gate: `check_isolation` § 7b, 38 → 54 checks,
+each written by breaking the property first — two were decoration until that run. Suite
+426 → 471. Found and fixed two pre-existing bugs: `new_id()` generating ids the application
+refuses one time in four, and a non-ASCII bearer token being a 500 rather than a 401.
+
+**4.1 The corpus and the golden set.** `tests/fixtures/corpus/` across several formats, and a
+committed `golden.json`. Plus `scripts/check_retrieval.py` reporting Recall@k and MRR.
 Gate: it runs, and **it reports today's document-level keyword numbers before any of this
 step's code exists.** A baseline measured after the change is not a baseline.
 
-**4.2 The chunk producer.** `producers.CHUNKS`, consuming the text artifact, writing
-`chunks.json`. Gate: `check_ingest` grows a section — chunks are produced, offsets resolve
-back to the real text, a version bump re-chunks everything, and deleting `derived/` and
-rebuilding gives byte-identical chunks. Determinism is the property worth gating: a chunker
-that splits differently on Tuesday invalidates every citation ever issued.
+**4.2 The parser and the source seam.** The `Source` protocol with `files` behind it, moved
+and not rewritten; the parsing library adopted behind `text` version 2, licence verified
+first. Gate: `check_ingest` grows a formats section; the corpus from 4.1 ingests in every
+format it holds; `git diff` on the consumers stays empty for the `files` move; a version bump
+re-derives everything.
 
-**4.3 The chunk index and the keyword retriever.** The `chunks` FTS5 table, populated by
+**4.3 The chunk producer.** `producers.CHUNKS`, writing `chunks.json`. Gate: offsets resolve
+back to the real text; a version bump re-chunks; deleting `derived/` and rebuilding gives
+**byte-identical** chunks. Determinism is the property worth gating — a chunker that splits
+differently on Tuesday invalidates every citation ever issued.
+
+**4.4 The chunk index and the keyword retriever.** The `chunks` FTS5 table, populated by
 `intake` as a second consumer beside the document index. Gate: `check_retrieval` shows
 passage-level numbers against 4.1's baseline. **They may be worse on some queries** — a
 512-token chunk has less context than a whole document for BM25 to score — and that is
 information, not a failure. Record it.
 
-**4.4 Fusion.** `app/retrieve.py`, RRF, one retriever registered. Gate: fusing one list
+**4.5 Fusion.** `app/retrieve.py`, RRF, one retriever registered. Gate: fusing one list
 returns that list in that order, asserted directly; `check_retrieval`'s numbers are
-**identical** to 4.3's, because nothing has changed yet. An RRF that moves a single list is
-broken and this is the only moment it is cheap to notice.
+**identical** to 4.4's, because nothing has changed yet. An RRF that moves a single list is
+broken, and this is the only moment it is cheap to notice.
 
-**4.5 `POST /api/v1/retrieve`.** The contract in section 5, the token budget, the filter.
-Gate: the budget is respected and `truncated` is honest; a request for another tenant's
-document filters to nothing rather than erroring informatively; `check_remote` grows a
-retrieval section.
+**4.6 `POST /api/v1/retrieve`.** The contract in section 6, the token budget, the filter, and
+`coverage`. Gate: the budget is respected and `truncated` is honest; **`coverage` is correct
+and provably so** — a query matching 31 passages and returning 8 says so; a request for
+another tenant's source filters to nothing rather than erroring informatively.
 
-**4.6 The rest of the plane.** `GET /api/v1/documents`, `GET /api/v1/documents/{name}`,
-`POST /api/v1/ingest/{name}` — thin tenant-scoped wrappers over what Step 2.3 already
-built. Gate: `check_api_compat` freezes `/api/v1/*`, and the frozen file is committed.
+**4.7 The model role registry.** `models.toml` with five roles, one filled. Gate: an empty
+role is *unavailable* and never a silent fallback, asserted by asking for `embed` and getting
+a refusal with a reason; `check_api_compat` freezes `/api/v1/*`.
+
+**4.8 The rest of the plane.** `GET /api/v1/documents`, `GET /api/v1/documents/{name}`,
+`POST /api/v1/ingest/{name}` — thin tenant-scoped wrappers over what Step 2.3 already built.
 
 ---
 
-## 7. Risks, named
+## 9. What comes after, and where it attaches
+
+Named here so the sequencing is visible, and because two of these are prerequisites for
+things already asked for.
+
+**Steps 5 and 6 keep the meanings every other document already gives them** — embeddings and
+speech. `docs/licences.md` says "verify sqlite-vec before Step 5" and "verify Kokoro before
+Step 6", and renumbering to suit this plan would silently invalidate those and a dozen
+references besides. **A step number is an identifier, not a position in a queue**; this
+project has run Step 3 before Step 2 on purpose once already. New work takes new numbers,
+and the *Do first* column says what actually blocks what.
+
+| | What | Attaches at | Do first? |
+|---|---|---|---|
+| **Step 5** | **The second retriever** — embeddings, hybrid search | `Retriever` registry, `embed` role | After Step 4. The fusion must exist and provably do nothing first |
+| **Step 6** | **Speech** — STT and TTS | `stt` / `tts` roles | Any time after 4.7. Licences already listed in `docs/licences.md` |
+| **Step 7** | **Per-tenant credentials.** Choose a cipher, encrypt, key management | `tenancy.database_for()` | **The real blocker.** Nothing customer-cloud can start until it is done, and it is the most under-planned thing in the project. Worth doing before Step 5 if connectors matter more than paraphrase matching |
+| **Step 8** | **Sources beyond files** — customer SQL, Google Docs, Drive | `Source` registry | Blocked on Step 7 |
+| **Step 9** | **Structured extraction and Path B** — facts table, aggregate answers | A producer + `run_sql` | Needs 4.1's corpus to grade it. **The answer to the question RAG cannot answer** |
+| **Step 10** | **Vision and OCR** | `vision` role + producers | Needs measured VRAM. OCR alone may arrive earlier, inside 4.2's parsing library |
+| **Any time** | **Contextual retrieval** | `chunks` version 2 | Best-evidenced single improvement available; machinery fully built by then |
+
+**Two scalability limits that are not on this list and should be.** Jobs are **in memory and
+do not survive a restart** — ingesting a customer's Google Drive is exactly the long job that
+makes that unacceptable. And the control plane is SQLite, which is right until there are
+genuinely concurrent writers. Both are recorded in `HANDOVER.md`; neither has a step.
+
+---
+
+## 10. Risks
 
 | Risk | Mitigation |
 |---|---|
-| The golden set is written to make the current system look good | 4.1 writes it **before** the chunker, and deliberately includes paraphrase queries known to fail today |
-| Chunk-level retrieval is worse than document-level for some queries | Expected. 4.3's gate records both rather than asserting an improvement. If it is worse overall, that is a finding and the step stops to think |
-| The chunker is not deterministic | Gated in 4.2 explicitly, because every citation depends on it |
-| `/api/v1/*` is frozen too early, around a shape Step 5 needs to change | `found_by` and the absent score are the two places Step 5 will push. Both were chosen for that. A field may be **added**; the freeze forbids narrowing, not growth |
-| The tenant bridge becomes a path | 4.0's gate, and the local id is generated here by `tenancy.new_id()` and never derived from theirs |
-| Scope creeps into embeddings | The word "embedding" does not appear in any sub-step's gate. Step 5 exists |
-| sqlite-vec is pre-v1 with expected breaking changes | Step 5's problem, but worth knowing now. It is **brute-force rather than ANN** — fine at this scale, and a fact to design around rather than discover. Its repository states dual Apache-2.0/MIT, but that reading came through a summarising fetch, which `docs/licences.md` explicitly refuses as a primary source; the row there stays `unverified` and now says what to expect |
+| **An aggregate question is answered from 8 passages and looks right** | The sharpest risk in the project. Decision 5.6 makes it visible via `coverage`; Step 8 makes it answerable. **It is not fully solved by this step and must not be described as if it were** |
+| The golden set is written to make the current system look good | 4.1 writes it **before** the chunker, and includes paraphrase and aggregate queries known to fail today |
+| The parsing library's licence is not what a summary said | `docs/licences.md`'s own rule: verified means someone opened the licence file. Cleared in 4.2 *before* adoption |
+| Adopting a library means adopting its dependency tree | It goes behind one producer with our interface on both sides. If it has to be replaced, the blast radius is one file and a version bump |
+| Chunk-level retrieval is worse than document-level for some queries | Expected. 4.4's gate records both rather than asserting an improvement |
+| The chunker is not deterministic | Gated in 4.3 explicitly, because every citation depends on it |
+| `/api/v1/*` frozen too early | `found_by`, `coverage` and the absent score are where later steps will push. All three were chosen for that. A field may be added |
+| The extra models do not fit in VRAM | Section 7 is arithmetic, and `docs/models.md` records a projection of this kind missing by 25%. Measured before promised |
+| Scope creeps into building the features rather than the seams | Every sub-step's gate is about a seam. The word "vision" appears in no gate in section 8 |
 
-## 8. Effort
+## 11. Effort
 
-Four to five sessions. **4.1 is the one that will take longest and feel least like
-progress**, and it is the one that decides whether anything after it can be believed. 4.0
-is small but blocking and touches the control plane, which is the one directory in this
-project worth backing up. 4.4 is an afternoon.
+**Six to eight sessions for Step 4 as written**, against four to five for the narrower first
+draft. The additions are 4.2 (the source and parser seam) and 4.7 (the role registry), plus
+`coverage` in 4.6.
 
-## 9. Rollback
+**4.1 is still the one that will take longest and feel least like progress**, and it is still
+the one that decides whether anything after it can be believed — more so now, because it has
+to cover several formats and include questions this step is expected to answer badly.
+
+The wider programme in section 9 is realistically **20–30 sessions**. That is the honest
+number for what has been described, and the reason for doing it as seams: each of those steps
+is then additive, gated, and independently rollback-able, rather than a rewrite of the last.
+
+## 12. Rollback
 
 Every sub-step is additive. `derived/<tenant>/chunks/` deletes and rebuilds like everything
 else under `derived/`; the `chunks` FTS5 table drops without touching `documents`;
-`/api/v1/*` unmounts without affecting `/v1` or `/api/*`; `tenant_alias` is a table nothing
-else reads. The local agent's `search_files` is untouched throughout, so the offline path
-keeps working even if the whole plane is withdrawn.
-
-## 10. What comes after
-
-**Step 5** registers a second retriever and the fusion starts doing something. The
-measurable claim to check it against is in decision 4.4: roughly nine points of MRR from
-hybrid over semantic-only, and Recall@5 around 0.82 with reranking. `models.toml` — deferred
-from Step 3.4 — finally gets its second row, because there is finally a second model.
-
-**Note for Step 5, from the research and worth writing down now:** the embedding model
-needs its own vLLM instance. `--runner pooling` is not a mode the generative server can
-also be in, so `Qwen3-Embedding-0.6B` is a second container, not a second flag. At 1024
-dimensions and Matryoshka-truncatable down to 32, and with about 9.4 GiB of VRAM free since
-the 14B swap, it fits — but it is a compose change and a boot-order question, not a
-one-liner.
-
-**Step 5.x, and the best-evidenced single improvement available:** contextual retrieval, as
-`chunks` version 2. The machinery to adopt it is entirely built by then — bump the version,
-every document re-chunks, the manifest tracks it, and nothing else changes.
+`/api/v1/*` unmounts without affecting `/v1` or `/api/*`; `models.toml` absent means the one
+model behaves as it does today; the `files` source is today's code path unchanged. The local
+agent's `search_files` is untouched throughout, so the offline path keeps working even if the
+whole plane is withdrawn.

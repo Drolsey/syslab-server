@@ -888,8 +888,9 @@ the short version:
 - **3.2** built `app/gateway.py`. Verified live: alias round trip, streamed
   tool calls, multi-turn tool results.
 - **3.3** added `PUBLIC_MODE` and bounded the login throttle.
-- **3.4** (model profiles) is **folded into Step 5**, where embeddings give the
-  profile file a second row to hold. The one part with a caller today — the
+- **3.4** (model profiles) is **Step 4.7** as of 11 September, where it becomes
+  the registry saying which model fills which role and how a vision or speech
+  model attaches. It was folded into Step 5 until then. The one part with a caller today — the
   website pins an alias, never a model name — already shipped in 3.2.
 - **3.5** is built on this side: the frozen `/v1` contract, `cloudflared` in
   compose behind an `.env`-activated profile, and `TRUST_CLIENT_IP_HEADER`.
@@ -935,11 +936,15 @@ the short version:
    again after the 14B swap, so the constraint recorded in `docs/models.md` is
    stale.
 
+   **The plan was rewritten on 11 September** around seams rather than
+   features — see the section below for why, and for the finding that drove it.
    **Next here is 4.1**, the committed synthetic corpus and the hand-written
    golden set, measured against today's document-level keyword retrieval
-   **before** the chunker exists. The plan warns it is the longest sub-step and
-   the one that feels least like progress, and it is the one that decides
-   whether anything after it can be believed.
+   **before** the chunker exists. It now has to span several formats and include
+   at least one aggregate question this step is expected to answer *badly*. The
+   plan warns it is the longest sub-step and the one that feels least like
+   progress, and it is the one that decides whether anything after it can be
+   believed.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
@@ -993,6 +998,81 @@ list is that list in order, so Step 4 ships RRF that provably does nothing and
 Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
+
+## Step 4 was rewritten the day it was signed off, and the reason is worth keeping
+
+11 September, hours after 4.0 landed. The plan was written against the wrong
+requirements — not vaguely wrong, specifically wrong — and executing it would
+have produced a working thing nobody asked for.
+
+**What it assumed:** text-only PDFs and spreadsheets, one way in, and questions
+answerable from a handful of passages.
+
+**What was actually wanted:** customer data in **SQL databases, Google Docs and
+other cloud services**; **many formats including media**, with "it seems stupid
+to hardcode all data types"; **OCR**; **speech both ways**; and questions like
+*"which vendors has this client used across all their contracts, ranked by
+spend"* and *"connect the dots across 200 contracts"*. All per customer, in
+isolation. Plus the sentence that reshaped the document: **"I want to build the
+skeleton that allows for all these systems to be added as features later on."**
+
+**The finding that mattered most, and it is the one to remember.**
+
+**Retrieval cannot answer a question about ALL of something, and it does not say
+so.** Ask "rank every vendor by spend across 200 contracts" and retrieval returns
+the top eight chunks. The model then produces a confident, well-formatted ranking
+**built from 4% of the contracts**. Nothing errors. It is indistinguishable on
+screen from a correct answer.
+
+That is not a hypothetical here. This file already records the deployed site
+fabricating result rows without calling a tool, *"and the UI renders that as a
+result grid — so the gate passes on the screen while nothing has run."* Same
+failure class, and the most dangerous one this product has, because the wrong
+answer is the one that looks best.
+
+The fix is not better retrieval and no RAG framework supplies it. It is
+**structured extraction at ingest time** — a producer pulling `(vendor, amount,
+date, document)` into a real table as each contract arrives, answered with SQL,
+exact and checkable. `app/db.py` already runs read-only SQL behind four layers,
+and `run_sql` is already a tool the model holds. So there are **two answer
+paths**, and Step 4's job is to make sure a question needing the second never
+gets silently answered by the first: a `coverage` block on every retrieval
+response saying how many passages matched against how many were returned.
+
+**What the plan is now.** Not features — **four seams**, each proven by putting
+the cheapest possible thing in it:
+
+| Seam | State | What plugs in later |
+|---|---|---|
+| **Source** | 4.2 builds it, `files` behind it | Customer SQL, Google Docs, Drive |
+| **Producer** | **Step 2 already built it** | OCR, page images, extracted fields, embeddings |
+| **Retriever** | 4.6 builds it, keyword in it | Vector, structured, graph |
+| **Model role** | 4.7 declares it, `chat` filled | embed, vision, stt, tts |
+
+The producer seam working and being gated is the evidence the shape is worth
+repeating — it is why "add vision" is now a producer rather than a fourth reader
+of the same PDF.
+
+**The blocker nobody had costed.** Every cloud connector needs *that customer's*
+credentials stored encrypted, and `tenancy.database_for()` still raises for any
+row it finds because **no cipher was ever chosen** — Step 1's decision 4.5, open
+since then, `tenant_database` still empty. It is now **Step 7** and it is on the
+critical path for everything involving a customer's own systems. It is the most
+under-planned thing in the project.
+
+**Step numbers did not move.** 5 is still embeddings and 6 is still speech,
+because `docs/licences.md` says "verify sqlite-vec before Step 5" and "verify
+Kokoro before Step 6" and a dozen other references agree. A step number is an
+identifier, not a position in a queue — this project ran 3 before 2 on purpose
+already. New work took new numbers: 7 credentials, 8 connectors, 9 extraction,
+10 vision.
+
+**Honest effort.** Step 4 as rewritten is six to eight sessions, against four to
+five for the narrow draft. The programme behind it — credentials, connectors,
+extraction, vision, speech — is realistically **20 to 30**. That is the number
+for what was actually described, and the argument for seams is that each of those
+then lands as a registration against a gated interface rather than a rewrite of
+the last one.
 
 ## 4.0: the bridge is built, and it found a one-in-four bug on the way
 

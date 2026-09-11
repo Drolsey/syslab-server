@@ -230,7 +230,11 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   `git diff app/agent.py` was the gate for that sub-step.
 - `config.OLLAMA_*` split into `LLM_*` (what the app talks to) and `OLLAMA_*` (dev tooling
   only). They had been one setting doing two jobs.
-- **Model profiles (`models.toml`) moved from Step 3.4 to Step 5.** The file names five
+- **Model profiles (`models.toml`) moved from Step 3.4 to Step 5.** *(Superseded
+  11 September: moved again, to Step 4.7, where it becomes the registry that says how a
+  vision, speech or embedding model attaches. The reasoning below was that one model gave
+  the file nothing to hold; what it now holds is the shape of four that have been asked
+  for.)* The file names five
   model roles and only one exists until embeddings land, so the rule that justifies it —
   an empty value means unavailable, never a silent fallback — has nothing to guard yet.
   Reasoning in `docs/plans/step-03-model-gateway.md` §3.4.
@@ -355,10 +359,22 @@ blocks a conversation; token authentication; the file tools; and the model bench
 
 ### Not yet started
 
-- ~~**Step 4, the retrieval plane.**~~ **Signed off and started, 11 September**, all six
-  decisions as recommended. 4.0, the tenant bridge that blocked it, is built and is above
-  under Added. What is left is 4.1 to 4.6, and 4.1 — a committed synthetic corpus and a
-  hand-written golden set — is the long one.
+- ~~**Step 4, the retrieval plane.**~~ **Signed off and started, 11 September**; 4.0, the
+  tenant bridge that blocked it, is built and is above under Added. **The plan was then
+  rewritten the same day**, after the requirements turned out to be wider than it assumed:
+  customer data in SQL and cloud services rather than only files, many formats including
+  media, OCR, aggregate questions across a whole corpus, and speech. It is now a plan about
+  **seams rather than features** — four extension points (source, producer, retriever, model
+  role), each proven with the cheapest thing that fits in it, so that vision, speech and
+  connectors are registrations rather than rewrites.
+  - **The finding that drove the rewrite: retrieval cannot answer a question about ALL of
+    something, and does not say so.** "Rank every vendor by spend across 200 contracts"
+    retrieves eight chunks and produces a confident ranking from 4% of the data, with no
+    error. The answer is structured extraction into a queryable table at ingest time, which
+    is a second answer path rather than better retrieval. Step 4 makes the shortfall visible
+    through a `coverage` block; answering it properly is Step 9.
+  - Sub-steps 4.1 to 4.8, six to eight sessions. The wider programme that follows —
+    credentials, connectors, extraction, vision, speech — is realistically 20 to 30.
 - **Per-tenant database credentials.** `tenancy.database_for()` raises for any row it finds
   because no cipher was chosen. The table exists and nothing writes to it. Recorded as
   decision 4.5 in the Step 1 plan.

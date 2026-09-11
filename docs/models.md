@@ -317,7 +317,13 @@ The 32B model does that scenario correctly. See
 `docs/plans/step-03-model-gateway.md`.
 
 Section 13's `models.toml` profile file does not exist and is not missing: it
-is folded into Step 5, where a second model finally gives it a second row.
+is **Step 4.7**, where it becomes the registry that says which model fills
+which role — chat, embed, vision, stt, tts — with four of the five empty and an
+empty role meaning *unavailable*, never a silent fallback. It was folded into
+Step 5 on the reasoning that one model gave the file nothing to hold; Step 4's
+rewrite on 11 September moved it back, because the file now holds the SHAPE of
+four models that have been asked for, and declaring a slot before filling it is
+the point of it.
 Until then the alias table is `MODEL_ALIASES` in `app/config.py` and the served
 model is the `--model` flag in `docker-compose.yml`. Reasoning in
 `docs/plans/step-03-model-gateway.md` §3.4.
