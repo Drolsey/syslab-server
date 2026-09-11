@@ -111,10 +111,22 @@ not any step of the build.
 | faster-whisper | MIT | Yes | unverified |
 | Kokoro-82M | Apache-2.0 | Yes | unverified — **verify before Step 6**, it is the default |
 | Silero VAD | MIT | Yes | unverified |
-| sqlite-vec | permissive | Yes | unverified — **verify before Step 5** |
+| sqlite-vec | Apache-2.0 **and** MIT, dual | Yes | unverified — **verify before Step 5**; see the note below |
 | cloudflared | Apache-2.0 | Yes | unverified |
 | Docker Engine | Apache-2.0 | Yes | unverified |
 | NVIDIA Container Toolkit | Apache-2.0 | Yes | unverified; the driver itself is proprietary but freely redistributable |
+
+**sqlite-vec, 10 September 2026.** Its repository front page states dual Apache-2.0 / MIT.
+That reading came through a fetch-and-summarise tool, which **this file's own rule excludes
+as a primary source** — "not a blog post, a search result, or a summary written by someone
+else, including one written by an assistant". So the row stays `unverified` and the licence
+column now records what to expect rather than what has been established. Clearing it is one
+minute of a person opening `LICENSE-APACHE` and `LICENSE-MIT` in `github.com/asg017/sqlite-vec`.
+
+Two other things found at the same time, neither a licence question but both worth having
+before Step 5 depends on them: it is **pre-v1 and says to expect breaking changes**, and it
+is **brute-force rather than ANN**, which is fine at this project's scale and is a fact to
+design around rather than discover.
 
 ---
 

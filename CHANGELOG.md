@@ -257,6 +257,16 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 - **Tailscale's free plan is non-commercial.** The client is BSD-3-Clause, but the plan terms
   restrict it. Tailscale stays for operator access and will not be the production request
   path.
+- **sqlite-vec reads as dual Apache-2.0 / MIT, and the row stays `unverified` anyway.** Its
+  repository front page states both licences, but that reading arrived through a
+  fetch-and-summarise tool, which is exactly what `docs/licences.md` refuses as a primary
+  source. Recording it as verified would make the rule decorative the first time it was
+  inconvenient. The licence column now says what to expect; clearing the row is one minute
+  of a person opening `LICENSE-APACHE` and `LICENSE-MIT`, and it is wanted before Step 5.
+  Two non-licence facts found in the same place and worth having before Step 5 depends on
+  it: it is **pre-v1 and says to expect breaking changes**, and it is **brute-force rather
+  than ANN** — fine at this project's scale, and a thing to design around rather than
+  discover.
 
 ---
 
