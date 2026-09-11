@@ -16,11 +16,16 @@ WHY THIS EXISTS AT ALL
     It adds no capability a user would notice. That is the point.
 
 WHAT A PRODUCER IS
-    A name, a version, the suffixes it handles, whether it is slow, and a
-    function. The pipeline knows nothing about what a producer makes. It knows
-    that something was asked for, whether it succeeded, when, and against which
-    version of the producer -- which is exactly what lets a later step add page
-    images without touching this file.
+    A name, a version, the suffixes it handles, whether it is slow, what it
+    reads from other producers, and a function. The pipeline knows nothing
+    about what a producer makes. It knows that something was asked for, whether
+    it succeeded, when, and against which version of the producer -- which is
+    exactly what lets a later step add page images without touching this file.
+
+    `depends_on` is Step 4.3 and is the only one of those that took a
+    behavioural change to add. Everything before it read the source file and
+    nothing else; the chunk producer reads the TEXT ARTIFACT, and a pipeline
+    that runs its producers in alphabetical order runs `chunks` before `text`.
 
 THE RULE THAT KEEPS derived/ DISPOSABLE
     Everything under derived/ can be deleted and rebuilt from data/. It is the
@@ -140,6 +145,20 @@ class Producer:
     `version` is the invalidation lever. Bumping it invalidates everything this
     producer ever made, which is how a fixed OCR bug reaches documents that
     were processed before the fix.
+
+    `depends_on` NAMES THE PRODUCERS WHOSE OUTPUT THIS ONE READS, and it is new
+    in Step 4.3. Until then every producer read the source file and nothing
+    else, so the pipeline could run them in any order it liked and chose
+    alphabetical. The chunk producer consumes the TEXT ARTIFACT -- decision
+    5.3, so that a document is never chunked from bytes the index never saw --
+    and alphabetical order runs `chunks` before `text`. On a fresh file that is
+    a producer reading an artifact that does not exist yet.
+
+    Declaring it buys three things that were otherwise three separate bits of
+    remembering: the run order, the staleness (re-extracting the text must
+    re-chunk, and the manifest has no column that would have noticed), and the
+    hold-back (text failed on a damaged file means chunks must not run and
+    record a second failure blaming itself for the first one's problem).
     """
 
     name: str
@@ -147,6 +166,7 @@ class Producer:
     handles: frozenset[str]
     slow: bool
     run: Callable[[Path, Path], Result]
+    depends_on: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.name or "/" in self.name or "\\" in self.name:
@@ -157,6 +177,11 @@ class Producer:
             )
         if self.version < 1:
             raise ValueError("A producer version starts at 1 and only goes up.")
+        if self.name in self.depends_on:
+            raise ValueError(
+                f"{self.name!r} cannot depend on itself: it would never be in a "
+                "state where it was allowed to run."
+            )
 
 
 _PRODUCERS: dict[str, Producer] = {}
@@ -177,18 +202,93 @@ def registered() -> dict[str, Producer]:
     return dict(_PRODUCERS)
 
 
+def _in_dependency_order(handling: list[Producer]) -> list[Producer]:
+    """The same producers, with every one placed after what it reads.
+
+    Takes a list that is ALREADY SORTED BY NAME and keeps that as the
+    tie-break, so the order is a function of the registry and nothing else.
+    Two producers that depend on nothing come out alphabetically, as they
+    always did; a producer that depends on something comes out after it.
+
+    A dependency that is not in this list -- unregistered, or handling other
+    suffixes -- is ignored HERE and left to the producer's own `run` to notice.
+    Ordering cannot fix an absence, and refusing to run the whole file because
+    one producer named something optional would be the pipeline deciding a
+    question that belongs to the producer.
+    """
+    by_name = {p.name: p for p in handling}
+    ordered: list[Producer] = []
+    placed: set[str] = set()
+    visiting: list[str] = []
+
+    def place(producer: Producer) -> None:
+        if producer.name in placed:
+            return
+        if producer.name in visiting:
+            # Registered at import time, so this would otherwise surface as a
+            # RecursionError on the first upload after somebody wired two
+            # producers into each other.
+            circle = visiting[visiting.index(producer.name):] + [producer.name]
+            raise IngestError(
+                "These producers depend on each other in a circle and none of "
+                f"them can ever run: {' -> '.join(circle)}."
+            )
+        visiting.append(producer.name)
+        for needed in sorted(producer.depends_on):
+            upstream = by_name.get(needed)
+            if upstream is not None:
+                place(upstream)
+        visiting.pop()
+        placed.add(producer.name)
+        ordered.append(producer)
+
+    for producer in handling:
+        place(producer)
+    return ordered
+
+
 def producers_for(suffix: str) -> list[Producer]:
-    """Which producers handle this file type, in a stable order.
+    """Which producers handle this file type, in an order they can run in.
 
     A producer that does not handle the suffix gets no row. The alternative --
     a `skipped` row per producer per file -- fills the manifest with the
     absence of work nobody asked for, and buries the skips that mean something.
+
+    The order was alphabetical until Step 4.3 and is now dependency-first,
+    still alphabetical among equals. See Producer.depends_on for why a name
+    sort stopped being enough.
     """
     lowered = suffix.lower()
-    return sorted(
+    return _in_dependency_order(sorted(
         (p for p in _PRODUCERS.values() if lowered in p.handles),
         key=lambda p: p.name,
-    )
+    ))
+
+
+def _must_run(existing: dict, stat, handling: list[Producer]) -> set[str]:
+    """Which of these producers are not up to date, dependencies included.
+
+    `handling` must already be in dependency order, which is what makes one
+    pass enough: by the time a producer is looked at, everything it reads has
+    already been decided.
+
+    THE SECOND CLAUSE IS THE ONE THE MANIFEST CANNOT SEE FOR ITSELF. A row
+    records the source's size and mtime and its OWN producer version. Nothing
+    in it records which version of the text artifact the chunks were cut from,
+    so bumping the text producer would re-extract every document and leave
+    every chunk exactly where it was -- offsets into a file that had been
+    rewritten underneath them. A schema column could have carried it; a
+    declared dependency carries it without a migration, and is also what the
+    run order needs anyway.
+    """
+    stale: set[str] = set()
+    for producer in handling:
+        row = existing.get(producer.name)
+        if row is None or row["status"] == FAILED or not _is_current(row, stat, producer):
+            stale.add(producer.name)
+        elif producer.depends_on & stale:
+            stale.add(producer.name)
+    return stale
 
 
 # --------------------------------------------------------------------------
@@ -434,6 +534,12 @@ def ingest(name: str, *, only_fast: bool = False) -> dict:
         "deferred": [],
         "failed": {},
         "unavailable": {},
+        # Step 4.3. A producer that was ready to run and was not allowed to,
+        # because something it reads did not finish in this pass. Reported
+        # rather than silently absent: "chunks is missing and nothing said why"
+        # is the shape of failure decision 4.5 exists to prevent, and the
+        # answer here is always somewhere else in this same report.
+        "blocked": {},
     }
 
     handling = producers_for(source.suffix)
@@ -443,13 +549,34 @@ def ingest(name: str, *, only_fast: bool = False) -> dict:
     connection = connect()
     try:
         existing = _rows(connection, key)
+        must_run = _must_run(existing, stat, handling)
+        # Everything that did not finish in this pass, for whatever reason.
+        # Whether that was a failure, a missing library or a deferral does not
+        # change what it means to a producer downstream of it.
+        held_back: set[str] = set()
         for producer in handling:
             row = existing.get(producer.name)
-            if row is not None and _is_current(row, stat, producer) and row["status"] != FAILED:
+            if producer.name not in must_run:
                 report["current"].append(producer.name)
                 continue
+
+            waiting_for = sorted(producer.depends_on & held_back)
+            if waiting_for:
+                # NO ROW IS WRITTEN, deliberately. A `failed` row here would
+                # blame this producer for a fault upstream of it, and a
+                # `skipped` row would claim there was nothing to make when
+                # there was. Leaving the row absent leaves status() saying
+                # "never run" and ready=False, which is the truth, and the next
+                # ingest picks it up the moment the upstream one works.
+                report["blocked"][producer.name] = (
+                    f"{', '.join(waiting_for)} did not finish, and this reads what it makes"
+                )
+                held_back.add(producer.name)
+                continue
+
             if only_fast and producer.slow:
                 report["deferred"].append(producer.name)
+                held_back.add(producer.name)
                 continue
 
             # A run against unchanged input is another go at the same thing; a
@@ -466,12 +593,14 @@ def ingest(name: str, *, only_fast: bool = False) -> dict:
             except ProducerUnavailable as exc:
                 _prune(folder)
                 report["unavailable"][producer.name] = str(exc)[:MAX_DETAIL]
+                held_back.add(producer.name)
                 continue
             except Exception as exc:  # noqa: BLE001 - recorded, never raised
                 _prune(folder)
                 detail = f"{type(exc).__name__}: {exc}"
                 _record(connection, key, producer, FAILED, stat, None, detail, attempts)
                 report["failed"][producer.name] = detail[:MAX_DETAIL]
+                held_back.add(producer.name)
                 continue
 
             _prune(folder)
@@ -486,18 +615,20 @@ def ingest(name: str, *, only_fast: bool = False) -> dict:
 
 
 def needs(name: str) -> list[str]:
-    """Which producers are stale for this file, including ones never run."""
+    """Which producers are stale for this file, including ones never run.
+
+    In dependency order, and a producer downstream of a stale one is stale
+    too -- so this and `ingest()` cannot disagree about what is outstanding.
+    They used to compute it separately, which was fine while the answer was one
+    line long in both places.
+    """
     source = _source(name)
     stat = source.stat()
     connection = connect()
     try:
-        existing = _rows(connection, source.name)
-        out = []
-        for producer in producers_for(source.suffix):
-            row = existing.get(producer.name)
-            if row is None or row["status"] == FAILED or not _is_current(row, stat, producer):
-                out.append(producer.name)
-        return out
+        handling = producers_for(source.suffix)
+        stale = _must_run(_rows(connection, source.name), stat, handling)
+        return [p.name for p in handling if p.name in stale]
     finally:
         connection.close()
 
@@ -520,21 +651,30 @@ def status(name: str) -> dict:
     exists. `ready` is every handling producer holding a current row that is
     not a failure -- so a document whose page images failed is not ready, and
     says which half is missing rather than quietly returning less.
+
+    Since Step 4.3 a producer is ALSO stale when something it reads is about to
+    be remade, which is how a text re-extraction stops a document reporting
+    ready while its chunks still hold offsets into the previous extraction.
     """
     source = _source(name)
     stat = source.stat()
     connection = connect()
     try:
+        handling = producers_for(source.suffix)
         existing = _rows(connection, source.name)
+        must_run = _must_run(existing, stat, handling)
         detail: dict[str, dict] = {}
         missing, stale_now, failed = [], [], []
-        for producer in producers_for(source.suffix):
+        for producer in handling:
             row = existing.get(producer.name)
             if row is None:
                 missing.append(producer.name)
                 detail[producer.name] = {"status": "never run", "stale": True}
                 continue
-            is_stale = not _is_current(row, stat, producer)
+            # A row that is out of date on its own terms, or one whose upstream
+            # is. A FAILED row that is otherwise current is reported as failed
+            # and not as stale, which is the distinction this already drew.
+            is_stale = not _is_current(row, stat, producer) or bool(producer.depends_on & must_run)
             if is_stale:
                 stale_now.append(producer.name)
             if row["status"] == FAILED:

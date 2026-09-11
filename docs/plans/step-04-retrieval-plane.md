@@ -1,6 +1,6 @@
 # Step 4: The Retrieval Plane, and the Seams Everything Else Plugs Into
 
-Status: **IN PROGRESS. 4.0, 4.1 and 4.2 are done.** **Rewritten 11 September 2026**, after the
+Status: **IN PROGRESS. 4.0, 4.1, 4.2 and 4.3 are done.** **Rewritten 11 September 2026**, after the
 requirements turned out to be wider than the first draft assumed. **All seven decisions
 signed off the same day**, 5.1 to 5.6 as recommended and 5.7 amended by Amro — see below,
 because the amendment is the best thing that happened to this plan.
@@ -8,10 +8,13 @@ because the amendment is the best thing that happened to this plan.
 **The baseline exists as of 11 September**: overall **MRR 0.576**, and the three query kinds
 are as far apart as the design predicted — rare strings **0.938**, quoted clauses **0.210**,
 paraphrases **0.312 with Recall@1 of 0.028**. `scripts/check_retrieval.py` is the gate.
-**Next is 4.3, the chunk producer** — and 4.1's prediction is still standing: ANDing nine
-common legal words inside a 512-token chunk should be far more selective than inside a
-fifty-page contract, so `clause` should move substantially at 4.4. If it does not, something
-is wrong with the chunker rather than with the theory.
+**Next is 4.4, the chunk index and the keyword retriever.** The passages exist as of 11
+September — `derived/<tenant>/chunks/<item>/chunks.json`, byte-identical across a delete and
+rebuild — and nothing indexes them yet, which is why `check_retrieval.py` still reads 0.576
+exactly. **4.4 is where that number is supposed to move**, and 4.1's prediction is now due:
+ANDing nine common legal words inside a 512-token chunk should be far more selective than
+inside a fifty-page contract, so `clause` should move substantially. If it does not,
+something is wrong with the chunker rather than with the theory.
 
 4.0 stands unchanged and is done — the tenant bridge is needed under every version of this.
 Everything from 4.1 onward is new.
@@ -211,6 +214,21 @@ bump to remove.**
 
 Tokens counted with the model's own tokenizer where the box is reachable, estimated at 3.5
 characters per token where it is not, using the shared `llm.estimate_prompt_tokens`.
+
+> **AMENDED AT 4.3, 11 September 2026. The tokenizer is never asked.** This sentence could
+> not stand beside 4.3's own gate. A boundary decided by a tokenizer that is *sometimes*
+> reachable is a boundary that depends on whether the GPU box was up when the document was
+> ingested — exactly the Tuesday the gate was written to forbid. The 3.5-character estimate
+> is used **always**, expressed as integer arithmetic (seven characters to two tokens) so
+> that not even a float can vary. A real tokenizer may inform the *constants* later; it may
+> never be asked at chunk time.
+>
+> `llm.estimate_prompt_tokens` turned out to be the wrong function too — it serialises a
+> *message list* to JSON and adds 256 tokens of chat-template overhead, so it would have
+> reported every passage as 256 tokens larger than it is. The prose estimator lives in
+> `app/chunks.py` with the reason for the different ratio written beside it: `llm`'s 3
+> characters per token is deliberately pessimistic for JSON payloads, and being pessimistic
+> here would simply make every chunk 15% shorter than the size that was benchmarked.
 
 **Contextual retrieval is deliberately deferred and designed for.** Anthropic's method — an
 LLM writing 50–100 tokens of "where this chunk sits" before indexing — is the best-evidenced
@@ -625,6 +643,35 @@ currently ships two PDF libraries. Retrieval is **unchanged against the 4.1 base
 back to the real text; a version bump re-chunks; deleting `derived/` and rebuilding gives
 **byte-identical** chunks. Determinism is the property worth gating — a chunker that splits
 differently on Tuesday invalidates every citation ever issued.
+
+> **DONE, 11 September 2026.** All three properties gated in `scripts/check_ingest.py`
+> (31 → **37 checks**), plus `tests/test_chunks.py` (30 tests, suite 513 → **543**). The
+> splitting rule itself is `app/chunks.py` and it never touches the filesystem: it takes a
+> string and returns passages, the way `app/parse.py` takes a path and returns an outcome.
+>
+> **It needed a change to the ingestion contract, and that was not foreseen here.** Decision
+> 5.3 says the chunker consumes the text artifact rather than the source — and
+> `ingest.producers_for()` sorted producers by name, where `chunks` sorts before `text`. On a
+> fresh upload the chunker would have run first and found nothing. `Producer` gained
+> `depends_on`, which buys three things at once: the **run order**, the **staleness** (a text
+> re-extraction must re-chunk, and no column in the manifest would have noticed — it records
+> a producer's *own* version and nothing about the artifact it read), and the **hold-back**
+> (a damaged file produced two failed rows, the second of which blamed the chunker for the
+> extractor's problem). A dependency circle is refused by name rather than arriving as a
+> `RecursionError` on somebody's first upload.
+>
+> **Section 5.4's tokenizer sentence was amended**, in the open, above.
+>
+> **What the break-verification found that reading did not.** Eight deliberate breaks of the
+> code, to confirm each test fails when its property is violated. Two passed at first, and
+> both were worth the pass: `chunks.SEPARATORS` ended in an empty string that the splitter
+> skips — a comment pretending to be code, sitting on the line somebody would edit when they
+> went looking for the floor — and the ordinal-holes test used a run of newlines shorter than
+> the target size, so it asserted on a case it never built and passed against broken code.
+>
+> **Retrieval is unchanged against the 4.1 baseline**, MRR 0.576 to three decimals, and that
+> is the expected answer rather than a disappointment: 4.3 makes passages and 4.4 indexes
+> them. If 4.4 does not move `clause`, the chunker is where to look.
 
 **4.4 The chunk index and the keyword retriever.** The `chunks` FTS5 table, populated by
 `intake` as a second consumer beside the document index. Gate: `check_retrieval` shows

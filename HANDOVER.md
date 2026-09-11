@@ -996,6 +996,91 @@ Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
 
+## 4.3: there are passages now, and the pipeline learned that producers read each other
+
+11 September. `app/chunks.py` splits a document's extracted text into passages
+of about 512 tokens with 64 of overlap, `producers.CHUNKS` writes them to
+`derived/<tenant>/chunks/<item>/chunks.json`, and each one carries `start` and
+`end` offsets into the **text artifact**. `artifact[start:end] == text`,
+exactly. That identity is the whole reason a citation is checkable: *"characters
+4,096 to 4,608 of contract.pdf"* can be verified by anyone holding the file, and
+a chunk that knows only its own index cannot be verified at all.
+
+**Determinism was the gate, and the reason it was chosen is worth keeping.** A
+wrong chunker is loud — somebody reads a passage that starts mid-clause and
+says so. A **non-deterministic** chunker is silent: the same document splits
+differently on the next rebuild, every `chunk_id` ever issued now points at a
+different passage, and nothing anywhere reports it. So the module has no
+`hash()`, no clock, no randomness, no set iteration and no network call, and
+the token count is integer arithmetic rather than a division by 3.5.
+
+**That last point is an amendment to the plan, and it is made in the open.**
+Section 5.4 says tokens are *"counted with the model's own tokenizer where the
+box is reachable, estimated at 3.5 characters per token where it is not"*. It
+cannot stand beside 4.3's own gate. A boundary decided by a tokenizer that is
+*sometimes* reachable is a boundary that depends on whether the GPU box was up
+when the document was ingested — precisely the Tuesday the gate forbids. The
+estimate is used always. A real tokenizer may inform the constants later; it
+may never be asked at chunk time.
+
+### The pipeline had to learn something it did not know
+
+`ingest.producers_for()` sorted producers by name, which was correct for as
+long as every producer read the source file and nothing else. The chunk
+producer reads **the text artifact** — decision 5.3, so that a document is
+never chunked from bytes the index never saw — and `chunks` sorts before
+`text`. On a fresh upload the chunker would have run first, found no artifact,
+and recorded a skip.
+
+So `Producer` gained `depends_on`, and declaring it buys three things that were
+otherwise three separate things to remember:
+
+- **The run order.** Dependency-first, alphabetical among equals, so nothing
+  that does not use the field noticed it arrive.
+- **The staleness, which is the one the manifest could not have caught.** A row
+  records the source's size, its mtime and its *own* producer version. Nothing
+  in it says which version of the text artifact the chunks were cut from. Bump
+  the text producer and every document re-extracts while every chunk stays
+  exactly where it was — offsets into a file rewritten underneath them, with
+  the document still reported `ready`. A schema column could have carried it; a
+  declared dependency carries it without a migration.
+- **The hold-back, which keeps one fault to one report.** A damaged file was
+  about to produce two failed rows: the real one from the extractor, and a
+  second from the chunker complaining it could not find a text artifact. The
+  second sends whoever reads the manifest into the wrong module. A held-back
+  producer now writes **no row at all** — not `failed`, which would blame it
+  for someone else's fault, and not `skipped`, which would claim there was
+  nothing to make — and appears in the report's new `blocked` block, which
+  always names what it is waiting for.
+
+### What the break-verification pass found, which reading did not
+
+Thirty tests, and then eight deliberate breaks of the code to confirm each
+property actually fails when it is violated. Eight for eight — and two of the
+eight were only interesting because they **did not** fail the first time.
+
+- `chunks.SEPARATORS` ended in an empty string, copied from the shape recursive
+  character splitting is usually written in. The splitter skips a separator it
+  cannot search for and falls through to a hard cut, which is the real floor.
+  Removing the row changed no behaviour whatsoever, which is the point: **it
+  was a comment pretending to be code, sitting on the line somebody would edit
+  next when they went looking for the floor.**
+- The ordinal-holes test used a run of 400 newlines — well under the 1,792-
+  character target — so the blank lines were always merged in with the prose
+  either side and no span was ever empty for the trim to drop. **It asserted on
+  a case it never built, and passed against deliberately broken code.**
+
+Neither was findable by reading. Both were findable in about a minute by
+breaking the thing the test claimed to protect.
+
+**Gate: 37 of 37** (`scripts/check_ingest.py`, up from 31). Suite **543 passed,
+1 skipped**, up from 513. `check_retrieval.py` is **unchanged to three decimals
+against the 4.1 baseline** — MRR 0.576 — which is the expected answer, because
+4.3 makes passages and does not yet index them. **4.4 is where that number is
+supposed to move**, and 4.1's standing prediction is that `clause` moves most:
+ANDing nine common legal words inside a 512-token chunk should be far more
+selective than inside a fifty-page contract.
+
 ## 4.2 is done, and the gate it was told to build found two rows lying
 
 11 September. Two parts. *Part one* put one parser behind many formats
@@ -1746,6 +1831,16 @@ because it has now recurred three times:
     not a fact** — which is also why the formats gate loops over the whole
     table rather than a chosen few.
 
+One more from 4.3, and it is about the tests rather than the code:
+
+11. **A test that has never been watched to fail is a claim, not a check.**
+    Two of 4.3's thirty passed against deliberately broken code — one because
+    its fixture never built the case it asserted on, one because the line it
+    protected was dead. Both were found by breaking the property and watching,
+    in about a minute each; neither was findable by reading. This is lesson 10
+    turned on the test suite: **a test nothing has ever seen fail is a row
+    nothing ever reads.**
+
 ## The client database
 
 A client PostgreSQL instance on GCP; host, name and credentials live in
@@ -1760,11 +1855,11 @@ views, not client data.
 
 ## Run these to confirm the state
 
-    py -m pytest -q                           # 513 passed, 1 skipped
+    py -m pytest -q                           # 543 passed, 1 skipped
     py scripts/check_api_compat.py
     py scripts/check_gateway_isolation.py
     py scripts/check_isolation.py             # 54 passed, 1 not tested on Windows
-    py scripts/check_ingest.py                # 31 of 31, incl. every format in the table
+    py scripts/check_ingest.py                # 37 of 37, formats, offsets and byte-identical chunks
     py scripts/check_retrieval.py             # MRR 0.576 against the committed baseline
     py scripts/check_agent.py                 # needs the model up
     py scripts/check_remote.py

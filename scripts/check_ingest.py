@@ -38,7 +38,7 @@ require("pymupdf", "openpyxl", "reportlab")
 
 import _fixtures  # noqa: E402
 
-from app import context, ingest, intake, parse, search, sources, tools  # noqa: E402
+from app import chunks, context, ingest, intake, parse, producers, search, sources, tools  # noqa: E402
 from app.config import (  # noqa: E402
     BOOTSTRAP_TENANT,
     data_dir,
@@ -82,6 +82,18 @@ def artifacts_for(name: str) -> list[str]:
         for folder in root.iterdir()
         if folder.is_dir() and (folder / name).is_dir()
     )
+
+
+def chunk_bytes(name: str) -> bytes:
+    """The raw chunks.json for this source, or b"" if there is none.
+
+    BYTES, not parsed JSON. 4.3's gate says byte-identical, and two files that
+    parse to the same passages while differing in whitespace, key order or
+    number formatting are two files whose diff nobody can read -- which is one
+    step from two files that disagree about a citation.
+    """
+    written = derived_dir() / "chunks" / name / producers.CHUNKS_ARTIFACT
+    return written.read_bytes() if written.is_file() else b""
 
 
 def main() -> int:
@@ -131,6 +143,10 @@ def main() -> int:
     # ---- 2. derived/ is disposable --------------------------------------
     section("2. derived/ deleted entirely, and rebuilt from data/")
     before = {name: artifacts_for(name) for name in (staying, leaving)}
+    # Step 4.3's third property, checked HERE rather than in a section of its
+    # own because this is the one place the whole folder is already being
+    # thrown away and made again, which is exactly the question being asked.
+    chunks_before = {name: chunk_bytes(name) for name in (staying, leaving)}
     shutil.rmtree(derived_dir())
     record(
         "Deleting it leaves the documents alone",
@@ -152,6 +168,14 @@ def main() -> int:
     record(
         "Nothing failed on the way",
         summary["failed"] == 0 and not summary["unavailable"],
+    )
+    chunks_after = {name: chunk_bytes(name) for name in (staying, leaving)}
+    differing = sorted(n for n in chunks_before if chunks_before[n] != chunks_after[n])
+    record(
+        "And the passages come back byte for byte identical",
+        chunks_before == chunks_after and all(chunks_after.values()),
+        f"{len(chunks_after[staying])} bytes of chunks.json, unchanged"
+        if not differing else f"differs for {', '.join(differing)}",
     )
 
     # ---- 3. a file leaves ------------------------------------------------
@@ -332,6 +356,75 @@ def main() -> int:
         "And fetching one gives back the bytes that are there",
         source.fetch(staying).read_bytes() == (data_dir() / staying).read_bytes(),
     )
+
+    # ---- 8. the passages -------------------------------------------------
+    #
+    # Step 4.3's gate. Two of its three properties are here; the third --
+    # byte-identical across a delete and rebuild -- is in section 2, where the
+    # folder is already being thrown away.
+    #
+    # The offsets are what separates a citation from a decoration. "Characters
+    # 4,096 to 4,608 of contract.pdf" can be checked by anyone holding the
+    # file. A passage that knows only its own index cannot be checked at all,
+    # and neither can one whose offsets point a few characters off.
+    section("8. Passages, and the offsets that make them citable")
+
+    passages = producers.chunks_of(staying)
+    extracted = producers.text_of(staying) or ""
+    record(
+        "A document has passages, and the pipeline recorded making them",
+        bool(passages) and ingest.status(staying)["producers"]["chunks"]["status"] == ingest.OK,
+        f"{len(passages)} passage(s) from {len(extracted)} characters",
+    )
+
+    # Against the TEXT ARTIFACT, not against the PDF. There is no character
+    # offset into a PDF, and this is the file a person can actually open.
+    wrong = [c.chunk_id for c in passages if extracted[c.start:c.end] != c.text]
+    record(
+        "Every offset resolves back to the extracted text, exactly",
+        bool(passages) and not wrong,
+        "checked against derived/<tenant>/text/.../text.txt"
+        if not wrong else f"{len(wrong)} do not: {', '.join(wrong[:3])}",
+    )
+    record(
+        "The ordinals run from zero with no holes in them",
+        [c.ordinal for c in passages] == list(range(len(passages))),
+        f"{passages[0].chunk_id} .. {passages[-1].chunk_id}" if passages else "none",
+    )
+    oversized = [c.chunk_id for c in passages if c.tokens > chunks.TARGET_TOKENS]
+    record(
+        "And no passage is larger than the budget it was sized for",
+        not oversized,
+        f"target {chunks.TARGET_TOKENS} tokens, largest "
+        f"{max((c.tokens for c in passages), default=0)}",
+    )
+
+    # A version bump has to re-chunk, because it is the only lever there is:
+    # every fix to the splitting rule reaches documents that were ingested
+    # before the fix through this and nothing else.
+    bumped = ingest.Producer(
+        name=producers.CHUNKS.name,
+        version=producers.CHUNKS.version + 1,
+        handles=producers.CHUNKS.handles,
+        slow=producers.CHUNKS.slow,
+        depends_on=producers.CHUNKS.depends_on,
+        run=producers.CHUNKS.run,
+    )
+    real = ingest.registered()[producers.CHUNKS.name]
+    ingest.register(bumped)
+    try:
+        outstanding = ingest.needs(staying)
+        rerun = ingest.ingest(staying)
+        record(
+            "Bumping the chunker re-chunks, and leaves the extraction alone",
+            outstanding == ["chunks"] and rerun["ran"] == ["chunks"]
+            and rerun["current"] == ["text"],
+            f"needs {outstanding or 'nothing'}, ran {rerun['ran'] or 'nothing'}",
+        )
+    finally:
+        ingest.register(real)
+        # Back to version 1, which the bumped row is now stale against.
+        ingest.ingest(staying)
 
     # ---- tidying up ------------------------------------------------------
     if not args.keep:

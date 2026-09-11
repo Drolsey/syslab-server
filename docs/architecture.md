@@ -89,7 +89,10 @@ data/<tenant>/                 customer documents          DATA_ROOT
 index/<tenant>.sqlite3         FTS5 index, disposable      INDEX_ROOT
 control/control.sqlite3        tenants, tokens             CONTROL_DIR
 logs/server.log
-derived/<tenant>/              PLANNED, Step 2
+derived/<tenant>/              derived artifacts, disposable   DERIVED_ROOT
+  manifest.sqlite3             what has been produced, and against which version
+  text/<item>/text.txt         extracted text                  Step 2.1, parser swapped at 4.2
+  chunks/<item>/chunks.json    passages, with offsets into text.txt   Step 4.3
 ```
 
 Three directories, three different guarantees, and they are kept apart because of those
@@ -98,6 +101,12 @@ guarantees rather than for tidiness:
 - `data/` is **customer content**. Losing it loses their documents.
 - `index/` is **disposable**. It can be deleted at any moment and rebuilt from `data/`.
   Nothing may be stored here that exists nowhere else.
+- `derived/` is **disposable on the same terms**, and `scripts/check_ingest.py` deletes it
+  entirely on every run to prove it. The manifest lives *inside* it rather than beside it for
+  that reason: a record that outlived the artifacts it describes would report a document
+  ready and point at files that are gone. Since Step 4.3 the check is stricter than
+  "everything came back" — the passages must come back **byte for byte identical**, because
+  every citation the retrieval plane issues is a pair of offsets into these files.
 - `control/` is **precious and small**. Losing it loses every tenant's identity and every
   token. It is the one directory that must be backed up, and it is the reason `tenancy.py`
   opens its database with `synchronous=FULL` while `search.py` uses `NORMAL`.

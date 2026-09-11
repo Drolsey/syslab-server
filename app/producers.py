@@ -1,9 +1,14 @@
 """The producers themselves. Step 2.1.
 
 `app/ingest.py` is the pipeline and knows nothing about what a producer makes.
-This is where the things that read a file actually live, and today there is
-exactly one of them: the text extraction that used to sit inside
-`app/search.py`, MOVED AND NOT REWRITTEN.
+This is where the things that read a file actually live. There are two: the
+text extraction that used to sit inside `app/search.py`, MOVED AND NOT
+REWRITTEN, and -- since Step 4.3 -- the chunker that reads what it wrote.
+
+Both are thin. The text producer is a wrapper over `app/parse.py` and the chunk
+producer is a wrapper over `app/chunks.py`, and that is the shape this file is
+meant to keep: the pipeline glue lives here, and anything with an argument to
+be had about it lives in a module of its own.
 
 WHY IT MOVED, GIVEN THAT NOTHING ABOUT IT CHANGED
     It was search's private code and every future consumer would have had to
@@ -37,7 +42,7 @@ import importlib
 import sys
 from pathlib import Path
 
-from app import ingest, parse
+from app import chunks, ingest, parse
 
 # Moved verbatim from app/search.py. The suffixes a producer handles are now a
 # property of the producer rather than of the index, which is what lets a later
@@ -171,3 +176,100 @@ def text_of(source_name: str) -> str | None:
         return written.read_text(encoding="utf-8")
     except OSError:
         return None
+
+
+# --------------------------------------------------------------------------
+# the chunk producer
+# --------------------------------------------------------------------------
+
+CHUNKS_ARTIFACT = "chunks.json"
+
+
+def _run_chunks(source: Path, out_dir: Path) -> ingest.Result:
+    """Split this document's extracted text into passages.
+
+    READS THE TEXT ARTIFACT, NOT THE SOURCE FILE, and that is decision 5.3
+    rather than convenience. Re-parsing the PDF here would give a second
+    extraction that nobody compares with the first: the index would hold one
+    set of words, the chunks another, and a citation would point at an offset
+    into a string that no longer exists anywhere. It splits exactly what was
+    indexed, or it does not split.
+
+    `source` is therefore unused except for its name, which is deliberate
+    enough to be worth saying out loud -- a producer signature is a contract
+    and not every producer has to open the file it is about.
+    """
+    text = text_of(source.name)
+
+    if text is None:
+        # No text artifact. Either the text producer skipped this file -- a
+        # scan has no text layer, and a scan has no passages either -- or it
+        # has not run. The second case cannot reach here: `depends_on` holds
+        # this back when the text producer did not finish in the same pass.
+        # A skip, not a failure, and it says which of the two it is.
+        return ingest.Result.nothing(
+            "there is no extracted text for this file to split into passages"
+        )
+
+    made = chunks.split(text, source.name)
+    if not made:
+        return ingest.Result.nothing("the extracted text is empty, so there is nothing to split")
+
+    written = out_dir / CHUNKS_ARTIFACT
+    # newline="\n" EXPLICITLY. Without it Python's text mode turns every
+    # newline in the indentation into \r\n on Windows and leaves it alone on
+    # Linux, and "deleting derived/ and rebuilding gives byte-identical
+    # chunks" -- 4.3's own gate -- would then hold on one machine and not
+    # between two. This project already runs the same code on Windows and
+    # on the Ubuntu box.
+    written.write_text(
+        chunks.dumps(source.name, len(text), made),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return ingest.Result.made(
+        written.relative_to(out_dir.parent.parent),
+        f"{len(made)} passages, {sum(c.tokens for c in made)} tokens estimated",
+    )
+
+
+CHUNKS = ingest.register(ingest.Producer(
+    name="chunks",
+    version=1,
+    # Whatever the text producer handles, because that is what it reads. Asked
+    # of TEXT rather than of parse.handles() so that the day a format stops
+    # producing text it also stops producing chunks, without anyone
+    # remembering to change two lines.
+    handles=TEXT.handles,
+    # Splitting 400,000 characters on separators is microseconds, and 4.4 needs
+    # the chunks in the index before the upload's first question arrives. The
+    # slow lane is for OCR and for model calls, and contextual retrieval --
+    # version 2, section 5.4 -- is the thing that will move this.
+    slow=False,
+    depends_on=frozenset({TEXT.name}),
+    run=_run_chunks,
+))
+
+
+def chunks_of(source_name: str) -> list[chunks.Chunk]:
+    """The passages for this file, or [] if there are none.
+
+    The counterpart to text_of, and it reads the artifact for the same reason:
+    a consumer gets what the producer wrote rather than a fresh split that
+    might disagree with the one the offsets were measured against.
+
+    [] covers "no passages", "not produced yet" and "the artifact is from a
+    format this reader does not know". A caller that needs to tell those apart
+    asks ingest.status(), which is where that question is answerable.
+    """
+    from app.config import derived_dir  # local: this module is imported early
+
+    written = derived_dir() / CHUNKS.name / source_name / CHUNKS_ARTIFACT
+    try:
+        payload = written.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    try:
+        return chunks.loads(payload)
+    except ValueError:
+        return []

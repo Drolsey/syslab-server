@@ -101,6 +101,67 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Exact now.
 
 ### Added
+- **The chunk producer** (`app/chunks.py` and `producers.CHUNKS`, writing
+  `derived/<tenant>/chunks/<item>/chunks.json`), Step 4.3. Recursive character splitting,
+  target 512 tokens with 64 of overlap, **consuming the text artifact rather than the
+  source file** — decision 5.3, so that a document is never chunked from bytes the index
+  never saw. A passage carries `start` and `end` offsets into the extracted text, and
+  `artifact[start:end] == text` exactly: *"characters 4,096 to 4,608 of contract.pdf"* is
+  something a customer holding the file can check, and a chunk that knows only its own
+  index is not.
+  - **Determinism is the gate, and it is not a nice-to-have.** `chunk_id` is
+    `source#ordinal`, and it goes into an index, into an API response, and into whatever
+    someone writes down when they check an answer. A chunker that splits differently on
+    the next rebuild repoints every citation ever issued **and reports nothing**. A wrong
+    chunker is loud; a non-deterministic one is silent. So: no `hash()`, no clock, no
+    randomness, no set iteration, no locale-dependent rules, and no value read from a
+    network.
+  - **A plan amendment, made in the open.** Section 5.4 said tokens are *"counted with the
+    model's own tokenizer where the box is reachable"*. That cannot stand beside 4.3's own
+    gate — a boundary decided by a tokenizer that is sometimes reachable depends on
+    whether the GPU box was up at ingest time, which is exactly the Tuesday the gate
+    forbids. The 3.5-characters-per-token estimate is used **always**, as integer
+    arithmetic. A real tokenizer may inform the constants later; it may never be asked at
+    chunk time.
+  - Whitespace trimming **moves the offsets** rather than stripping the string, which is
+    one character longer to write and the difference between a checkable citation and one
+    that is quietly a few characters off.
+- **Producers can declare what they read** (`ingest.Producer.depends_on`), and the
+  pipeline acts on it in three ways. Until Step 4.3 every producer read the source file
+  and nothing else, so the pipeline ran them in alphabetical order — and `chunks` sorts
+  before `text`. The declaration buys the **run order**, the **staleness** and the
+  **hold-back**, which would otherwise have been three separate things to remember:
+  - **Staleness is the one the manifest could not have caught.** A row records the
+    source's size, its mtime and its *own* producer version. Nothing in it says which
+    version of the text artifact the chunks were cut from, so bumping the text producer
+    would have re-extracted every document and left every chunk where it was — offsets
+    into a file rewritten underneath them, with the document still reported `ready`. A
+    schema column could have carried it; a declared dependency carries it without a
+    migration, and is what the run order needs anyway.
+  - **The hold-back keeps one fault to one report.** A damaged file used to be about to
+    produce two failed rows: the real one from the extractor, and a second from the
+    chunker complaining it could not find a text artifact. The second sends whoever reads
+    the manifest into the wrong module. A held-back producer writes **no row** — not
+    `failed`, which would blame it for someone else's fault, and not `skipped`, which
+    would claim there was nothing to make — and appears in the new `blocked` block of the
+    ingest report, which always names what it is waiting for.
+  - A dependency circle is refused by name at `producers_for()` rather than arriving as a
+    `RecursionError` on somebody's first upload.
+- **`scripts/check_ingest.py` gains a passages section** — 31 checks to **37**. Offsets
+  resolve back against `text.txt`, ordinals run from zero with no holes, no passage
+  exceeds the budget it was sized for, and a version bump re-chunks while leaving the
+  extraction alone. The third of 4.3's properties — **byte-identical chunks across a
+  delete and rebuild** — went into section 2, which is the one place the whole folder is
+  already being thrown away and made again.
+- **`tests/test_chunks.py`** — 30 tests. Suite **513 → 543**. Every property was verified
+  by breaking the code and watching the test fail: **eight deliberate breaks, eight
+  failures**. That pass found two things worth having. `chunks.SEPARATORS` ended in an
+  empty string, copied from the shape the technique is usually written in, which the
+  splitter skipped and which therefore protected nothing — a comment pretending to be
+  code, sitting on the line somebody would edit next. And the ordinal-holes test used a
+  run of 400 newlines, well under the target size, so the blank lines were always merged
+  in with the prose either side: it asserted on a case it never built, and **passed
+  against the broken code**.
 - **The source seam** (`app/sources.py`), Step 4.2 part two. `Source` — a name, `list()`
   and `fetch()` — with `files` behind it: **today's behaviour moved and not rewritten**,
   the same discipline as Step 2.1. `ingest.py`'s three separate sentences about local
