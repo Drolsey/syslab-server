@@ -937,13 +937,12 @@ the short version:
    stale.
 
    **The plan was rewritten on 11 September** around seams rather than
-   features, and **4.0 through 4.5 are done** — see the sections below.
-   **Next here is 4.6**, `POST /api/v1/retrieve`: the wire contract in section 6
-   of the plan, the token budget, the source filter, and `coverage`. It should
-   be a mapping onto the wire rather than new retrieval logic:
-   `retrieve.search()` already returns fused passages with `found_by`, and
-   `passages.search_passages()` already measures `matched` separately from
-   `returned`, which is the half of decision 5.6 that carries the weight.
+   features, and **4.0 through 4.6 are done — the retrieval plane answers**, at
+   `POST /api/v1/retrieve`, with `/api/v1` frozen. See the sections below.
+   **Next here is 4.7**, `models.toml` with five roles and one filled, where the
+   gate is that an empty role is *unavailable* and never a silent fallback.
+   Then **4.8**, the thin tenant-scoped wrappers over what Step 2.3 built. Both
+   are small.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
@@ -997,6 +996,107 @@ list is that list in order, so Step 4 ships RRF that provably does nothing and
 Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
+
+## 4.6: the plane answers, and `coverage` needed its own query to be worth anything
+
+12 September. `POST /api/v1/retrieve` is in `app/plane.py`, on the router 4.0
+mounted and authenticated six sub-steps ago. It returns passages with citations,
+respects a token budget, filters by source, and carries a `coverage` block that
+says *"2 of 14"* out loud. **`/api/v1` is frozen.** Suite 593 → **627**, and 21
+deliberate breaks were all caught.
+
+It is a **mapping onto the wire**, which was the intent: `retrieve.search()`
+ranks, `passages.coverage()` counts, and what is left in the route is the
+shape, the budget, and saying what the answer is not.
+
+### `coverage` is the part worth reading twice
+
+The plane asks the **seam** for its ranking, and the seam carries ranks and
+nothing else. So a coverage count assembled from what came back **would have
+equalled `k` every time and agreed with itself every time** — which is exactly
+what an invented number looks like, and this is the one field decision 5.6
+rests on. It gets its own function: two `COUNT(*)`s against a match the index
+has already done. The gate is that `matched` is **not** the returned count.
+
+**And what `matched` will mean at Step 5 is not settled.** It is the keyword
+index's count — how many passages the FTS5 expression matched. A vector
+retriever matches *everything* at some distance, so the word loses its obvious
+meaning the day the second retriever lands. Written into
+`passages.coverage()`'s docstring and the plan rather than left to be
+discovered. `searched` is unaffected: it is how many passages were in scope,
+which is true whoever does the searching.
+
+### The budget is strict, and strict had to be decided
+
+A 600-token passage does not go into a 500-token budget. Handing it over anyway
+blows the budget of a caller who asked precisely so that would not happen,
+which makes the field a decoration. It also **stops rather than skipping
+ahead** to a smaller passage further down the ranking: skipping would fill the
+budget more completely and quietly return a worse-ranked set as though it were
+the best one.
+
+`truncated` means *"the budget stopped this"* and never *"that was all there
+was"*. The one case where `returned` is 0 while `matched` is not — a first
+passage larger than the whole budget — says so in `what_this_means` instead of
+looking like an empty result.
+
+### The source filter changed the seam, one sub-step after shipping it
+
+`Retriever.search` takes `sources` now. Filtering after retrieval was the
+alternative and it makes **two numbers lie at once**: `k` comes back short with
+no explanation, and `matched` counts passages the caller excluded, so
+`coverage` reports a census of the wrong corpus. Changing a seam this soon
+after building it is awkward and it is still right — better now than after a
+second retriever exists.
+
+**An empty source list is nothing, not everything.** Of the two surprises,
+"nothing came back" costs a retry and "everything came back" spends the
+caller's token budget on material they explicitly excluded.
+
+**Another tenant's source filters to nothing and is not an error**, because the
+filter runs inside the asking tenant's own index and a foreign filename matches
+no row. There is no code for that case — and "there is no code for it" is an
+argument rather than a check, so it is gated: 200, zero passages, `searched: 0`,
+and the other tenant's words nowhere in the response body.
+
+### One honest limit of the freeze
+
+`scripts/check_api_compat.py` now holds **two** contracts, compared and
+reported independently, and `--freeze` takes a name so one can be re-frozen
+without touching the other. But the freeze covers the **request**. This
+endpoint returns a `dict`, so FastAPI emits an open object for its 200, and
+declaring a response model to close it would fight the freeze's own rule that a
+field may be *added* — pydantic strips what a model does not name.
+
+Every load-bearing field in section 6 of the plan — `found_by`, `coverage`,
+`truncated`, `what_this_means` — is in the **response**. So the response shape
+is pinned by exact-key-set assertions in `tests/test_plane_retrieve.py`, and
+the gate's own header says it does not cover them. **A freeze that looked like
+it covered them and did not would be worse than no freeze**, which is 4.4's
+inert-check lesson applied before it could cost anything.
+
+### Four gaps in the tests, and all four were the same mistake
+
+Found by breaking, not by reading. Every one was a test whose fixture never
+built the case it claimed to assert on — 4.3's lesson for the third sub-step
+running:
+
+- The budget tests used a budget nothing ever hit, so `>` and `>=` in
+  `fit_budget` were indistinguishable and an off-by-one that silently drops a
+  passage would have passed.
+- `tokens_returned` was asserted where nothing was ever cut, so "what shipped"
+  and "what was considered" were the same number.
+- `coverage.returned` was asserted where it happened to equal `k`.
+- **Every coverage test used a query whose AND pass matched**, so the
+  AND-then-OR fallback was never exercised. A coverage figure taken from the
+  AND pass would have reported `matched: 0` above a response carrying real
+  passages — self-contradicting, and in the direction that makes an aggregate
+  shortfall look like no shortfall at all.
+
+**Next is 4.7**, `models.toml` with five roles and one filled, where the gate is
+that an empty role is *unavailable* and never a silent fallback — the same rule
+as `current_tenant()` raising rather than defaulting. Then **4.8**, thin
+tenant-scoped wrappers over what Step 2.3 already built.
 
 ## 4.5: the fusion is in, and it provably does nothing
 
@@ -2016,6 +2116,15 @@ One more from 4.3, and it is about the tests rather than the code:
     turned on the test suite: **a test nothing has ever seen fail is a row
     nothing ever reads.**
 
+    **It has now recurred in 4.4, 4.5 and 4.6, and one sub-species accounts for
+    almost all of it: the fixture never builds the case the test names.** A
+    budget nothing hits cannot tell `>` from `>=`. A query whose AND pass
+    matches never exercises the OR fallback. A `k` that happens to equal the
+    number returned cannot tell `k` from `returned`. A tie whose scores differ
+    in the fourth decimal is not a tie. Every one passed against deliberately
+    broken code, and every one was found in a minute by breaking the property.
+    **When a test names a boundary, assert that the fixture is ON it.**
+
 And one from 4.4, which is lesson 11 again one level up and the worst place for
 it to be:
 
@@ -2045,8 +2154,8 @@ views, not client data.
 
 ## Run these to confirm the state
 
-    py -m pytest -q                           # 591 passed, 1 skipped
-    py scripts/check_api_compat.py
+    py -m pytest -q                           # 627 passed, 1 skipped
+    py scripts/check_api_compat.py            # /v1 and /api/v1, judged separately
     py scripts/check_gateway_isolation.py     # 31 rows, each proved alive before it is trusted
     py scripts/check_isolation.py             # 58 passed, 1 not tested on Windows
     py scripts/check_ingest.py                # 37 of 37, formats, offsets and byte-identical chunks

@@ -169,14 +169,20 @@ These are real and they shape the plan. None is a bug.
 ## 5. Target: three planes
 
 One FastAPI process, three groups of endpoints separated by what they may touch. All three
-are mounted as of 11 September; the retrieval plane's own endpoints are the part still to
-come, and the table marks which.
+are mounted, and the retrieval plane answers as of 12 September; the table marks what is
+still to come.
 
 | Plane | Endpoints | Tenant | May touch tenant storage |
 |---|---|---|---|
 | **Inference** | `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/audio/*` | none | **No, enforced by a source check** |
-| **Retrieval** | mounted and authenticated (Step 4.0); `/api/v1/retrieve` is Step 4.5, `/api/v1/documents` and `/api/v1/ingest/{name}` Step 4.6 | required, resolved through `tenant_alias` | Yes |
+| **Retrieval** | `POST /api/v1/retrieve` (Step 4.6); `/api/v1/documents` and `/api/v1/ingest/{name}` are Step 4.8 | required, resolved through `tenant_alias` | Yes |
 | **Local** | the existing `/api/*` and `app/agent.py` | required | Yes, unchanged |
+
+**Both `/v1` and `/api/v1` are frozen contracts**, compared independently on every run of
+`scripts/check_api_compat.py` against `docs/api/gateway-v1.released.json` and
+`docs/api/retrieval-v1.released.json`. A field may be **added**; the freeze forbids
+narrowing. It covers the *request* in both cases — the retrieval response shape is pinned by
+`tests/test_plane_retrieve.py` instead, and that file says why.
 
 The inference plane being unable to reach tenant storage is what bounds the damage from a
 leaked service token to "someone used your GPU" rather than "someone read every customer's

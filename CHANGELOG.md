@@ -118,6 +118,57 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Exact now.
 
 ### Added
+- **`POST /api/v1/retrieve`** (`app/plane.py`), Step 4.6 — **the retrieval plane answers.**
+  Passages with citations, the token budget, the source filter and `coverage`, on the router
+  4.0 mounted and authenticated. It is a **mapping onto the wire**: `retrieve.search()`
+  ranks, `passages.coverage()` counts. `tests/test_plane_retrieve.py`, 34 tests, suite
+  593 → **627**, and 21 deliberate breaks all caught.
+  - **The budget is respected rather than advisory, and strict was a decision.** A 600-token
+    passage does not go into a 500-token budget: handing it over anyway blows the budget of a
+    caller who asked precisely so that would not happen, which makes the field a decoration.
+    It **stops rather than skipping ahead** to a smaller passage further down the ranking —
+    skipping fills the budget more completely and quietly returns a worse-ranked set as though
+    it were the best one. `truncated` means "the budget stopped this" and never "that was all
+    there was", and the one case where `returned` is 0 while `matched` is not — a first
+    passage larger than the whole budget — says so instead of looking like an empty result.
+  - **`coverage` is a separate call on the index, and that is the load-bearing part.** The
+    plane asks the retriever seam for its ranking, and the seam carries ranks and nothing
+    else, so a coverage count assembled from what came back **would have equalled `k` every
+    time and agreed with itself every time** — which is what an invented number looks like.
+    `passages.coverage()` asks the index: two `COUNT(*)`s against a match it has already done.
+    The gate is that `matched` is *not* the returned count.
+  - **What `matched` will mean at Step 5 is not settled, and it is written down rather than
+    left to be discovered.** It is the keyword index's count. A vector retriever matches
+    everything at some distance, so the word loses its obvious meaning the day the second
+    retriever lands. `searched` is unaffected — it is how many passages were in scope.
+  - **The source filter went into the retriever seam**, so `Retriever.search` takes `sources`
+    now. Filtering after retrieval makes two numbers lie at once: `k` comes back short with
+    no explanation, and `matched` counts passages the caller excluded, so `coverage` would
+    report a census of the wrong corpus. **An empty list is nothing, not everything**: of the
+    two surprises, "nothing came back" costs a retry and "everything came back" spends the
+    caller's token budget on material they excluded.
+  - **Another tenant's source filters to nothing and is not an error.** There is no code for
+    the case — the filter runs inside the asking tenant's own index, so a foreign filename
+    matches no row — and "there is no code for it" is an argument and not a check, so it is
+    gated: 200, zero passages, `searched: 0`, and the other tenant's words nowhere in the
+    response body.
+  - **Bounds are enforced rather than clamped silently** (422 for `k` of 0 or 999), and
+    **unknown fields are ignored rather than rejected**, because `extra="forbid"` would narrow
+    a frozen contract the website deploys against separately.
+- **`scripts/check_api_compat.py` now freezes TWO contracts**, compared and reported
+  independently: `/v1` against `docs/api/gateway-v1.released.json` as before, and `/api/v1`
+  against the new `docs/api/retrieval-v1.released.json`. `--freeze` takes an optional name
+  (`--freeze retrieval`) so one can be re-frozen without touching the other. A break in one
+  says nothing about the other, and a merged verdict would have made the retrieval plane's
+  first narrowing read as a gateway regression.
+  - **One honest limit, stated in the gate's own header.** The freeze covers the **request**.
+    `/api/v1/retrieve` returns a `dict`, so FastAPI emits an open object for its 200, and a
+    response model to close it would fight the freeze's own rule that a field may be *added*,
+    since pydantic strips what a model does not name. Every load-bearing field of the plan's
+    section 6 — `found_by`, `coverage`, `truncated`, `what_this_means` — is in the
+    **response**, so the response shape is pinned by exact-key-set assertions in
+    `tests/test_plane_retrieve.py`. A freeze that looked like it covered them and did not
+    would be worse than no freeze.
 - **Reciprocal Rank Fusion** (`retrieve.fuse()` and `retrieve.search()`), Step 4.5, k = 60,
   per-retriever weight defaulting to 1.0. **It provably does nothing today and that is the
   sub-step.** One retriever is registered, fusion of a single ranked list is that list in the

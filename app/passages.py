@@ -47,6 +47,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
+from typing import Sequence
 
 from app import ingest, producers, retrieve, search
 from app.config import ensure_data_dir, index_path
@@ -256,7 +257,35 @@ def rebuild(report=None) -> dict:
 # reading
 # --------------------------------------------------------------------------
 
-def search_passages(query: str, limit: int = 8) -> dict:
+# The source filter, as a SQL condition rather than as a list comprehension
+# afterwards, and that is the whole point of it being here.
+#
+# Filtering AFTER retrieval would make two numbers lie at once: `k` would come
+# back short with no explanation, and `matched` would count passages the caller
+# had excluded -- so `coverage` would report a census of the wrong corpus, which
+# is exactly the field decision 5.6 rests on.
+def _scope(sources: Sequence[str] | None) -> tuple[str, list[str]]:
+    """A WHERE condition and its parameters. `None` is every source.
+
+    AN EMPTY LIST IS NOTHING, NOT EVERYTHING, and the choice needs its reason
+    attached because the other reading is the common one. A caller that
+    computed a filter -- the documents a user ticked, say -- and computed an
+    empty one must not be answered with the whole corpus. Returning MORE than
+    was asked for is the failure this plane is built to avoid, and of the two
+    surprises, "nothing came back" costs a retry while "everything came back"
+    spends the caller's token budget on material they excluded.
+    """
+    if sources is None:
+        return "1", []
+    names = [str(name) for name in sources]
+    if not names:
+        return "0", []
+    return f"source IN ({','.join('?' for _ in names)})", names
+
+
+def search_passages(
+    query: str, limit: int = 8, sources: Sequence[str] | None = None
+) -> dict:
     """Find passages by what is inside them.
 
     All terms first, any term as a fallback, and it says which one answered --
@@ -276,28 +305,31 @@ def search_passages(query: str, limit: int = 8) -> dict:
         raise PassageError("Nothing searchable in that query. Give me some words to look for.")
 
     limit = max(1, min(int(limit), 100))
+    scope, scoped = _scope(sources)
     connection = connect()
     try:
         forget_missing(connection)
-        total = connection.execute("SELECT count(*) AS n FROM chunks").fetchone()["n"]
+        total = connection.execute(
+            f"SELECT count(*) AS n FROM chunks WHERE {scope}", scoped
+        ).fetchone()["n"]
         for joiner, precision in ((" AND ", "all terms"), (" OR ", "any term")):
             expression = joiner.join(terms)
             try:
                 matched = connection.execute(
-                    "SELECT count(*) AS n FROM chunks WHERE chunks MATCH ?",
-                    (expression,),
+                    f"SELECT count(*) AS n FROM chunks WHERE chunks MATCH ? AND {scope}",
+                    (expression, *scoped),
                 ).fetchone()["n"]
                 rows = connection.execute(
-                    """
+                    f"""
                     SELECT chunk_id, source, ordinal, text, start_char, end_char, tokens,
                            snippet(chunks, 3, '[', ']', ' ... ', 18) AS snippet,
                            bm25(chunks) AS score
                     FROM chunks
-                    WHERE chunks MATCH ?
+                    WHERE chunks MATCH ? AND {scope}
                     ORDER BY score
                     LIMIT ?
                     """,
-                    (expression, limit),
+                    (expression, *scoped, limit),
                 ).fetchall()
             except sqlite3.OperationalError as exc:
                 raise PassageError(f"Could not run that search: {exc}") from exc
@@ -330,6 +362,56 @@ def search_passages(query: str, limit: int = 8) -> dict:
             "count": 0,
             "results": [],
         }
+    finally:
+        connection.close()
+
+
+def coverage(query: str, sources: Sequence[str] | None = None) -> dict:
+    """How many passages were in scope, and how many the query matched.
+
+    Decision 5.6, and the reason it is a function of its own rather than a
+    by-product of `search_passages`: the plane asks the RETRIEVER SEAM for its
+    ranking, and the seam carries ranks and nothing else. A coverage count
+    assembled from what the seam handed back would equal the limit every time.
+
+    COUNTS ONLY -- no rows, no bm25, no ORDER BY. It is two COUNT(*) queries
+    against an index that has already done the matching.
+
+    WHAT `matched` WILL MEAN WHEN THERE ARE TWO RETRIEVERS IS NOT SETTLED, and
+    pretending otherwise here would be the dishonest part. This is the KEYWORD
+    index's count: how many passages the FTS5 expression matched. That is
+    well-defined today because keyword is the only retriever. A vector
+    retriever matches EVERYTHING at some distance, so "matched" stops having an
+    obvious meaning the day Step 5 lands, and it is named in
+    docs/plans/step-04-retrieval-plane.md as a thing to re-decide rather than
+    left to be discovered. `searched` is unaffected: it is how many passages
+    were in scope, which is true regardless of who does the searching.
+    """
+    terms = search.terms(query)
+    if not terms:
+        raise PassageError("Nothing searchable in that query. Give me some words to look for.")
+
+    scope, scoped = _scope(sources)
+    connection = connect()
+    try:
+        searched = connection.execute(
+            f"SELECT count(*) AS n FROM chunks WHERE {scope}", scoped
+        ).fetchone()["n"]
+        for joiner, precision in ((" AND ", "all terms"), (" OR ", "any term")):
+            try:
+                matched = connection.execute(
+                    f"SELECT count(*) AS n FROM chunks WHERE chunks MATCH ? AND {scope}",
+                    (joiner.join(terms), *scoped),
+                ).fetchone()["n"]
+            except sqlite3.OperationalError as exc:
+                raise PassageError(f"Could not run that search: {exc}") from exc
+            # The same two-pass rule as search_passages, in the same order, so
+            # the count agrees with the list. If the AND pass matched nothing
+            # the ranking fell through to OR, and a coverage figure taken from
+            # the AND pass would report zero beside eight returned passages.
+            if matched:
+                return {"searched": searched, "matched": matched, "matched_on": precision}
+        return {"searched": searched, "matched": 0, "matched_on": None}
     finally:
         connection.close()
 
@@ -420,9 +502,11 @@ class Keyword:
 
     name = "keyword"
 
-    def search(self, query: str, limit: int) -> list[retrieve.Hit]:
+    def search(
+        self, query: str, limit: int, sources: Sequence[str] | None = None
+    ) -> list[retrieve.Hit]:
         try:
-            found = search_passages(query, limit)
+            found = search_passages(query, limit, sources=sources)
         except PassageError as exc:
             raise retrieve.RetrieverError(str(exc)) from exc
         return [

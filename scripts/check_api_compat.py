@@ -1,14 +1,15 @@
-"""Step 3.5: the /v1 contract cannot break under the website's feet.
+"""Steps 3.5 and 4.6: two contracts that cannot break under the website's feet.
 
 The website deploys straight to production on a push to `main`. If a change
-here narrows what `/v1` accepts, nobody finds out from this repository's tests
+here narrows what it may send, nobody finds out from this repository's tests
 -- they find out from a chat that stopped answering, on somebody else's
 deployment, with no obvious connection to a commit made over here. This is the
 Python analogue of the compatibility checker the website already runs, and it
 exists so that particular failure is caught on this side of the wire.
 
-    python scripts/check_api_compat.py            # compare against the frozen contract
-    python scripts/check_api_compat.py --freeze   # re-freeze, deliberately
+    python scripts/check_api_compat.py               # compare every contract
+    python scripts/check_api_compat.py --freeze      # re-freeze all, deliberately
+    python scripts/check_api_compat.py --freeze retrieval   # or just one
 
 Three outcomes, not two:
 
@@ -20,11 +21,30 @@ Three outcomes, not two:
     exit 2   cannot judge -- no frozen file, or the app will not import. An
              unanswerable question must not be reported as a pass.
 
-**Only `/v1` is frozen, on purpose.** The local plane (`/api/...`) is this
-install's own admin surface, changes freely, and has exactly one client that
-ships in the same commit as the server. Freezing it would produce a stream of
-failures that mean nothing, and a gate people learn to ignore is worse than no
-gate. `/v1` is the one surface with a caller that deploys separately.
+**TWO surfaces are frozen and the local plane still is not, on purpose.**
+`/v1` is the inference plane (Step 3.5) and `/api/v1` is the retrieval plane
+(Step 4.6); both have a caller that deploys separately, which is the only
+reason a freeze earns its keep. `/api/...` without the `v1` is this install's
+own admin surface, changes freely, and has exactly one client that ships in the
+same commit as the server -- freezing it would produce a stream of failures
+that mean nothing, and a gate people learn to ignore is worse than no gate.
+
+**The two are compared independently and reported separately**, because a break
+in one says nothing about the other and a single merged verdict would make the
+retrieval plane's first narrowing read as a gateway regression.
+
+**Neither freeze covers a response body, and for the two planes the reason is
+different.** The gateway returns vLLM's JSON unmodified, so that shape is
+OpenAI's rather than ours and `scripts/check_gateway.py` checks it against the
+running server. `/api/v1/retrieve` returns a `dict`, so FastAPI emits an open
+object for its 200 -- and declaring a response model to close it would fight
+this gate's own rule that a field may be ADDED, because pydantic strips what a
+model does not name. The retrieval response shape is therefore pinned by
+`tests/test_plane_retrieve.py`, which asserts the EXACT key set of the body and
+of each passage. That is said here rather than left to be discovered: the
+load-bearing fields of section 6 -- `found_by`, `coverage`, `truncated`,
+`what_this_means` -- are all in the response, so a reader who took this file to
+cover them would be trusting a freeze that covered none of them.
 
 **What this can and cannot see.** It compares the request contract: which
 routes exist, which methods, which fields are required, their types, and
@@ -46,6 +66,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -57,9 +78,47 @@ from _deps import require  # noqa: E402
 
 require("fastapi", "pydantic")
 
-FROZEN = ROOT / "docs" / "api" / "gateway-v1.released.json"
-PREFIX = "/v1"
 LINE = "-" * 72
+
+
+@dataclass(frozen=True)
+class Contract:
+    """One frozen surface: what to narrow the schema to, and where it lives.
+
+    A list rather than two copies of this file, and rather than one merged
+    contract, for the reason in the header: the two planes break independently
+    and a merged verdict would misattribute the first narrowing of either.
+    """
+
+    name: str
+    prefix: str
+    path: Path
+    why: str
+
+
+CONTRACTS = (
+    Contract(
+        "gateway", "/v1",
+        ROOT / "docs" / "api" / "gateway-v1.released.json",
+        "Step 3.5. The website deploys separately; this is what it may rely on.",
+    ),
+    Contract(
+        "retrieval", "/api/v1",
+        ROOT / "docs" / "api" / "retrieval-v1.released.json",
+        "Step 4.6. The retrieval plane. Fields may be ADDED; nothing may narrow. "
+        "`found_by`, `coverage` and the absent score are where later steps will "
+        "push, and all three were chosen for that.",
+    ),
+)
+
+# `/api/v1` does not start with `/v1`, so the two prefixes cannot capture each
+# other's routes. Asserted rather than assumed, because the day somebody mounts
+# the retrieval plane at `/v1/api` the overlap would show up as a contract that
+# freezes twice and compares against itself.
+assert not any(
+    a.prefix != b.prefix and a.prefix.startswith(b.prefix)
+    for a in CONTRACTS for b in CONTRACTS
+), "one frozen prefix is inside another, so the two contracts would overlap"
 
 METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "trace")
 
@@ -68,8 +127,8 @@ METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "trace")
 # reading the live schema
 # --------------------------------------------------------------------------
 
-def current_contract() -> dict:
-    """FastAPI's own schema, narrowed to /v1 and to what /v1 refers to.
+def current_contract(contract: Contract) -> dict:
+    """FastAPI's own schema, narrowed to one prefix and to what it refers to.
 
     Imported rather than fetched over HTTP so this runs in CI with no server,
     no GPU and no model. It is the same object the server would serve; taking
@@ -78,20 +137,26 @@ def current_contract() -> dict:
     from app.main import app  # imported late: require() gives the better error
 
     schema = app.openapi()
-    paths = {p: v for p, v in schema.get("paths", {}).items() if p.startswith(PREFIX)}
+    paths = {
+        p: v for p, v in schema.get("paths", {}).items()
+        if p.startswith(contract.prefix)
+    }
 
     components = schema.get("components", {}).get("schemas", {})
     kept: dict = {}
     _keep_referenced(paths, components, kept)
 
-    contract = {
+    out = {
         "openapi": schema.get("openapi"),
-        "info": {"title": schema.get("info", {}).get("title"), "contract": "gateway-v1"},
+        "info": {
+            "title": schema.get("info", {}).get("title"),
+            "contract": f"{contract.name}-v1",
+        },
         "paths": paths,
     }
     if kept:
-        contract["components"] = {"schemas": kept}
-    return contract
+        out["components"] = {"schemas": kept}
+    return out
 
 
 def _keep_referenced(node, components: dict, kept: dict) -> None:
@@ -252,48 +317,46 @@ def _compare_operation(path, method, frozen_op, current_op, frozen, current,
 # entry points
 # --------------------------------------------------------------------------
 
-def freeze() -> int:
-    contract = current_contract()
-    contract["x-syslab-frozen"] = {
-        "frozen": date.today().isoformat(),
-        "why": "Step 3.5. The website deploys separately; this is what it may rely on.",
-        "checked-by": "scripts/check_api_compat.py",
-    }
-    FROZEN.parent.mkdir(parents=True, exist_ok=True)
-    existed = FROZEN.exists()
-    FROZEN.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"\n  {'Re-froze' if existed else 'Froze'} {len(contract.get('paths', {}))} route(s) "
-          f"to {FROZEN.relative_to(ROOT)}")
+def freeze(wanted: str) -> int:
+    for contract in CONTRACTS:
+        if wanted not in ("all", contract.name):
+            continue
+        out = current_contract(contract)
+        out["x-syslab-frozen"] = {
+            "frozen": date.today().isoformat(),
+            "why": contract.why,
+            "checked-by": "scripts/check_api_compat.py",
+        }
+        contract.path.parent.mkdir(parents=True, exist_ok=True)
+        existed = contract.path.exists()
+        contract.path.write_text(
+            json.dumps(out, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(f"\n  {'Re-froze' if existed else 'Froze'} {len(out.get('paths', {}))} "
+              f"route(s) of {contract.prefix} to {contract.path.relative_to(ROOT)}")
     print("\n  Re-freezing is a deliberate act and belongs in its own commit, next to")
     print("  the changelog entry that says what changed and why it is safe.\n")
     return 0
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--freeze", action="store_true",
-                        help="write the frozen contract from the current app")
-    args = parser.parse_args()
+def judge(contract: Contract) -> int:
+    """One contract, compared and reported. Returns its own exit code."""
+    print(f"\nsyslab-server / {contract.name} contract  ({contract.prefix})")
+    print(f"  Frozen:  {contract.path}")
 
-    if args.freeze:
-        return freeze()
-
-    print("\nsyslab-server / gateway v1 contract")
-    print(f"  Frozen:  {FROZEN}")
-
-    if not FROZEN.is_file():
+    if not contract.path.is_file():
         print("\n  CANNOT JUDGE  There is no frozen contract to compare against.")
-        print("  Create it once, deliberately:  python scripts/check_api_compat.py --freeze\n")
+        print("  Create it once, deliberately:  python scripts/check_api_compat.py "
+              f"--freeze {contract.name}\n")
         return 2
 
     try:
-        frozen = json.loads(FROZEN.read_text(encoding="utf-8"))
+        frozen = json.loads(contract.path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         print(f"\n  CANNOT JUDGE  The frozen contract is unreadable: {exc}\n")
         return 2
 
     try:
-        current = current_contract()
+        current = current_contract(contract)
     except Exception as exc:  # noqa: BLE001 -- any import error is the same answer here
         print(f"\n  CANNOT JUDGE  The app would not import: {exc!r}")
         print("  Fix that first. A contract check that cannot load the app proves nothing.\n")
@@ -317,21 +380,46 @@ def main() -> int:
             print(f"  ADDED {item}")
         print("\n  Additions do not break a caller and do not fail this gate. They do mean")
         print("  the frozen file has stopped describing the server. Re-freeze when the")
-        print("  addition is intentional and shipped:  --freeze")
+        print(f"  addition is intentional and shipped:  --freeze {contract.name}")
     else:
         print("  none. The frozen contract still describes the server exactly.")
 
-    print(f"\nGate\n{LINE}")
     if breaking:
-        print(f"  {len(breaking)} breaking change(s). The website deploys straight to")
-        print("  production on a push, so this would be found by a customer rather than")
-        print("  by a test. If the break is genuinely intended, it needs a new version in")
-        print("  the path (/v2), not a re-freeze of v1: re-freezing records the break")
-        print("  instead of preventing it.\n")
+        print(f"\n  {len(breaking)} breaking change(s) in {contract.prefix}. The website")
+        print("  deploys straight to production on a push, so this would be found by a")
+        print("  customer rather than by a test. If the break is genuinely intended it")
+        print("  needs a new version in the path, not a re-freeze: re-freezing records")
+        print("  the break instead of preventing it.")
         return 1
-
-    print("  PASS  The v1 contract still holds.\n")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    names = [contract.name for contract in CONTRACTS]
+    parser.add_argument(
+        "--freeze", nargs="?", const="all", choices=["all", *names], default=None,
+        help="write the frozen contract from the current app; names one or all")
+    args = parser.parse_args()
+
+    if args.freeze:
+        return freeze(args.freeze)
+
+    # Every contract is judged even when an earlier one fails, so one run says
+    # everything that is wrong. Stopping at the first would hide a retrieval
+    # break behind a gateway break and cost a second run to find it.
+    codes = {contract.name: judge(contract) for contract in CONTRACTS}
+
+    print(f"\nGate\n{LINE}")
+    for name, code in codes.items():
+        verdict = {0: "PASS ", 1: "FAIL ", 2: "UNSURE"}[code]
+        print(f"  {verdict} {name}")
+    print()
+    # 1 beats 2: a known break is worse news than an unanswerable question, and
+    # the exit code should report the worse one.
+    if 1 in codes.values():
+        return 1
+    return 2 if 2 in codes.values() else 0
 
 
 if __name__ == "__main__":

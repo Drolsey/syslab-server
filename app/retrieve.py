@@ -93,11 +93,22 @@ class Retriever(Protocol):
     `search` returns hits in its own rank order, best first, at most `limit` of
     them. It returns [] when nothing matched; it raises only when the question
     itself could not be asked.
+
+    `sources` NARROWS THE SEARCH AND EVERY RETRIEVER MUST HONOUR IT -- `None`
+    for every source, a list for only those, and an empty list for nothing.
+    It is part of the seam rather than something the caller applies afterwards
+    because a filter applied after the fact makes two numbers lie: `limit`
+    comes back short with no explanation, and the `matched` count in a coverage
+    block counts passages the caller excluded. A retriever that cannot express
+    the filter must raise rather than return unfiltered results, because the
+    fusion cannot tell a filtered list from an unfiltered one.
     """
 
     name: str
 
-    def search(self, query: str, limit: int) -> list[Hit]:
+    def search(
+        self, query: str, limit: int, sources: Sequence[str] | None = None
+    ) -> list[Hit]:
         ...
 
 
@@ -277,6 +288,7 @@ def search(
     limit: int,
     retrievers: Iterable[str] | None = None,
     weights: Mapping[str, float] | None = None,
+    sources: Sequence[str] | None = None,
 ) -> dict:
     """Ask every registered retriever, then fuse what comes back.
 
@@ -315,7 +327,7 @@ def search(
     failed: dict[str, str] = {}
     for name in wanted:
         try:
-            ranked[name] = available[name].search(query, limit)
+            ranked[name] = available[name].search(query, limit, sources=sources)
         except RetrieverError as exc:
             failed[name] = str(exc)
 

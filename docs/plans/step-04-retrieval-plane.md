@@ -1,6 +1,6 @@
 # Step 4: The Retrieval Plane, and the Seams Everything Else Plugs Into
 
-Status: **IN PROGRESS. 4.0 through 4.5 are done.** **Rewritten 11 September 2026**,
+Status: **IN PROGRESS. 4.0 through 4.6 are done — the plane answers.** **Rewritten 11 September 2026**,
 after the requirements turned out to be wider than the first draft assumed. **All seven
 decisions signed off the same day**, 5.1 to 5.6 as recommended and 5.7 amended by Amro — see
 below, because the amendment is the best thing that happened to this plan.
@@ -18,14 +18,17 @@ is RRF at k = 60 over the registered retrievers; one is registered, and fusing o
 list is that list in that order — asserted on ~2,100 chunk positions, not on the metrics, and
 the gate was broken on purpose to watch it fail.
 
-**Next is 4.6, `POST /api/v1/retrieve`**: the wire contract in section 6, the token budget,
-the source filter, and `coverage`. Everything it needs now exists — `retrieve.search()`
-returns fused passages with `found_by` and names any retriever that failed, and
-`passages.search_passages()` already measures `matched` separately from `returned`, which is
-decision 5.6's load-bearing half. **4.6 should be a mapping onto the wire rather than new
-retrieval logic**, and two things recorded earlier are waiting for it: a `chunk_id` is not
-globally unique (it is `source#ordinal`, scoped to a tenant), and the offset columns are
-`start_char` / `end_char` in the table against `start` / `end` on the wire.
+**4.6 shipped the same day and the plane now answers**: `POST /api/v1/retrieve` returns
+passages with citations, a respected token budget, and a `coverage` block that says "2 of 14"
+out loud. `/api/v1` is frozen. It was a mapping onto the wire, as intended — the one design
+change it forced was pushing the source filter **into** the retriever seam, because filtering
+afterwards would have made `k` and `matched` both lie.
+
+**Next is 4.7, the model role registry**: `models.toml` with five roles, one filled. The gate
+is that an empty role is *unavailable* and never a silent fallback, asserted by asking for
+`embed` and getting a refusal with a reason — the same rule as `current_tenant()` raising
+rather than defaulting. Then **4.8**, the thin tenant-scoped wrappers over what Step 2.3
+already built. Both are small; Step 4 is nearly done.
 
 4.0 stands unchanged and is done — the tenant bridge is needed under every version of this.
 Everything from 4.1 onward is new.
@@ -813,6 +816,70 @@ broken, and this is the only moment it is cheap to notice.
 `coverage`. Gate: the budget is respected and `truncated` is honest; **`coverage` is correct
 and provably so** — a query matching 31 passages and returning 8 says so; a request for
 another tenant's source filters to nothing rather than erroring informatively.
+
+> **DONE, 12 September 2026.** The route is in `app/plane.py` on the router 4.0 mounted, and
+> it is a **mapping onto the wire**: `retrieve.search()` ranks, `passages.coverage()` counts,
+> and what is left here is the shape, the budget and saying out loud what the answer is not.
+> `tests/test_plane_retrieve.py` — 34 tests, suite 593 → **627**. `/api/v1` is frozen at
+> `docs/api/retrieval-v1.released.json`. All three gated properties hold, and **21 deliberate
+> breaks were all caught**.
+>
+> **The budget is strict, and "strict" needed deciding rather than assuming.** A 600-token
+> passage does not go into a 500-token budget — handing it over anyway would blow the budget
+> of a caller who asked precisely so that would not happen, which makes the field a
+> decoration. It **stops rather than skipping ahead** to a smaller passage further down:
+> skipping would fill the budget more completely and quietly return a worse-ranked set as
+> though it were the best one. And the one case where `returned` is 0 while `matched` is not
+> — a first passage larger than the whole budget — says so in `what_this_means` rather than
+> looking like an empty result.
+>
+> **`coverage` needed a function of its own, and that is the interesting find.** The plane
+> asks the *seam* for its ranking, and the seam carries ranks and nothing else, so a coverage
+> count assembled from what came back **would have equalled `k` every time and agreed with
+> itself every time** — which is exactly what an invented number looks like. So
+> `passages.coverage()` asks the index: two `COUNT(*)`s against a match it has already done.
+> The gate is that `matched` is **not** the returned count, which is the assertion that makes
+> the block worth having.
+>
+> **And `matched` will need re-deciding at Step 5, which is written down rather than left to
+> be discovered.** It is the keyword index's count — how many passages the FTS5 expression
+> matched. A vector retriever matches *everything* at some distance, so the word stops having
+> an obvious meaning the day the second retriever lands. `searched` is unaffected: it is how
+> many passages were in scope, which is true regardless of who searches.
+>
+> **The source filter went into the seam, and that changed `Retriever.search`.** It takes
+> `sources` now. Filtering after retrieval was the alternative and it makes two numbers lie
+> at once: `k` comes back short with no explanation, and `matched` counts passages the caller
+> excluded — so `coverage` would report a census of the wrong corpus, which is the one field
+> decision 5.6 rests on. Changing the seam one sub-step after shipping it is awkward and it
+> is still right: better now than after a second retriever exists. **An empty list is
+> nothing, not everything**, because of the two surprises "nothing came back" costs a retry
+> while "everything came back" spends the caller's budget on material they excluded.
+>
+> **Another tenant's source filters to nothing and is not an error**, and there is no code for
+> that case — the filter runs inside the asking tenant's own index, so a foreign filename
+> matches no row. "There is no code for it" is an argument and not a check, so it is gated:
+> 200, zero passages, `searched: 0`, and the other tenant's words absent from the whole
+> response body.
+>
+> **One honest limit of the freeze, stated where somebody would otherwise trust it.** The
+> frozen file covers the **request**. This endpoint returns a `dict`, so FastAPI emits an open
+> object for its 200, and declaring a response model to close it would fight the freeze's own
+> rule that a field may be added, since pydantic strips what a model does not name. Every
+> load-bearing field in section 6 — `found_by`, `coverage`, `truncated`, `what_this_means` —
+> lives in the **response**, so the response shape is pinned by exact-key-set assertions in
+> `tests/test_plane_retrieve.py`, and `check_api_compat.py`'s own header says so. A freeze
+> that looked like it covered them and did not would be worse than no freeze.
+>
+> **Four gaps in the tests, found by breaking rather than reading, and all four were the same
+> mistake**: a test whose fixture never built the case it claimed to assert on. The budget
+> tests used a budget nothing hit, so `>` and `>=` were indistinguishable; `tokens_returned`
+> was asserted where nothing was ever cut, so "what shipped" and "what was considered" were
+> the same number; `coverage.returned` was asserted where it happened to equal `k`; and every
+> coverage test used a query whose AND pass matched, so **the AND-then-OR fallback was never
+> exercised** — a coverage figure taken from the AND pass would have reported `matched: 0`
+> above a response carrying real passages. That is the 4.3 lesson for the third sub-step
+> running.
 
 **4.7 The model role registry.** `models.toml` with five roles, one filled. Gate: an empty
 role is *unavailable* and never a silent fallback, asserted by asking for `embed` and getting

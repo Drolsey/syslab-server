@@ -75,7 +75,7 @@ plan document, sub-steps and gate:
 | 1 | The ownership boundary: every byte has an owner | Complete, `scripts/check_isolation.py` is its gate |
 | 3 | The model gateway: serve `/v1` from our own hardware | Built. Its gate belongs to the website — see below |
 | 2 | The ingestion contract | **Complete**, 10 Sep. `scripts/check_ingest.py` is its gate |
-| 4 | The retrieval plane, and the seams the rest plugs into | **In progress**, 12 Sep. 4.0 (tenant bridge), 4.1 (corpus, golden set, measured baseline), 4.2 (one parser for many formats, the source seam), 4.3 (the chunk producer, with citable offsets into the extracted text), 4.4 (the chunk index and the keyword retriever — **MRR 0.576 → 0.768**) and 4.5 (RRF fusion, which provably does nothing until a second retriever exists) done; `scripts/check_retrieval.py` is its gate. `docs/plans/step-04-retrieval-plane.md` |
+| 4 | The retrieval plane, and the seams the rest plugs into | **In progress**, 12 Sep. 4.0 (tenant bridge), 4.1 (corpus, golden set, measured baseline), 4.2 (one parser for many formats, the source seam), 4.3 (the chunk producer, with citable offsets into the extracted text), 4.4 (the chunk index and the keyword retriever — **MRR 0.576 → 0.768**), 4.5 (RRF fusion, which provably does nothing until a second retriever exists) and 4.6 (**`POST /api/v1/retrieve`**, with a respected token budget and a `coverage` block that says "8 of 31") done; `scripts/check_retrieval.py` is its gate. `docs/plans/step-04-retrieval-plane.md` |
 
 Step 3 comes before Step 2 on purpose: that is the plan's own dependency order, and Step 3
 is the one that stops the per-request model bill. Its gate is the website's own provider
@@ -616,7 +616,7 @@ any untested check*.
 | `check_endtoend.py` | The whole thing, over HTTP, from another machine |
 | `check_gateway.py` | What vLLM will really do with `tool_choice` and streaming |
 | `check_gateway_isolation.py` | The inference plane cannot reach any tenant's files |
-| `check_api_compat.py` | The `/v1` contract the website deploys against has not broken |
+| `check_api_compat.py` | The `/v1` and `/api/v1` contracts the website deploys against have not broken |
 
 Three habits run through all of it and are worth keeping:
 

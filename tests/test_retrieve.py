@@ -58,9 +58,11 @@ class Fake:
         self.results = results
         self.fails = fails
         self.asked: list[tuple[str, int]] = []
+        self.scoped: list[list[str] | None] = []
 
-    def search(self, query: str, limit: int) -> list[retrieve.Hit]:
+    def search(self, query: str, limit: int, sources=None) -> list[retrieve.Hit]:
         self.asked.append((query, limit))
+        self.scoped.append(sources)
         if self.fails:
             raise retrieve.RetrieverError(self.fails)
         return self.results[:limit]
@@ -395,6 +397,39 @@ def test_asking_for_a_subset_runs_only_that_subset():
 
     assert found["retrievers"] == ["keyword"]
     assert vector.asked == []
+
+
+def test_the_source_filter_reaches_every_retriever():
+    """A filter applied after fusion would make `limit` and `matched` both lie.
+
+    So it crosses the seam, and every retriever is handed the same scope. A
+    retriever that quietly ignored it would put passages the caller excluded
+    into a fused list that reports itself as filtered.
+    """
+    keyword = Fake("keyword", hits("a.pdf#0"))
+    vector = Fake("vector", hits("b.pdf#0"))
+    retrieve.register(keyword)
+    retrieve.register(vector)
+
+    retrieve.search("anything", limit=4, sources=["a.pdf"])
+
+    assert keyword.scoped == [["a.pdf"]]
+    assert vector.scoped == [["a.pdf"]]
+
+
+def test_no_filter_is_passed_along_as_no_filter_and_not_as_an_empty_one():
+    """The distinction passages._scope rests on: None is everything, [] is nothing.
+
+    If `search` turned a missing filter into `[]` on the way through, every
+    unfiltered query would come back empty -- and it would look like a corpus
+    problem rather than a plumbing one.
+    """
+    keyword = Fake("keyword", hits("a.pdf#0"))
+    retrieve.register(keyword)
+
+    retrieve.search("anything", limit=4)
+
+    assert keyword.scoped == [None]
 
 
 def test_searching_with_nothing_registered_refuses_rather_than_answering_empty():
