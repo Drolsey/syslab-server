@@ -937,11 +937,11 @@ the short version:
    stale.
 
    **The plan was rewritten on 11 September** around seams rather than
-   features, and **4.0 and 4.1 are both done** — see the sections below.
-   **Next here is 4.2**, the parser and source seam: Docling behind
-   `text` version 2, `Source` with `files` moved and not rewritten, and the
-   licence work on the models Docling downloads at runtime, which its own MIT
-   does not cover. It is now the longest sub-step in the step.
+   features, and **4.0 through 4.4 are done** — see the sections below.
+   **Next here is 4.5, fusion**, and it is a small sub-step with a sharp gate:
+   RRF over a single ranked list must return that list in that order, and
+   `check_retrieval`'s numbers must come out identical to 4.4's. The seam it
+   plugs into (`app/retrieve.py`) already exists; 4.5 adds the function.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
@@ -995,6 +995,94 @@ list is that list in order, so Step 4 ships RRF that provably does nothing and
 Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
+
+## 4.4: the number moved, and two gates turned out to have been asleep
+
+12 September. `app/passages.py` puts the chunks into a `chunks` FTS5 table inside
+the tenant's **existing** `index/<tenant>.sqlite3`, `intake` populates it beside
+the document index, and `Keyword` is the first thing to implement the retriever
+seam. **Overall MRR 0.576 → 0.768** over the same 52 contracts and the same 42
+queries.
+
+| | MRR | R@1 | R@10 |
+|---|---|---|---|
+| documents (4.1 baseline) | 0.576 | 0.458 | 0.685 |
+| **passages (4.4)** | **0.768** | **0.653** | **0.871** |
+| clause, documents | 0.210 | 0.071 | 0.571 |
+| **clause, passages** | **0.686** | **0.571** | **1.000** |
+
+**4.1's prediction was right and by more than it claimed.** It said ANDing nine
+common legal words inside a 512-token chunk should be far more selective than
+inside a fifty-page contract, so `clause` should move substantially *or the
+chunker is wrong*. `clause` more than tripled and its Recall@10 is now 1.000:
+**every one of the 42 queries finds its contract in the top ten**, where
+document search missed eleven — and six of those eleven were not paraphrases.
+`exact` was 0.938 and barely moved, which is the right shape: a rare string was
+never the problem.
+
+**Paraphrase moved and is still the worst kind**, 0.312 → 0.430 MRR at Recall@1
+of 0.056. Keyword search cannot match words a contract does not use. That is
+Step 5's whole job, and those queries are in the golden set precisely so the
+improvement can be measured rather than asserted.
+
+**The gate prints two rows per metric, and the first one must not move.** It
+did not, to three decimals. 4.4 adds a second index and changes nothing about
+the first, so drift in the document row is a regression to explain before the
+passage row means anything at all.
+
+**The comparison needed a judgement call and it is written where it is made.**
+The baseline's Recall@10 means "the right document was among ten *documents*",
+and passages of one document cluster — the ten best passages of a query are
+**3.3 distinct documents on average**, measured. Folding ten passages down would
+have compared ten documents against three and called the difference a
+regression. So each query asks for fifty passages and they fold by first
+appearance. Rank 1 and MRR do not depend on that depth and are the honest
+headline; R@10 is the one it helps.
+
+### Two checks were inert, and neither had ever been seen to fail
+
+This is the part worth carrying forward. Both were found by breaking the thing
+on purpose, not by reading.
+
+- **A `check_gateway_isolation.py` pattern contained a literal backspace
+  character** — an escape eaten somewhere between an editor and the file. It
+  compiled, ran against every line of `app/gateway.py`, matched nothing, and was
+  indistinguishable from a clean bill of health. Found by adding
+  `from app import passages` to `gateway.py` deliberately and noticing that
+  **nothing complained.** The gate now turns each row's description back into
+  the line of code it describes and requires the pattern to match it before it
+  trusts any of them. All 31 are alive.
+- **A `check_isolation.py` check asserted on config rather than on what was
+  opened.** "Both tables live in the tenant's own index file" read
+  `index_path()` to prove what `connect()` had opened. With tenant scoping
+  broken on purpose it kept saying PASS while the three checks beside it failed.
+  It asks SQLite now — `PRAGMA database_list`, via `passages.opened_path()`.
+
+`check_gateway_isolation.py` had already been caught *stale* twice, missing a
+module that existed. **A row that is present, looks right and is inert is
+worse**, because staleness is at least visible to anyone comparing the file list.
+It is 4.3's lesson about tests arriving at the gates: **a check nothing has ever
+seen fail is a claim, not a check.**
+
+### Two things it recorded for 4.6 rather than fixing
+
+- **A `chunk_id` is not globally unique.** It is `source#ordinal` with one index
+  per tenant, so two tenants who both hold a `contract.pdf` both hold a
+  `contract.pdf#0`. Resolving it gives each of them their own passage and never
+  the other's — the stronger property, and gated now — but a `chunk_id` in a log
+  line or a cache key means nothing without the tenant beside it.
+- **The two indexes do not cover the same formats.** `search.SEARCHABLE` is
+  three suffixes; the chunk index covers all ten formats in `parse.py`'s table.
+  A `.docx` has passages and is not in the document index. Widening it is two
+  lines and is deliberately *not* done inside 4.4: it would move the 4.1
+  baseline that every sub-step here is measured against, so it is a change that
+  needs its own before-and-after.
+
+**Suite 543 → 566** passed, 1 skipped, with ten deliberate breaks and ten
+failures. `check_isolation` 54 → **58**, and a leaked passage is why it asserts
+on the returned **text** rather than on a count: a leaked search result is a
+filename, while a leaked passage is a paragraph of the other tenant's contract,
+quoted and already formatted to drop into an answer.
 
 ## 4.3: there are passages now, and the pipeline learned that producers read each other
 
@@ -1841,6 +1929,21 @@ One more from 4.3, and it is about the tests rather than the code:
     turned on the test suite: **a test nothing has ever seen fail is a row
     nothing ever reads.**
 
+And one from 4.4, which is lesson 11 again one level up and the worst place for
+it to be:
+
+12. **The gates are code, and they are the code nobody watches fail.** Two of
+    them were inert. One had a **literal backspace character** where a `\b` was
+    meant — it compiled, it ran, it matched nothing, it printed PASS. The other
+    read `index_path()` to prove what `connect()` had opened, so it passed while
+    tenant scoping was deliberately broken and the three checks beside it
+    failed. **Assert on what the system did, asked of the system** — `PRAGMA
+    database_list`, not the config that was supposed to have been used — and
+    **make a gate prove its own patterns are alive** before trusting what they
+    report. A stale gate is at least visible to anyone comparing a file list.
+    An inert one looks exactly like a clean bill of health, and this file had
+    already recorded the same gate being caught stale twice.
+
 ## The client database
 
 A client PostgreSQL instance on GCP; host, name and credentials live in
@@ -1855,11 +1958,11 @@ views, not client data.
 
 ## Run these to confirm the state
 
-    py -m pytest -q                           # 543 passed, 1 skipped
+    py -m pytest -q                           # 566 passed, 1 skipped
     py scripts/check_api_compat.py
-    py scripts/check_gateway_isolation.py
-    py scripts/check_isolation.py             # 54 passed, 1 not tested on Windows
+    py scripts/check_gateway_isolation.py     # 31 rows, each proved alive before it is trusted
+    py scripts/check_isolation.py             # 58 passed, 1 not tested on Windows
     py scripts/check_ingest.py                # 37 of 37, formats, offsets and byte-identical chunks
-    py scripts/check_retrieval.py             # MRR 0.576 against the committed baseline
+    py scripts/check_retrieval.py             # documents 0.576 unmoved, passages 0.768
     py scripts/check_agent.py                 # needs the model up
     py scripts/check_remote.py

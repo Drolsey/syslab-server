@@ -45,6 +45,14 @@ FORBIDDEN = [
     # module Step 2 added.
     (r"^\s*from\s+app\s+import\s+.*\bsources\b", "imports app.sources"),
     (r"^\s*from\s+app\.sources\s+import", "imports from app.sources"),
+    # Step 4.4 added the passage index. It opens the tenant's index file and
+    # hands back QUOTED TEXT out of their documents, which is a more direct
+    # leak than the document index has ever been: a search result is a
+    # filename, a passage is a paragraph of the contract. Named the moment it
+    # existed. app/retrieve.py is deliberately NOT here -- it holds a dataclass,
+    # a protocol and a dict, and reaches no storage at all.
+    (r"^\s*from\s+app\s+import\s+.*\bpassages\b", "imports app.passages"),
+    (r"^\s*from\s+app\.passages\s+import", "imports from app.passages"),
     # Step 4.0 added the retrieval plane, which is this one's opposite: it
     # cannot do anything WITHOUT a tenant, so importing it would hand the
     # inference plane a ready-made way to get one. Named here the moment it
@@ -71,6 +79,45 @@ FORBIDDEN = [
 ]
 
 
+def example(description: str) -> str:
+    """A line of code that this description says should be caught.
+
+    DERIVED from the description rather than written out beside it, so there is
+    nothing extra to keep in sync. The description already states what the
+    pattern is for; this turns that sentence back into the code it describes.
+    """
+    if description.startswith("imports from app."):
+        return f"from app.{description.removeprefix('imports from app.')} import something"
+    if description.startswith("imports app."):
+        return f"from app import {description.removeprefix('imports app.')}"
+    if description.startswith("calls "):
+        return f"    result = {description.removeprefix('calls ')}"
+    return ""
+
+
+def patterns_are_alive() -> list[str]:
+    """Check every pattern still matches the thing it claims to forbid.
+
+    WRITTEN BECAUSE ONE OF THEM DID NOT. Adding the app.passages rows at Step
+    4.4 put a literal backspace character into the source where the regex was
+    supposed to say a word boundary -- an escape that got eaten between an
+    editor and the file. The pattern compiled, ran against every line of
+    app/gateway.py, matched nothing, and printed PASS. It was indistinguishable
+    from a clean bill of health, and it was found only by breaking gateway.py
+    on purpose and noticing that nothing complained.
+
+    That is this gate's own lesson turned on itself. The file already says it
+    has twice been found STALE -- missing a module that existed. This is worse
+    than stale: a row that is present, looks right, and is inert. A check
+    nothing has ever seen fail is a claim rather than a check.
+    """
+    return [
+        description for pattern, description in FORBIDDEN
+        if not (example(description)
+                and re.search(pattern, example(description), flags=re.MULTILINE))
+    ]
+
+
 def main() -> int:
     print("\nsyslab-server / inference plane isolation check")
     print(f"  Reading: {GATEWAY}\n")
@@ -88,7 +135,19 @@ def main() -> int:
         line for line in without_docstring.splitlines() if not line.strip().startswith("#")
     )
 
-    print("Forbidden reaches into tenant storage")
+    print("Every pattern below catches what it says it does")
+    print(LINE)
+    inert = patterns_are_alive()
+    if inert:
+        for description in inert:
+            print(f"  FAIL  the check for {description!r} matches nothing")
+        print(f"\n  {len(inert)} of {len(FORBIDDEN)} checks are inert. Every PASS")
+        print("  printed below them would be meaningless, so nothing else runs.")
+        print()
+        return 1
+    print(f"  PASS  all {len(FORBIDDEN)} patterns match the code they describe")
+
+    print("\nForbidden reaches into tenant storage")
     print(LINE)
     failures = []
     for pattern, description in FORBIDDEN:

@@ -18,6 +18,23 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 ## [Unreleased]
 
 ### Fixed
+- **A check in `scripts/check_gateway_isolation.py` matched nothing and printed PASS.**
+  Adding the `app.passages` rows put a **literal backspace character** into the source where
+  the regex was meant to say a word boundary — an escape eaten between an editor and the
+  file. It compiled, ran against every line of `app/gateway.py`, matched nothing, and was
+  indistinguishable from a clean bill of health. Found by adding `from app import passages`
+  to `gateway.py` on purpose and noticing that **nothing complained**.
+  - **The gate now proves its own patterns are alive before it trusts any of them**, by
+    turning each row's description back into the line of code it describes and requiring the
+    pattern to match it. All 31 do. This file already recorded being found *stale* twice —
+    missing a module that existed. A row that is present, looks right and is inert is worse,
+    and it is the lesson 4.3 learned about tests applied to a gate: **a check nothing has
+    ever seen fail is a claim, not a check.**
+- **A check in `scripts/check_isolation.py` asserted on config rather than on what was
+  actually opened.** "Both tables live in the tenant's own index file" read `index_path()`
+  to prove what `connect()` had opened, so with tenant scoping deliberately broken it
+  carried on saying PASS while the three checks beside it failed. It now asks SQLite
+  directly — `PRAGMA database_list`, via the new `passages.opened_path()`.
 - **Every `.pptx` and every `.md` was being recorded as a damaged document, and both
   were perfectly fine.** Step 4.2 part one added rows for them to `app/parse.py`'s backend
   table without adding the libraries that read them, and nothing noticed, because
@@ -101,6 +118,62 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Exact now.
 
 ### Added
+- **The chunk index and the keyword retriever** (`app/passages.py`), Step 4.4, and **the
+  measurement is the point of the sub-step**. The `chunks` FTS5 table lives in the tenant's
+  existing `index/<tenant>.sqlite3` as a second table, populated by `intake` beside the
+  document index. Against the committed 4.1 baseline, over the same 52 CUAD contracts and
+  the same 42 queries:
+
+  | | MRR | R@1 | R@3 | R@5 | R@10 |
+  |---|---|---|---|---|---|
+  | documents (4.1 baseline) | 0.576 | 0.458 | 0.563 | 0.611 | 0.685 |
+  | **passages (4.4)** | **0.768** | **0.653** | **0.704** | **0.772** | **0.871** |
+
+  - **4.1's standing prediction was right, and by more than it claimed.** It said ANDing
+    nine common legal words inside a 512-token chunk should be far more selective than
+    inside a fifty-page contract, so `clause` should move substantially or the chunker is
+    wrong. `clause` went **MRR 0.210 → 0.686** and **Recall@10 0.571 → 1.000**: every
+    clause query now finds its contract. `exact` was already 0.938 and barely moved, which
+    is the right shape — a rare string was never the problem.
+  - **Paraphrase moved too and is still the worst kind**, 0.312 → 0.430 MRR with Recall@1
+    at 0.056. Keyword search cannot match words a contract does not use; that is Step 5's
+    job, and those queries are in the golden set precisely because they fail.
+  - **The document numbers did not move**, to three decimals, and the gate now prints two
+    rows per metric so that would be visible. 4.4 adds a second index and changes nothing
+    about the first, so drift there is a regression to explain before the passage row means
+    anything.
+  - **The comparison needed a judgement call, and it is written down where it is made.**
+    The baseline's Recall@10 means "the right document appeared among ten DOCUMENTS", and a
+    document's passages cluster — the ten best passages of a query are **3.3 distinct
+    documents on average**, measured. Folding ten passages down would have compared ten
+    documents against three and called the difference a regression, so each query asks for
+    fifty passages and they are folded by first appearance. That is still far less text
+    than the baseline returns. Rank 1 and MRR are unaffected by the depth and are the
+    honest headline; R@10 is the one it helps.
+- **The retriever seam** (`app/retrieve.py`): `Hit`, a `Retriever` protocol, and a
+  registry. **A retriever returns ranks and not scores, and the type is where that is
+  decided** — decision 5.5. BM25 is unbounded and negative, cosine similarity is −1 to 1,
+  and averaging them is arithmetic on incompatible units. `Hit` has no score field, so a
+  retriever cannot leak its scale into the fusion and the next person cannot "improve" it
+  by blending. A rank of 0 is refused outright: `1/(60 + rank)` is quietly wrong for the
+  best hit of every query if a retriever counts from zero, and nothing about the output
+  looks wrong when it does. The file arrives one sub-step early on purpose — RRF is 4.5,
+  but a seam type that lives inside the first implementation is not a seam.
+- **`app/search.terms()` is public**, renamed from `_terms`. Both indexes tokenise a query
+  the same way, because two tokenisers would drift and every document-versus-passage
+  comparison would then be measuring two query parsers as much as two indexes.
+- **`scripts/check_isolation.py` gains a passage section** — 54 checks to **58**. A leaked
+  search result is a filename; **a leaked passage is a paragraph of the contract, quoted and
+  already formatted to drop into an answer**, so it asserts on the TEXT returned rather than
+  on a count. Verified by breaking tenant scoping on purpose.
+  - It also recorded something worth knowing before 4.6: **a `chunk_id` is not globally
+    unique.** It is `source#ordinal`, and there is one index per tenant, so two tenants who
+    both have a `contract.pdf` both hold a `contract.pdf#0`. Resolving it gives each of them
+    their own passage and never the other's — which is the stronger property and the one now
+    gated — but a chunk_id in a log line or a cache key means nothing without the tenant
+    beside it.
+- **`tests/test_passages.py`** — 23 tests. Suite **543 → 566**. Ten deliberate breaks, ten
+  failures.
 - **The chunk producer** (`app/chunks.py` and `producers.CHUNKS`, writing
   `derived/<tenant>/chunks/<item>/chunks.json`), Step 4.3. Recursive character splitting,
   target 512 tokens with 64 of overlap, **consuming the text artifact rather than the
@@ -346,6 +419,11 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   documented nowhere, despite deciding which tenant owns this install's data.
 
 ### Changed
+- **`intake.arrived()` returns `passages`, and `intake.run_folder()` returns a `passages`
+  block.** Both indexes are brought up to date in one place, which is the reason that module
+  exists: before it there were three call sites that each decided what happens to a new
+  file, and adding a second index to three places that had already drifted once is the drift
+  happening again. Additive — only `/v1` is frozen, and this is not on it.
 - **The served model is now `Qwen/Qwen3-14B-AWQ` at a 16384 context**, replacing
   `Qwen/Qwen3-32B-AWQ` at 8192. Per this changelog's own rule, the values: model
   `Qwen/Qwen3-32B-AWQ` → `Qwen/Qwen3-14B-AWQ` (now pinned by revision `31c69efc`, not just

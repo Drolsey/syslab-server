@@ -9,11 +9,18 @@ to a new file. It stops working the moment a second producer exists, because
 drift.
 
 WHAT THIS OWNS, AND WHAT IT DOES NOT
-    It owns the ORDER: fast producers run in the request, the index is brought
-    up to date, and anything slow is handed to the job lane. It does not own
-    the work. `ingest` decides what needs producing, `search` decides what
-    being indexed means, and this module knows only that one comes before the
-    other.
+    It owns the ORDER: fast producers run in the request, the two indexes are
+    brought up to date, and anything slow is handed to the job lane. It does
+    not own the work. `ingest` decides what needs producing, `search` and
+    `passages` each decide what being indexed means, and this module knows
+    only which comes before which.
+
+    THE SECOND INDEX IS STEP 4.4 AND IT LANDED HERE FOR THE REASON THIS MODULE
+    EXISTS. `app/passages.py` is a second consumer of the same pipeline, and
+    before this module there were three call sites that each decided what
+    happens to a new file. Adding a second index to three places that had
+    already drifted once is the drift happening again; adding it to one is two
+    lines.
 
 WHY NOT PUT IT IN search.py
     Because that is the arrangement Step 2 exists to end. The index is one
@@ -32,7 +39,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app import ingest, jobs, search
+from app import ingest, jobs, passages, search
 
 # The job kind the lane knows this by. One kind for all slow producers rather
 # than one per producer: the lane serialises anyway, and a file with three slow
@@ -58,12 +65,27 @@ def arrived(path: Path) -> dict:
     index right at any time -- and queueing inherits that: a full job lane is a
     reason to leave the slow work outstanding, not a reason to lose the upload.
     """
-    outcome = {"name": path.name, "indexed": False, "queued": None, "deferred": []}
+    outcome = {"name": path.name, "indexed": False, "queued": None, "deferred": [],
+               "passages": 0}
     try:
         outcome.update(search.index_file(path))
     except Exception as exc:  # noqa: BLE001 - the file is already written
         outcome["reason"] = f"{type(exc).__name__}: {exc}"
         return outcome
+
+    # AFTER the document index, and never before it. search.index_file is what
+    # brings the fast producers up to date, so the chunks artifact this reads
+    # exists because that line ran. Swapping the two would index the passages
+    # of the previous version of the file, once, silently, on every upload
+    # that replaced an existing document.
+    #
+    # Its own try: the passage index failing must not lose the document index
+    # that already succeeded, for the same reason neither of them may fail a
+    # write that is already on disk.
+    try:
+        outcome["passages"] = passages.index_file(path)["passages"]
+    except Exception as exc:  # noqa: BLE001 - the file is already written
+        outcome["passages_error"] = f"{type(exc).__name__}: {exc}"
 
     try:
         deferred = ingest.deferred(path.name)
@@ -104,7 +126,9 @@ def run_slow(report, name: str) -> dict:
     try:
         from app.config import resolve_in_data_dir
 
-        search.index_file(resolve_in_data_dir(name))
+        path = resolve_in_data_dir(name)
+        search.index_file(path)
+        passages.index_file(path)
     except Exception:  # noqa: BLE001 - the artifacts are made either way
         pass
     report(1.0, "done")
@@ -125,13 +149,18 @@ def run_folder(report, only_fast: bool = False) -> dict:
     and more obviously correct than re-indexing per file along the way.
     """
     outcome = ingest.rebuild(only_fast=only_fast, report=report)
-    report(0.95, "rebuilding the index")
+    report(0.9, "rebuilding the document index")
     try:
         outcome["index"] = search.rebuild()
     except search.SearchError as exc:
         # A missing parser stops the index rebuild and must not lose the
         # producing that already succeeded.
         outcome["index_error"] = str(exc)
+    report(0.97, "rebuilding the passage index")
+    try:
+        outcome["passages"] = passages.rebuild()
+    except passages.PassageError as exc:
+        outcome["passages_error"] = str(exc)
     report(1.0, "done")
     return outcome
 

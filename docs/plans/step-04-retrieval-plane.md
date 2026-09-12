@@ -1,20 +1,24 @@
 # Step 4: The Retrieval Plane, and the Seams Everything Else Plugs Into
 
-Status: **IN PROGRESS. 4.0, 4.1, 4.2 and 4.3 are done.** **Rewritten 11 September 2026**, after the
-requirements turned out to be wider than the first draft assumed. **All seven decisions
-signed off the same day**, 5.1 to 5.6 as recommended and 5.7 amended by Amro — see below,
-because the amendment is the best thing that happened to this plan.
+Status: **IN PROGRESS. 4.0, 4.1, 4.2, 4.3 and 4.4 are done.** **Rewritten 11 September 2026**,
+after the requirements turned out to be wider than the first draft assumed. **All seven
+decisions signed off the same day**, 5.1 to 5.6 as recommended and 5.7 amended by Amro — see
+below, because the amendment is the best thing that happened to this plan.
 
-**The baseline exists as of 11 September**: overall **MRR 0.576**, and the three query kinds
-are as far apart as the design predicted — rare strings **0.938**, quoted clauses **0.210**,
-paraphrases **0.312 with Recall@1 of 0.028**. `scripts/check_retrieval.py` is the gate.
-**Next is 4.4, the chunk index and the keyword retriever.** The passages exist as of 11
-September — `derived/<tenant>/chunks/<item>/chunks.json`, byte-identical across a delete and
-rebuild — and nothing indexes them yet, which is why `check_retrieval.py` still reads 0.576
-exactly. **4.4 is where that number is supposed to move**, and 4.1's prediction is now due:
-ANDing nine common legal words inside a 512-token chunk should be far more selective than
-inside a fifty-page contract, so `clause` should move substantially. If it does not,
-something is wrong with the chunker rather than with the theory.
+**The number moved, as of 12 September: overall MRR 0.576 → 0.768.** The 4.1 baseline was
+whole-document keyword search; 4.4 indexed the passages and retrieval got substantially
+better at the thing 4.1 found it was worst at. **4.1's standing prediction was right and by
+more than it claimed** — `clause` went **0.210 → 0.686 MRR**, Recall@10 **0.571 → 1.000**,
+and **every one of the 42 queries now finds its contract in the top ten**, where
+document-level search missed eleven of them and six of those eleven were not paraphrases.
+`scripts/check_retrieval.py` is the gate and it prints both rows.
+
+**Next is 4.5, fusion.** `app/retrieve.py` already holds the seam — `Hit`, the `Retriever`
+protocol and the registry, landed early with 4.4 on purpose, because a seam type that lives
+inside its first implementation is not a seam. What 4.5 adds is RRF itself, and the gate is
+the interesting part: **fusing one ranked list must return that list in that order**, and
+`check_retrieval`'s numbers must come out **identical** to 4.4's. An RRF that moves a single
+list is broken, and this is the only moment it is cheap to notice.
 
 4.0 stands unchanged and is done — the tenant bridge is needed under every version of this.
 Everything from 4.1 onward is new.
@@ -678,6 +682,64 @@ differently on Tuesday invalidates every citation ever issued.
 passage-level numbers against 4.1's baseline. **They may be worse on some queries** — a
 512-token chunk has less context than a whole document for BM25 to score — and that is
 information, not a failure. Record it.
+
+> **DONE, 12 September 2026.** `app/passages.py` — the `chunks` table inside the tenant's
+> existing `index/<tenant>.sqlite3`, `search_passages()`, and the `Keyword` retriever. Plus
+> `app/retrieve.py`, the seam, one sub-step early. Suite 543 → **566**;
+> `check_isolation` 54 → **58**.
+>
+> | | MRR | R@1 | R@3 | R@5 | R@10 |
+> |---|---|---|---|---|---|
+> | documents (4.1 baseline) | 0.576 | 0.458 | 0.563 | 0.611 | 0.685 |
+> | **passages (4.4)** | **0.768** | **0.653** | **0.704** | **0.772** | **0.871** |
+> | clause, documents | 0.210 | 0.071 | 0.286 | 0.357 | 0.571 |
+> | **clause, passages** | **0.686** | **0.571** | **0.714** | **0.786** | **1.000** |
+> | paraphrase, documents | 0.312 | 0.028 | 0.083 | 0.083 | 0.097 |
+> | **paraphrase, passages** | **0.430** | **0.056** | 0.071 | **0.176** | **0.322** |
+>
+> **They were not worse anywhere, and the gate was written expecting they might be.** The
+> prediction held: ANDing nine common legal words inside a 512-token chunk is far more
+> selective than inside a fifty-page contract. `exact` was already 0.938 and barely moved to
+> 0.960, which is the right shape — a rare string was never the problem. Paraphrase moved and
+> is **still the worst kind by a wide margin**, which is the point of having it in the golden
+> set: Step 5 is what those queries are for, and they are now a measured gap rather than an
+> asserted one.
+>
+> **The document row did not move, to three decimals**, and the gate prints two rows per
+> metric so that stays visible. 4.4 adds a second index and changes nothing about the first;
+> drift in that row is a regression to explain before the passage row means anything.
+>
+> **One judgement call, written down where it is made.** The baseline's Recall@10 means "the
+> right document was among ten **documents**", and passages of one document cluster — the ten
+> best passages of a query are **3.3 distinct documents on average**, measured. Folding ten
+> passages down would have compared ten documents against three and called the difference a
+> regression. So each query asks for fifty passages, folded to documents by first appearance
+> (`PASSAGE_DEPTH`). Rank 1 and MRR are unaffected by the depth and are the honest headline;
+> R@10 is the one the deeper pool helps.
+>
+> **A gap this opened and did not close, named here because `app/passages.py` points at
+> this paragraph.** `search.SEARCHABLE` is three suffixes — a Step 2 legacy of what the
+> *document* index was willing to read — while the chunk index covers everything that
+> produces chunks, which is all ten formats in `app/parse.py`'s table. **So a `.docx` has
+> passages and is not in the document index.** Widening the document index is a two-line
+> change and it is deliberately not made here: it would move the 4.1 baseline, which is the
+> one number every sub-step of Step 4 is measured against. It is a change to make on its own,
+> with its own before-and-after.
+>
+> **And it found that a `chunk_id` is not globally unique**, before 4.6 could assume it was.
+> It is `source#ordinal` and there is one index per tenant, so two tenants who both hold a
+> `contract.pdf` both hold a `contract.pdf#0`. Resolving it gives each of them their own
+> passage and never the other's — the stronger property, and now the gated one — but a
+> `chunk_id` in a log line or a cache key means nothing without the tenant beside it.
+>
+> **Two gate bugs found, and both were checks that had never failed.** Detailed in
+> `CHANGELOG.md`: a check in `check_gateway_isolation.py` whose regex contained a literal
+> backspace character, so it matched nothing and printed PASS; and a check in
+> `check_isolation.py` that read `index_path()` to prove what `connect()` had opened, so it
+> carried on passing with tenant scoping deliberately broken. The gate now proves its own
+> patterns are alive before it trusts them, and asks SQLite via `passages.opened_path()`
+> rather than asking the config. **A check nothing has ever seen fail is a claim, not a
+> check** — 4.3's lesson about tests, arriving at the gates.
 
 **4.5 Fusion.** `app/retrieve.py`, RRF, one retriever registered. Gate: fusing one list
 returns that list in that order, asserted directly; `check_retrieval`'s numbers are

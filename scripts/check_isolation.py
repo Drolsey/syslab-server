@@ -168,7 +168,7 @@ def _seed(tenant: str, tools, search) -> bool:
 # --------------------------------------------------------------------------
 
 def run(root: Path) -> int:
-    from app import ingest, jobs, producers, search, tools
+    from app import ingest, jobs, passages, producers, search, tools
 
     section("Where this is running")
     real = (config.DATA_ROOT, config.INDEX_ROOT, config.DERIVED_ROOT, config.CONTROL_PATH)
@@ -374,6 +374,68 @@ def run(root: Path) -> int:
               _as(B, lambda: ingest.rebuild())["files_seen"] == 1
               and len(_as(A, lambda: list((config.derived_dir() / "text").iterdir()))) == 2,
               "Beta has one document, Alpha still has its two",
+          ))
+
+    # ---- 3c. passages, Step 4.4 ------------------------------------------
+    #
+    # A third thing on disk made out of a customer's documents, and the one
+    # with the least distance between "a bug" and "a customer reads another
+    # customer's contract". A leaked search result is a FILENAME. A leaked
+    # passage is a paragraph of the document, quoted, already formatted to be
+    # dropped into an answer.
+    section("3c. Passages")
+    for tenant in (A, B):
+        _as(tenant, lambda: passages.rebuild())
+    check("Each word is found only by the tenant whose passages hold it",
+          lambda: (
+              _as(A, lambda: passages.search_passages("Aardvark")["count"]) == 1
+              and _as(A, lambda: passages.search_passages("Bandicoot")["count"]) == 0
+              and _as(B, lambda: passages.search_passages("Bandicoot")["count"]) == 1
+              and _as(B, lambda: passages.search_passages("Aardvark")["count"]) == 0,
+              "the same query, run as each tenant, over the same filename",
+              "one tenant's passages were readable as the other",
+          ))
+    check("A passage never comes back carrying the other tenant's words",
+          lambda: (
+              (lambda rows: bool(rows) and all(
+                  "Bandicoot" not in row["text"] for row in rows))(
+                  _as(A, lambda: passages.search_passages("Aardvark")["results"])),
+              "asserted on the TEXT returned, not only on the count",
+          ))
+    # A CHUNK ID IS NOT GLOBALLY UNIQUE, and this check was written the wrong
+    # way round first. It asserted that A's chunk_id does not resolve for B,
+    # which failed -- and the failure was the gate being wrong, not the code.
+    #
+    # chunk_id is `source#ordinal`. Both tenants here have a shared.pdf, so
+    # both indexes hold a row called `shared.pdf#0`, deliberately: there is one
+    # index per tenant and the id is scoped to it. The property that matters is
+    # not that the id is unrecognised, it is that resolving it gives the caller
+    # THEIR OWN passage and never the other tenant's text -- which is the
+    # stronger of the two claims and the one worth gating.
+    #
+    # Worth knowing at 4.6: a chunk_id in a log line or a cache key means
+    # nothing without the tenant beside it.
+    check("The same citation resolves to each tenant's own passage, never the other's",
+          lambda: (
+              (lambda cid, mine, theirs: bool(cid) and mine and theirs
+               and "Aardvark" in mine["text"] and "Bandicoot" not in mine["text"]
+               and "Bandicoot" in theirs["text"] and "Aardvark" not in theirs["text"])(
+                  (cid := _as(A, lambda: (passages.search_passages("Aardvark")["results"]
+                                          or [{}])[0].get("chunk_id"))),
+                  _as(A, lambda: passages.passage(cid)),
+                  _as(B, lambda: passages.passage(cid))),
+              "shared.pdf#0 exists in both indexes on purpose; the id is scoped "
+              "to a tenant, and 4.6 must not treat it as globally unique",
+              "one tenant's passage was fetchable by the other with a guessable id",
+          ))
+    check("Both tables live in the tenant's own index file",
+          lambda: (
+              (lambda a, b: a.endswith(f"{A}.sqlite3") and b.endswith(f"{B}.sqlite3"))(
+                  _as(A, lambda: passages.opened_path()),
+                  _as(B, lambda: passages.opened_path())),
+              "asked of SQLite via PRAGMA database_list, not of config -- reading "
+              "index_path() to prove what connect() opened is how this check "
+              "carried on passing with tenant scoping deliberately broken",
           ))
 
     # ---- 4. jobs ---------------------------------------------------------
