@@ -937,11 +937,13 @@ the short version:
    stale.
 
    **The plan was rewritten on 11 September** around seams rather than
-   features, and **4.0 through 4.4 are done** — see the sections below.
-   **Next here is 4.5, fusion**, and it is a small sub-step with a sharp gate:
-   RRF over a single ranked list must return that list in that order, and
-   `check_retrieval`'s numbers must come out identical to 4.4's. The seam it
-   plugs into (`app/retrieve.py`) already exists; 4.5 adds the function.
+   features, and **4.0 through 4.5 are done** — see the sections below.
+   **Next here is 4.6**, `POST /api/v1/retrieve`: the wire contract in section 6
+   of the plan, the token budget, the source filter, and `coverage`. It should
+   be a mapping onto the wire rather than new retrieval logic:
+   `retrieve.search()` already returns fused passages with `found_by`, and
+   `passages.search_passages()` already measures `matched` separately from
+   `returned`, which is the half of decision 5.6 that carries the weight.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
@@ -995,6 +997,91 @@ list is that list in order, so Step 4 ships RRF that provably does nothing and
 Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
+
+## 4.5: the fusion is in, and it provably does nothing
+
+12 September. `retrieve.fuse()` is Reciprocal Rank Fusion at k = 60 with a
+per-retriever weight defaulting to 1.0, `retrieve.search()` asks every
+registered retriever and fuses what comes back, and **one retriever is
+registered**, so fusing a single ranked list is that list in the same order.
+**MRR 0.768, unmoved.** That is the whole sub-step and it is deliberate: build
+the machinery, prove it against known-good behaviour, then move the interesting
+thing behind it. Step 5 turns it on by appending to a list.
+
+**The gate asserts on the chunk_ids position by position, not on the metrics**,
+and the difference is bigger than it looks. 42 queries at a depth of 50 is about
+2,100 positions that have to agree exactly. Equal MRR is a much weaker claim: a
+fusion that swapped two passages of the same contract, or two passages neither
+of which is relevant, scores identically and is just as broken. **The gate was
+then broken on purpose** — `fuse` made to sort by `chunk_id` — and it failed 33
+of 42 on order, all five metrics, and returned 1. After 4.4, a gate that has
+never been watched to fail does not count.
+
+**And the section says out loud when it is supposed to start failing.** The day
+Step 5 registers a second retriever, the order assertion **must** break: a
+fusion of two lists that still returns the first one unchanged means the second
+one is not reaching it. A gate that would keep quietly passing through the exact
+change it exists to observe is 4.4's inert check wearing a different hat.
+
+### Two things worth carrying, both of them 4.3's reasoning reused
+
+**The arithmetic is exact — `Fraction`, not float.** Ranks summed as floats make
+the total depend on the order the terms were added, which is the registration
+order, which is which module imported first. Two mathematically tied passages
+would sort by whichever sum happened to round up, and the answer would move the
+day an unrelated import moved. Ties are real ties now, broken by the best single
+rank and finally by `chunk_id`, so the order is total and nothing is left to
+chance. This is `app/chunks.py` counting tokens in integers, one file over.
+
+**`Fused` has no score, for a reason `Hit` does not have.** 1/61 is the best a
+passage can score with one retriever and 2/61 with two — so the same passage,
+equally well retrieved, **doubles** the day Step 5 ships. Anybody who had
+thresholded on that number would have changed behaviour without a single line of
+their own code moving. The order is the output.
+
+### What it refuses, and two decisions the plan had not made
+
+Four refusals, each because the quiet version is worse: a retriever listing a
+passage **twice** (a repeat counts twice, lands it at the top, and nothing in
+the output looks wrong — so it is refused rather than deduplicated), two hits at
+one rank, `k < 1`, and a **negative weight**. That last one is incoherent rather
+than merely odd: absence contributes zero, so a negative weight ranks a passage
+below one that nothing found at all. Weight 0 is allowed, contributes nothing,
+and its hits sort last rather than vanishing — **to take a retriever out of an
+answer, do not ask it.**
+
+Section 6 of the plan had not settled either of these:
+
+- **Each retriever is asked for the full `limit`, not `limit/n`.** Two
+  retrievers asked for four, agreeing on nothing, give eight passages fused from
+  two lists of four — and a passage ranked fifth by both, which is the strongest
+  signal short of unanimity, is not even visible. Depth is what makes the fused
+  order mean anything.
+- **A failed retriever is named, never swallowed.** `failed` carries the reason,
+  because a fused list missing the vector side is a worse answer that looks
+  exactly like a normal one, and this project has already paid for a result that
+  looked right because nothing had run. When *every* retriever fails it raises,
+  since an empty list already means "nothing matched".
+
+**Suite 566 → 591.** Twelve deliberate breaks, twelve caught — and **one test
+was wrong and passed anyway**, which is the third time in three sub-steps that
+breaking found what reading did not. The tie test used two plausible-looking
+rank patterns whose scores differed in the fourth decimal, asserted the ordering
+the scores already gave, and would have passed with the tiebreak deleted
+entirely. **A tie has to be constructed, not hoped for** — it is built now from a
+weight that is exact in binary, so two passages score exactly 1/122. A
+thirteenth break turned out not to be a bug at all: a penalty subtracted equally
+from every passage reorders nothing, and with no score on `Fused` there was
+nothing observable to change.
+
+**Next is 4.6**, `POST /api/v1/retrieve`, and it should be a mapping onto the
+wire rather than new retrieval logic. `retrieve.search()` returns fused passages
+with `found_by` and names any retriever that failed;
+`passages.search_passages()` already measures `matched` separately from
+`returned`, which is decision 5.6's load-bearing half. Two things recorded
+earlier are waiting for it: a `chunk_id` is **not globally unique**, and the
+table's offset columns are `start_char` / `end_char` against `start` / `end` on
+the wire.
 
 ## 4.4: the number moved, and two gates turned out to have been asleep
 
@@ -1958,11 +2045,12 @@ views, not client data.
 
 ## Run these to confirm the state
 
-    py -m pytest -q                           # 566 passed, 1 skipped
+    py -m pytest -q                           # 591 passed, 1 skipped
     py scripts/check_api_compat.py
     py scripts/check_gateway_isolation.py     # 31 rows, each proved alive before it is trusted
     py scripts/check_isolation.py             # 58 passed, 1 not tested on Windows
     py scripts/check_ingest.py                # 37 of 37, formats, offsets and byte-identical chunks
-    py scripts/check_retrieval.py             # documents 0.576 unmoved, passages 0.768
+    py scripts/check_retrieval.py             # documents 0.576 unmoved, passages 0.768,
+                                              # and the fusion changes neither
     py scripts/check_agent.py                 # needs the model up
     py scripts/check_remote.py

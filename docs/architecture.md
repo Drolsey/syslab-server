@@ -62,7 +62,7 @@ bottom-up: nothing on a line imports anything below it.
 ```
 context.py      -> nothing          the tenant, in a ContextVar
 chunks.py       -> nothing          splits a string into passages; opens no file, asks no clock
-retrieve.py     -> nothing          the retriever seam: Hit, Retriever, the registry
+retrieve.py     -> nothing          the retriever seam and the RRF over it
 sources.py      -> nothing          where a tenant's material comes from; `files` today
 config.py       -> context          every env var and every per-tenant path
 llm.py          -> config           one POST to the model server
@@ -148,6 +148,8 @@ These are real and they shape the plan. None is a bug.
   place a vector retriever registers, and Step 5 is where it does. **A paraphrase of words
   the document does not use will not be found today** — measured, not assumed:
   `tests/fixtures/corpus/baseline.json` puts paraphrase queries at Recall@1 of 0.056.
+  The fusion that will combine the two exists and, with one retriever registered, **provably
+  does nothing** — `scripts/check_retrieval.py` asserts it returns the one list unchanged.
 - **The two indexes do not cover the same formats.** `search.SEARCHABLE` is three suffixes;
   the chunk index covers everything that produces chunks, which is all ten formats in
   `parse.py`'s table. So a `.docx` has passages and is not in the document index. Named in

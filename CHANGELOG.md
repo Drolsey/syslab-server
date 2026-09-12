@@ -118,6 +118,55 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Exact now.
 
 ### Added
+- **Reciprocal Rank Fusion** (`retrieve.fuse()` and `retrieve.search()`), Step 4.5, k = 60,
+  per-retriever weight defaulting to 1.0. **It provably does nothing today and that is the
+  sub-step.** One retriever is registered, fusion of a single ranked list is that list in the
+  same order, and `scripts/check_retrieval.py` grows a section that asserts exactly that:
+  all 42 queries come back in the order the retriever gave, every metric identical, MRR
+  **0.768 unmoved** against the committed 4.4 row.
+  - **The assertion is on the chunk_ids position by position, not on the metrics.** 42
+    queries at a depth of 50 is roughly 2,100 positions that must agree exactly, where equal
+    MRR is a far weaker claim — a fusion that swapped two passages of the same contract, or
+    two passages neither of which is relevant, would score identically and be just as
+    broken. **The gate was broken on purpose to watch it fail**: `fuse` made to sort by
+    `chunk_id` failed 33 of 42 on order, all five metrics, and returned 1.
+  - **The fusion section says out loud when it is supposed to start failing.** The day Step 5
+    registers a second retriever the order assertion *must* break, because a fusion of two
+    lists that still returns the first one unchanged means the second is not reaching it. A
+    gate that would keep quietly passing through the change it exists to observe is 4.4's
+    inert-check problem in a different hat.
+  - **The arithmetic is exact — `Fraction`, not float — and it is 4.3's reasoning reused.**
+    Ranks summed as floats make the total depend on the order the terms were added, which is
+    the registration order, which is which module imported first; two mathematically tied
+    passages would then sort by whichever sum happened to round up, and the answer would move
+    the day an unrelated import moved. Ties are real ties, broken by the best single rank and
+    then by `chunk_id`, so the order is total.
+  - **`Fused` carries no score, for a reason `Hit` does not have.** 1/61 is the best a passage
+    can score with one retriever and 2/61 with two, so the same passage, equally well
+    retrieved, would double the day Step 5 ships — and anyone who had thresholded on it would
+    change behaviour silently.
+  - **Four refusals, each because the quiet version is worse.** A retriever listing a passage
+    twice is refused rather than deduplicated, because a repeat counts twice, lands it at the
+    top, and nothing in the output looks wrong; two hits at one rank; `k < 1`, where one
+    retriever's first place outranks every other combined; and a **negative weight**, which is
+    incoherent rather than odd — absence contributes zero, so a negative weight ranks a
+    passage below one that nothing found. Weight 0 is allowed and contributes nothing, its
+    hits sorting last rather than vanishing: to take a retriever out of an answer, do not ask
+    it.
+  - **Two decisions section 6 of the plan did not cover.** Each retriever is asked for the
+    **full `limit`**, not `limit/n` — two retrievers asked for four, agreeing on nothing, give
+    eight passages fused from two lists of four, and a passage ranked fifth by both is
+    invisible. And a **failed retriever is named** in `failed` rather than swallowed, because
+    a fused list missing the vector side is a worse answer that looks exactly like a normal
+    one; when every retriever fails it raises, since an empty list already means "nothing
+    matched".
+  - **`tests/test_retrieve.py`** — 25 tests. Suite **566 → 591**. Twelve deliberate breaks,
+    twelve caught, and **one test that was wrong and passed anyway**: the tie test used two
+    plausible rank patterns whose scores differed in the fourth decimal, asserted the ordering
+    the scores already gave, and would have passed with the tiebreak deleted. A tie has to be
+    constructed, not hoped for. A thirteenth break turned out not to be a bug: a penalty
+    subtracted equally from every passage reorders nothing, and with no score on `Fused`,
+    nothing observable had changed.
 - **The chunk index and the keyword retriever** (`app/passages.py`), Step 4.4, and **the
   measurement is the point of the sub-step**. The `chunks` FTS5 table lives in the tenant's
   existing `index/<tenant>.sqlite3` as a second table, populated by `intake` beside the
