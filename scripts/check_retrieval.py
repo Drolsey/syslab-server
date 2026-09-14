@@ -57,6 +57,22 @@ BASELINE = CORPUS / "baseline.json"
 TENANT = "goldenset"
 KS = (1, 3, 5, 10)
 
+# How many PASSAGES to ask for before folding them back into a ranking of
+# documents, and the number needs its reasoning attached because it is the one
+# judgement call in this comparison.
+#
+# The baseline's Recall@10 means "the right document appeared among ten
+# DOCUMENTS". A document's passages cluster -- the ten best-scoring passages
+# for a clause query are routinely three contracts -- so asking the passage
+# index for ten and folding them down would compare ten documents against
+# three and call the difference a regression.
+#
+# Fifty is deep enough that ten distinct documents can be reached, and it is
+# still far LESS text than the baseline returns: fifty 512-token passages is
+# about 25,000 tokens against ten whole contracts. The comparison is not being
+# made generous to passages; it is being made possible.
+PASSAGE_DEPTH = 50
+
 
 # --------------------------------------------------------------------------
 # metrics
@@ -89,8 +105,33 @@ def reciprocal_rank(ranked: list[str], relevant: set[str]) -> float:
 # the run
 # --------------------------------------------------------------------------
 
+def documents_of(hits, resolve) -> tuple[list[str], list[str]]:
+    """Fold a ranked list of passages into a ranked list of documents.
+
+    First appearance wins: a contract whose best passage is third is ranked
+    third, whatever its other passages do. Averaging a document's passage
+    positions would reward a document for being verbose, which is the opposite
+    of what a citation is for.
+
+    Returns the documents and any chunk_ids that did not resolve. A chunk_id
+    that cannot be looked up again is not a citation, so an unresolvable one is
+    reported rather than skipped -- it would otherwise show up as a retrieval
+    result that is merely slightly worse.
+    """
+    ordered, seen, unresolved = [], set(), []
+    for hit in hits:
+        found = resolve(hit.chunk_id)
+        if found is None:
+            unresolved.append(hit.chunk_id)
+            continue
+        if found["source"] not in seen:
+            seen.add(found["source"])
+            ordered.append(found["source"])
+    return ordered, unresolved
+
+
 def measure(root: Path, golden: dict, manifest: dict) -> dict:
-    from app import search, tools  # noqa: F401  (tools imported for its side effects)
+    from app import passages, retrieve, search, tools  # noqa: F401  (tools for side effects)
 
     corpus_files = sorted((CORPUS / "contracts").glob("*.pdf"))
     target = config.DATA_ROOT / TENANT
@@ -100,7 +141,11 @@ def measure(root: Path, golden: dict, manifest: dict) -> dict:
 
     with context.use_tenant(TENANT):
         indexed = search.rebuild()
+        chunked = passages.rebuild()
+        keyword = retrieve.registered()["keyword"]
         results = []
+        passage_results = []
+        fused_results = []
         for query in golden["queries"]:
             relevant = set(query["relevant"])
             try:
@@ -124,6 +169,66 @@ def measure(root: Path, golden: dict, manifest: dict) -> dict:
                 "error": error,
                 "recall": {str(k): recall_at_k(ranked, relevant, k) for k in KS},
                 "rr": reciprocal_rank(ranked, relevant),
+            })
+
+            # The same query, through the retriever seam. It goes through
+            # retrieve.registered() rather than calling passages directly,
+            # because the seam is what 4.5 fuses and 4.6 serves -- measuring
+            # the module behind it would measure something nothing calls.
+            try:
+                hits = keyword.search(query["query"], PASSAGE_DEPTH)
+                by_document, unresolved = documents_of(hits, passages.passage)
+                shallow, _ = documents_of(hits[:max(KS)], passages.passage)
+                perror = None
+            except Exception as exc:  # noqa: BLE001
+                hits, by_document, unresolved, shallow = [], [], [], []
+                perror = f"{type(exc).__name__}: {exc}"
+
+            passage_results.append({
+                "id": query["id"],
+                "kind": query["kind"],
+                "relevant": sorted(relevant),
+                "returned": by_document[:max(KS)],
+                "passages_returned": len(hits),
+                "documents_in_top_10_passages": len(shallow),
+                "unresolved_chunk_ids": unresolved,
+                "error": perror,
+                "recall": {str(k): recall_at_k(by_document, relevant, k) for k in KS},
+                "rr": reciprocal_rank(by_document, relevant),
+            })
+
+            # The same query AGAIN, through the fusion this time -- Step 4.5.
+            #
+            # One retriever is registered, so fusing its list must give that
+            # list back in that order, and the assertion is made on the
+            # CHUNK_IDS position by position rather than on the metrics. Equal
+            # MRR is a much weaker claim: a fusion that swapped two passages of
+            # the same contract, or two passages neither of which is relevant,
+            # would score identically and be just as broken. Forty-two queries
+            # at PASSAGE_DEPTH is a couple of thousand positions that have to
+            # agree exactly.
+            try:
+                fused = retrieve.search(query["query"], PASSAGE_DEPTH)
+                fused_ids = [f.chunk_id for f in fused["passages"]]
+                fused_by = sorted({r for f in fused["passages"] for r in f.found_by})
+                fused_documents, _ = documents_of(fused["passages"], passages.passage)
+                ferror = None
+            except Exception as exc:  # noqa: BLE001
+                fused, fused_ids, fused_by, fused_documents = None, [], [], []
+                ferror = f"{type(exc).__name__}: {exc}"
+
+            fused_results.append({
+                "id": query["id"],
+                "kind": query["kind"],
+                "relevant": sorted(relevant),
+                "returned": fused_documents[:max(KS)],
+                "retrievers": fused["retrievers"] if fused else [],
+                "failed": fused["failed"] if fused else {},
+                "found_by": fused_by,
+                "same_order_as_the_retriever": fused_ids == [h.chunk_id for h in hits],
+                "error": ferror,
+                "recall": {str(k): recall_at_k(fused_documents, relevant, k) for k in KS},
+                "rr": reciprocal_rank(fused_documents, relevant),
             })
 
         # The aggregate questions. Retrieval cannot answer these; what is
@@ -150,8 +255,18 @@ def measure(root: Path, golden: dict, manifest: dict) -> dict:
 
     return {
         "documents_indexed": indexed.get("indexed", len(corpus_files)),
+        "passages_indexed": chunked.get("passages", 0),
         "corpus_documents": len(corpus_files),
+        "registered_retrievers": sorted(retrieve.registered()),
+        # Carried out of here rather than read in main(): app is imported
+        # inside this function, after the throwaway root has been set, and
+        # reaching for app.retrieve from main() is how a gate ends up importing
+        # the application against the real config it just went to the trouble
+        # of replacing.
+        "rrf_k": retrieve.RRF_K,
         "queries": results,
+        "passage_queries": passage_results,
+        "fused_queries": fused_results,
         "aggregates": aggregate_report,
     }
 
@@ -174,6 +289,16 @@ def summarise(results: list[dict]) -> dict:
                      "mrr": average(rows, "rr"),
                      **{f"recall@{k}": average(rows, "recall", k) for k in KS}}
     return out
+
+
+def table(title: str, summary: dict) -> None:
+    print(f"\n{title}")
+    print(LINE)
+    print(f"  {'':14s}{'queries':>9s}{'MRR':>8s}" + "".join(f"{'R@'+str(k):>9s}" for k in KS))
+    for key in ["overall"] + [k for k in summary if k != "overall"]:
+        row = summary[key]
+        print(f"  {key:14s}{row['queries']:>9d}{row['mrr']:>8.3f}"
+              + "".join(f"{row['recall@'+str(k)]:>9.3f}" for k in KS))
 
 
 def main() -> int:
@@ -226,14 +351,23 @@ def main() -> int:
              config.DERIVED_ROOT, config.CONTROL_PATH) = real
 
     summary = summarise(run["queries"])
+    passage_summary = summarise(run["passage_queries"])
+    fused_summary = summarise(run["fused_queries"])
 
-    print(f"\nRetrieval today: whole-document FTS5 keyword search, app/search.py")
-    print(LINE)
-    print(f"  {'':14s}{'queries':>9s}{'MRR':>8s}" + "".join(f"{'R@'+str(k):>9s}" for k in KS))
-    for key in ["overall"] + [k for k in summary if k != "overall"]:
-        row = summary[key]
-        print(f"  {key:14s}{row['queries']:>9d}{row['mrr']:>8.3f}"
-              + "".join(f"{row['recall@'+str(k)]:>9.3f}" for k in KS))
+    table("Documents: whole-document FTS5 keyword search, app/search.py", summary)
+    table("Passages: chunk-level FTS5 via the keyword retriever, app/passages.py",
+          passage_summary)
+    print(f"  {run['passages_indexed']} passages over {run['corpus_documents']} "
+          f"documents; each query asked for {PASSAGE_DEPTH} passages and they were")
+    print("  folded into a document ranking by first appearance. See PASSAGE_DEPTH")
+    print("  for why that number and not ten.")
+    spread = [r["documents_in_top_10_passages"] for r in run["passage_queries"]]
+    print(f"  The ten best passages of a query are {sum(spread) / max(1, len(spread)):.1f} "
+          f"distinct documents on average, which is")
+    print("  why folding ten passages down would have compared ten documents with "
+          "three.")
+    print("  Rank 1 and MRR are unaffected by the depth and are the honest headline;")
+    print("  R@10 is the one the deeper pool helps.")
 
     errored = [r for r in run["queries"] if r["error"]]
     if errored:
@@ -243,15 +377,90 @@ def main() -> int:
             print(f"    {row['id']}: {row['error']}")
         print("  Every number above is meaningless until that is fixed.")
 
-    failing = [r for r in run["queries"] if r["rr"] == 0.0]
-    paraphrase = [r for r in failing if r["kind"] == "paraphrase"]
-    print(f"\n  {len(failing)} of {len(run['queries'])} queries returned nothing relevant "
-          f"in the top {max(KS)}.")
-    print(f"  {len(paraphrase)} of those are paraphrase queries, which are EXPECTED to "
-          f"fail today.")
-    unexpected = [r for r in failing if r["kind"] != "paraphrase"]
-    if unexpected:
-        print(f"  {len(unexpected)} are NOT: {', '.join(r['id'] for r in unexpected)}")
+    # Per path, and labelled. Both numbers used to be one number, because
+    # there was only one path; printing the document figure under two tables
+    # would read as the verdict on whichever was nearer.
+    for label, rows in (("documents", run["queries"]),
+                        ("passages", run["passage_queries"])):
+        failing = [r for r in rows if r["rr"] == 0.0]
+        paraphrase = [r for r in failing if r["kind"] == "paraphrase"]
+        unexpected = [r for r in failing if r["kind"] != "paraphrase"]
+        print()
+        print(f"  {label:10s} {len(failing)} of {len(rows)} queries returned nothing "
+              f"relevant in the top {max(KS)}.")
+        print(f"  {'':10s} {len(paraphrase)} are paraphrase queries, which keyword "
+              f"search is EXPECTED to fail.")
+        if unexpected:
+            print(f"  {'':10s} {len(unexpected)} are NOT: "
+                  f"{', '.join(r['id'] for r in unexpected)}")
+
+    # ----------------------------------------------------------------------
+    # Step 4.5's gate, and it is a gate that asserts NOTHING HAPPENED.
+    # ----------------------------------------------------------------------
+    print("\nFusion: RRF over one ranked list, app/retrieve.py")
+    print(LINE)
+    fusion_ok = True
+
+    reordered = [r for r in run["fused_queries"] if not r["same_order_as_the_retriever"]]
+    ferrored = [r for r in run["fused_queries"] if r["error"]]
+    print(f"  Registered retrievers: {', '.join(run['registered_retrievers']) or 'none'}")
+    print("  Fusion of a single ranked list is that list in that order, and it is")
+    print(f"  asserted on the chunk_ids position by position -- {len(run['fused_queries'])} "
+          f"queries at a depth of")
+    print(f"  {PASSAGE_DEPTH}, so roughly {len(run['fused_queries']) * PASSAGE_DEPTH:,} "
+          f"positions that have to agree exactly. Equal MRR")
+    print("  is a far weaker claim: a fusion that swapped two passages of the same")
+    print("  contract would score identically and be just as broken.")
+    print()
+
+    if ferrored:
+        fusion_ok = False
+        print(f"  FAIL  {len(ferrored)} of {len(run['fused_queries'])} queries raised "
+              f"inside the fusion:")
+        for row in ferrored[:3]:
+            print(f"          {row['id']}: {row['error']}")
+    elif reordered:
+        fusion_ok = False
+        print(f"  FAIL  the fusion REORDERED {len(reordered)} of "
+              f"{len(run['fused_queries'])} queries: "
+              f"{', '.join(r['id'] for r in reordered[:6])}")
+        print("        An RRF that moves a single list is broken, and this is the only")
+        print("        moment it is cheap to notice -- once a second retriever is")
+        print("        registered there is nothing left to compare it against.")
+    else:
+        print(f"  PASS  all {len(run['fused_queries'])} queries came back in exactly the "
+              f"order the retriever gave")
+
+    # The metrics have to agree too, and they are checked separately from the
+    # order because they are a different claim: the order being identical is
+    # about the fusion, and the metrics being identical is about the measurement
+    # having actually gone through the fusion rather than around it.
+    metric_drift = [
+        metric for metric in ["mrr"] + [f"recall@{k}" for k in KS]
+        if abs(fused_summary["overall"][metric] - passage_summary["overall"][metric]) > 1e-12
+    ]
+    if metric_drift:
+        fusion_ok = False
+        print(f"  FAIL  the fused metrics differ from the retriever's: "
+              f"{', '.join(metric_drift)}")
+    else:
+        print(f"  PASS  every metric is identical to the retriever's, MRR "
+              f"{fused_summary['overall']['mrr']:.3f}")
+
+    credited = sorted({r for row in run["fused_queries"] for r in row["found_by"]})
+    if credited == run["registered_retrievers"]:
+        print(f"  PASS  found_by credits exactly the retrievers that ran: "
+              f"{', '.join(credited)}")
+    else:
+        fusion_ok = False
+        print(f"  FAIL  found_by says {credited or 'nothing'} and the retrievers that "
+              f"ran were {run['registered_retrievers']}")
+
+    print("\n  This section is expected to stay a PASS and stop being interesting.")
+    print("  It becomes interesting again in Step 5: the day a second retriever is")
+    print("  registered, the ORDER assertion above must start FAILING, because a")
+    print("  fusion of two lists that still returns the first one unchanged means")
+    print("  the second one is not reaching it.")
 
     print(f"\nThe aggregate questions, which retrieval cannot answer")
     print(LINE)
@@ -274,6 +483,27 @@ def main() -> int:
         "summary": summary,
         "queries": run["queries"],
         "aggregates": run["aggregates"],
+        # Added at 4.4, ALONGSIDE the 4.1 numbers rather than replacing them.
+        # The committed baseline is the thing every later step is measured
+        # against, and a baseline rewritten by the step it is measuring is not
+        # a baseline. `summary` above stays what it has always been.
+        "passages": {
+            "measured": "chunk-level FTS5 via the keyword retriever (app/passages.py), Step 4.4",
+            "passage_depth": PASSAGE_DEPTH,
+            "summary": passage_summary,
+            "queries": run["passage_queries"],
+        },
+        # Added at 4.5, and it is deliberately a duplicate of the block above.
+        # A row that is supposed to be identical is only useful if it is
+        # recorded separately: the day these two disagree, the committed file
+        # is what says which of them moved.
+        "fusion": {
+            "measured": "RRF over the registered retrievers (app/retrieve.py), Step 4.5",
+            "retrievers": run["registered_retrievers"],
+            "rrf_k": run["rrf_k"],
+            "summary": fused_summary,
+            "queries": run["fused_queries"],
+        },
     }
 
     if args.baseline:
@@ -283,18 +513,55 @@ def main() -> int:
         previous = json.loads(BASELINE.read_text(encoding="utf-8"))
         before = previous["summary"]["overall"]
         now = summary["overall"]
-        print(f"\nAgainst the committed baseline")
+        later = passage_summary["overall"]
+        print(f"\nAgainst the committed 4.1 baseline")
         print(LINE)
+        print("  Two rows per metric. The FIRST is the same whole-document search the",)
+        print("  baseline measured and must not move -- if it has, something changed")
+        print("  that was not supposed to, and the passage numbers below mean nothing")
+        print("  until that is explained. The SECOND is what 4.4 added.")
+        print()
+        drifted = []
         for metric in ["mrr"] + [f"recall@{k}" for k in KS]:
-            delta = now[metric] - before[metric]
-            arrow = "same" if abs(delta) < 1e-9 else ("better" if delta > 0 else "WORSE")
-            print(f"  {metric:12s}{before[metric]:>8.3f} -> {now[metric]:>6.3f}   "
-                  f"{delta:+.3f}  {arrow}")
-        print("\n  A change here is information, not a verdict. Passage retrieval may")
-        print("  be worse on some queries than whole-document retrieval, because a")
-        print("  512-token chunk gives BM25 less to score. Record it either way.")
+            for label, current in (("documents", now), ("passages", later)):
+                delta = current[metric] - before[metric]
+                arrow = "same" if abs(delta) < 1e-9 else ("better" if delta > 0 else "WORSE")
+                if label == "documents" and arrow != "same":
+                    drifted.append(metric)
+                print(f"  {metric:12s}{label:11s}{before[metric]:>8.3f} -> "
+                      f"{current[metric]:>6.3f}   {delta:+.3f}  {arrow}")
+            print()
+        if drifted:
+            print(f"  THE DOCUMENT NUMBERS MOVED: {', '.join(sorted(set(drifted)))}.")
+            print("  4.4 adds a second index and changes nothing about the first one,")
+            print("  so this is a regression to explain before reading anything else.")
+        print("  A change in the passage row is information, not a verdict. Passage")
+        print("  retrieval may be worse on some queries than whole-document retrieval,")
+        print("  because a 512-token chunk gives BM25 less to score. Record it either way.")
+
+        # 4.5 is measured against 4.4 rather than against 4.1, because "the
+        # fusion changed nothing" is a claim about the sub-step before it.
+        recorded = previous.get("passages", {}).get("summary", {}).get("overall")
+        if recorded:
+            moved = [
+                metric for metric in ["mrr"] + [f"recall@{k}" for k in KS]
+                if abs(fused_summary["overall"][metric] - recorded[metric]) > 5e-4
+            ]
+            print()
+            if moved:
+                fusion_ok = False
+                print(f"  FAIL  the fused numbers moved against the committed 4.4 "
+                      f"passage row: {', '.join(moved)}.")
+                print("        4.5 adds a fusion over ONE list and must change nothing.")
+            else:
+                print(f"  PASS  the fused numbers match the committed 4.4 passage row "
+                      f"exactly, MRR {fused_summary['overall']['mrr']:.3f}")
     else:
         print("\n  No committed baseline yet. Run with --baseline to write one.")
+
+    if not fusion_ok:
+        print("\n  The fusion gate FAILED. See the fusion section above.\n")
+        return 1
 
     print()
     return 0

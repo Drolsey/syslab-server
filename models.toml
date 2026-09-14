@@ -1,0 +1,17 @@
+# Step 4.7. Which model fills which role. An empty [roles.X] table means
+# unavailable, never a silent fallback -- see app/models.py:model_for().
+# This is a declaration, not the wire the app actually talks over: app/llm.py
+# keeps reading LLM_BASE_URL / LLM_MODEL from .env via app/config.py exactly
+# as it does today. The values below document today's deployment; nothing
+# reads them into app/llm.py yet, because nothing needs two chat configs.
+# The day a producer needs to ask "is embed available", this is what it asks.
+
+[roles.chat]
+model = "Qwen/Qwen3-14B-AWQ"
+provider = "vllm"
+context_tokens = 32768
+
+[roles.embed]
+[roles.vision]
+[roles.stt]
+[roles.tts]

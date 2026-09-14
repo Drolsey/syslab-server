@@ -63,7 +63,7 @@ request will simply be refused.
 curl -s localhost:8000/v1/models | head            # vLLM, no auth
 curl -s -H "Authorization: Bearer $GATEWAY_TOKEN" localhost:8080/v1/models
 python scripts/check_remote.py                     # the whole surface, from outside
-python scripts/check_api_compat.py                 # the /v1 contract still holds
+python scripts/check_api_compat.py                 # /v1 and /api/v1 both still hold
 python scripts/check_gateway_isolation.py          # inference cannot reach tenant files
 ```
 

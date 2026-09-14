@@ -262,12 +262,18 @@ def stale(connection: sqlite3.Connection | None = None) -> list[str]:
 WORD = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_'-]*")
 
 
-def _terms(query: str) -> list[str]:
+def terms(query: str) -> list[str]:
     """Turn a plain question into terms FTS5 will accept.
 
     The model writes this string, so it can contain quotes, brackets and
     operators that are valid English and invalid FTS5. Extracting words and
     quoting them is safer than passing it through and catching the error.
+
+    PUBLIC SINCE STEP 4.4, and the rename is the whole change. `app/passages.py`
+    searches a second FTS5 table over the same tenant's material, and two
+    indexes that disagreed about what a query means would make every comparison
+    between them meaningless -- including the one scripts/check_retrieval.py
+    exists to make, which is whether passages beat documents.
     """
     stop = {"the", "a", "an", "of", "for", "in", "on", "to", "and", "is", "was",
             "what", "which", "who", "find", "me", "my", "any", "all", "with"}
@@ -283,8 +289,8 @@ def search(query: str, limit: int = 8) -> dict:
     falls back to any term, which is forgiving. Reports which one answered so
     the model knows how much to trust the match.
     """
-    terms = _terms(query)
-    if not terms:
+    found_terms = terms(query)
+    if not found_terms:
         raise SearchError("Nothing searchable in that query. Give me some words to look for.")
 
     connection = connect()
@@ -292,7 +298,7 @@ def search(query: str, limit: int = 8) -> dict:
         forget_missing(connection)
         total = connection.execute("SELECT count(*) AS n FROM documents").fetchone()["n"]
         for joiner, precision in ((" AND ", "all terms"), (" OR ", "any term")):
-            expression = joiner.join(terms)
+            expression = joiner.join(found_terms)
             try:
                 rows = connection.execute(
                     """

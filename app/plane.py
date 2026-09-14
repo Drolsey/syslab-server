@@ -51,24 +51,27 @@ THE DEPENDENCY IS ASYNC, AND THAT IS NOT COSMETIC
     and the reason main.require_auth is an async generator too. Make this sync
     and tenancy silently stops working.
 
-THE ROUTER IS EMPTY ON PURPOSE
-    Step 4.0 is the bridge, not the endpoints. `POST /api/v1/retrieve` arrives
-    in 4.5 and the rest of the plane in 4.6, and they arrive as routes on a
-    router that is already mounted and already authenticated. Same order Step
-    2.0 used: the pipeline existed and was proven before its first producer
-    moved behind it.
+THE ROUTE ADDED AT 4.6 IS A MAPPING ONTO THE WIRE AND NOT A RETRIEVER
+    `POST /api/v1/retrieve` arrived at 4.6 on a router that was already mounted
+    and already authenticated -- the order Step 2.0 used, where the pipeline
+    existed and was proven before its first producer moved behind it. The
+    retrieval itself is `retrieve.search()`; the counting is
+    `passages.coverage()`; what is left here is the shape on the wire, the
+    token budget, and saying out loud what the answer is not. The rest of the
+    plane (`GET /api/v1/documents` and friends) is 4.8.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
-from app import config, context, tenancy
+from app import config, context, ingest, intake, passages, retrieve, tenancy, tools
 
 # The prefix is frozen surface, the same way /v1 is: the website deploys
 # separately, so a narrowing here is found by a customer rather than by a test.
-# scripts/check_api_compat.py takes it over in 4.6, once there are routes to
-# freeze.
+# scripts/check_api_compat.py froze it at 4.6, against
+# docs/api/retrieval-v1.released.json.
 router = APIRouter(prefix="/api/v1", tags=["retrieval"])
 
 TENANT_HEADER = "x-syslab-tenant"
@@ -148,3 +151,260 @@ async def require_tenant(request: Request):
         yield
     finally:
         context.reset_tenant(reset)
+
+
+# --------------------------------------------------------------------------
+# POST /api/v1/retrieve  (4.6)
+# --------------------------------------------------------------------------
+
+class RetrieveRequest(BaseModel):
+    """What a caller may ask for, and the ceilings are the interesting part.
+
+    Every bound here is decision 5.1's instruction expressed as a number --
+    *"just tell the customer the information he needs only"* -- because the
+    caller has about 12,171 tokens for the WHOLE conversation and a retrieval
+    plane that spends them generously is crowding out the conversation it
+    exists to serve.
+
+    `k` DEFAULTS LOW. Eight is the number 512-token passages divide the ~4,000
+    token retrieval budget into, and it is a default rather than a maximum
+    because a caller who knows they want three should be able to say three.
+
+    `budget_tokens` IS RESPECTED RATHER THAN ADVISORY -- see `fit_budget`. The
+    ceiling is the model's entire context window, on the grounds that a
+    retrieval budget larger than the window it feeds is a number nobody could
+    honour; it is deliberately not the 12,171 figure, because that is the
+    website's arithmetic about its own prompt and this plane does not get to
+    assume it stays true.
+
+    Unknown fields are IGNORED rather than rejected. The freeze in
+    scripts/check_api_compat.py forbids narrowing, and `extra="forbid"` would
+    be exactly that: the day the website sends a field this version has not
+    heard of, it would start getting 422s from a server that could simply have
+    answered.
+    """
+
+    query: str = Field(min_length=1, max_length=2000)
+    k: int = Field(default=8, ge=1, le=50)
+    budget_tokens: int = Field(default=4000, ge=1, le=16384)
+    # `None` is every source and an empty list is nothing -- passages._scope
+    # holds that decision and the reason for it.
+    sources: list[str] | None = Field(default=None, max_length=500)
+
+
+def fit_budget(candidates: list[dict], budget_tokens: int) -> tuple[list[dict], int, bool]:
+    """Take passages in rank order until the next one would not fit.
+
+    Returns what fits, what it costs, and whether the budget is what stopped
+    it. STRICT, not approximate: a 600-token passage does not go into a
+    500-token budget. Handing it over anyway would blow the budget of a caller
+    who asked precisely so that would not happen, which makes the field a
+    decoration.
+
+    IT STOPS RATHER THAN SKIPPING AHEAD to a smaller passage further down the
+    ranking. Skipping would fill the budget more completely and would quietly
+    return a worse-ranked set of passages as though it were the best ones; a
+    prefix of the ranking is the honest thing, and `truncated` says the budget
+    is why it is short.
+    """
+    kept: list[dict] = []
+    spent = 0
+    for candidate in candidates:
+        if spent + candidate["tokens"] > budget_tokens:
+            # True even when NOTHING fit. A first passage larger than the whole
+            # budget is the one case where `returned` is 0 while `matched` is
+            # not, and `truncated` is what tells those apart from "nothing
+            # matched".
+            return kept, spent, True
+        kept.append(candidate)
+        spent += candidate["tokens"]
+    return kept, spent, False
+
+
+def what_this_means(coverage: dict, truncated: bool) -> str:
+    """A retrieval result reads like an answer. This says that it is not.
+
+    Carried over in spirit from `search_files`, which already says out loud
+    that a text match is not a filter -- and extended with the numbers, because
+    decision 5.6's whole argument is that *"8 of 31"* is the difference between
+    a wrong aggregate answer nobody can detect and one anybody can.
+
+    Written from the coverage block rather than from a template with the
+    numbers pasted in, so a sentence cannot claim a census the counts
+    contradict.
+    """
+    matched, returned = coverage["matched"], coverage["returned"]
+    if not matched:
+        return (
+            "Nothing in this customer's indexed passages matched those words. That is "
+            "not evidence the material does not discuss it: a paraphrase of words the "
+            "document does not use will not be found by keyword search."
+        )
+    if not returned:
+        return (
+            f"{matched} passages matched and NONE were returned, because the first one "
+            f"alone is larger than budget_tokens. Raise the budget rather than reading "
+            f"this as an empty result."
+        )
+    census = (
+        f"This is a sample, not a census: {returned} of {matched} matching passages "
+        f"were returned."
+        if returned < matched
+        else f"All {matched} matching passages were returned."
+    )
+    budget = (
+        " The token budget, not the supply of passages, is what stopped it."
+        if truncated
+        else ""
+    )
+    return (
+        "These passages CONTAIN or RESEMBLE the words asked about. "
+        f"{census}{budget} Do not answer a question about ALL of something from this: "
+        "count and total questions need the extracted fact tables and SQL, not passages."
+    )
+
+
+@router.post("/retrieve", dependencies=[Depends(require_tenant)])
+def retrieve_passages(body: RetrieveRequest = Body(...)) -> dict:
+    """Which parts of this customer's material bear on this question.
+
+    Passages and never prose -- README.md's boundary rule: this server never
+    learns what a conversation is. Query rewriting from the turn before and
+    answer synthesis are the website's, because they need the conversation and
+    it is not here.
+
+    THE COUNTS COME FROM THE INDEX AND THE RANKING COMES FROM THE SEAM, and
+    they are two calls on purpose. `retrieve.search()` returns ranks and no
+    scores, so a coverage figure assembled from what it handed back would equal
+    `k` every time and would agree with itself every time. `passages.coverage()`
+    asks the index instead: two COUNT(*)s against a match it has already done.
+
+    A SOURCE THAT IS NOT THIS TENANT'S FILTERS TO NOTHING AND IS NOT AN ERROR.
+    There is nothing to reject: the filter is applied inside the tenant's own
+    index, so a name from another tenant matches no row there. Answering "no
+    such document" would confirm a filename to whoever guessed it, and the 404
+    rule in this module's own header is the same rule. It is not a special
+    case in the code, which is why it cannot rot -- but it IS a gated
+    property, because "there is no code for it" is an argument and not a check.
+    """
+    try:
+        found = retrieve.search(body.query, body.k, sources=body.sources)
+        counts = passages.coverage(body.query, sources=body.sources)
+    except retrieve.RetrieverError as exc:
+        # 400: the question could not be asked. Distinct from nothing matching,
+        # which is a 200 with an empty list and a `what_this_means` that says
+        # keyword search cannot match words a document does not use.
+        raise HTTPException(400, str(exc)) from exc
+    except passages.PassageError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    resolved = []
+    for hit in found["passages"]:
+        row = passages.passage(hit.chunk_id)
+        # None is a real possibility rather than a defensive flourish: the
+        # index can be rebuilt between the ranking and this lookup. Dropping
+        # the passage is right -- a citation that cannot be resolved is a
+        # decoration -- and `coverage.returned` counts what actually came back,
+        # so a drop shows up as a number rather than as a silence.
+        if row is None:
+            continue
+        resolved.append({**row, "found_by": list(hit.found_by)})
+
+    kept, spent, truncated = fit_budget(resolved, body.budget_tokens)
+
+    # Ranks are renumbered over what actually shipped, so they are always
+    # 1..len(passages) with no holes. A gap would be a puzzle nobody could
+    # solve from the response: it would mean either the budget or a failed
+    # lookup, and those are already reported separately and honestly.
+    served = [
+        {
+            "chunk_id": row["chunk_id"],
+            "source": row["source"],
+            "text": row["text"],
+            "start": row["start"],
+            "end": row["end"],
+            "tokens": row["tokens"],
+            "rank": position,
+            "found_by": row["found_by"],
+        }
+        for position, row in enumerate(kept, start=1)
+    ]
+
+    coverage = {
+        "searched": counts["searched"],
+        "matched": counts["matched"],
+        "returned": len(served),
+    }
+    return {
+        "query": body.query,
+        "retrievers": found["retrievers"],
+        # Always present, empty today, and load-bearing the day it is not: a
+        # fused list missing the vector side is a worse answer that looks
+        # exactly like a normal one. `retrievers` says who answered and this
+        # says who could not, with the reason.
+        "retrievers_unavailable": found["failed"],
+        "passages": served,
+        "coverage": coverage,
+        "tokens_returned": spent,
+        "truncated": truncated,
+        "what_this_means": what_this_means(coverage, truncated),
+    }
+
+
+# --------------------------------------------------------------------------
+# GET /api/v1/documents, GET /api/v1/documents/{name}, POST /api/v1/ingest/{name}  (4.8)
+# --------------------------------------------------------------------------
+#
+# Thin wrappers over what Step 2.3 already built (app/tools.py, app/ingest.py,
+# app/intake.py), the way 4.6's own header says this file would grow. Nothing
+# below does its own tenant scoping: require_tenant already called
+# context.set_tenant() before any of these run, and tools.list_files(),
+# ingest.status() and config.resolve_in_data_dir() already resolve through
+# config.data_dir() -> context.current_tenant(). A wrapper that re-derived
+# the tenant here would be a second, redundant place for that rule to rot.
+
+@router.get("/documents", dependencies=[Depends(require_tenant)])
+def list_documents() -> dict:
+    """What is in this tenant's folder.
+
+    NOT a straight passthrough of tools.list_files(): that function also
+    reports `folder`, an absolute path on this server's own disk. `/api/files`
+    is same-process admin surface and can say that; `/api/v1` is the frozen
+    surface the website relies on, and handing a stranger this host's
+    filesystem layout is the same mistake this module's own header warns
+    against for tenant ids -- so `folder` does not cross onto this wire.
+    """
+    listing = tools.list_files()
+    return {"count": listing["count"], "documents": listing["files"]}
+
+
+@router.get("/documents/{name}", dependencies=[Depends(require_tenant)])
+def document_status(name: str) -> dict:
+    """Is this document ready, and what failed -- Step 2.3's own question.
+
+    Returned as-is, unlike list_documents: everything ingest.status() reports
+    is about the calling tenant's own document, so there is no host path or
+    other tenant's information to filter out of it.
+    """
+    try:
+        return ingest.status(name)
+    except ingest.IngestError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/ingest/{name}", dependencies=[Depends(require_tenant)])
+def ingest_document(name: str) -> dict:
+    """Bring one of this tenant's documents up to date.
+
+    Returns once the fast producers are done; anything slow is a job id in the
+    response rather than time spent in this request, the same contract
+    POST /api/ingest/{name} already gives -- intake.arrived() decides that
+    split, not this wrapper.
+    """
+    try:
+        path = config.resolve_in_data_dir(name)
+    except config.UnsafePathError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(404, f"No file named {name!r}.")
+    return intake.arrived(path)

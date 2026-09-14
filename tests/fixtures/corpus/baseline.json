@@ -1163,5 +1163,1108 @@
         "distinct_values": 18
       }
     }
-  ]
+  ],
+  "passages": {
+    "measured": "chunk-level FTS5 via the keyword retriever (app/passages.py), Step 4.4",
+    "passage_depth": 50,
+    "summary": {
+      "overall": {
+        "queries": 42,
+        "mrr": 0.7677815570672715,
+        "recall@1": 0.6534391534391534,
+        "recall@3": 0.7040343915343915,
+        "recall@5": 0.7715608465608467,
+        "recall@10": 0.8708333333333333
+      },
+      "clause": {
+        "queries": 14,
+        "mrr": 0.6859977324263039,
+        "recall@1": 0.5714285714285714,
+        "recall@3": 0.7142857142857143,
+        "recall@5": 0.7857142857142857,
+        "recall@10": 1.0
+      },
+      "exact": {
+        "queries": 20,
+        "mrr": 0.96,
+        "recall@1": 0.95,
+        "recall@3": 0.95,
+        "recall@5": 1.0,
+        "recall@10": 1.0
+      },
+      "paraphrase": {
+        "queries": 8,
+        "mrr": 0.4303571428571429,
+        "recall@1": 0.05555555555555555,
+        "recall@3": 0.07118055555555555,
+        "recall@5": 0.17569444444444443,
+        "recall@10": 0.321875
+      }
+    },
+    "queries": [
+      {
+        "id": "exact-01",
+        "kind": "exact",
+        "relevant": [
+          "contract_01.pdf"
+        ],
+        "returned": [
+          "contract_01.pdf"
+        ],
+        "passages_returned": 41,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-02",
+        "kind": "exact",
+        "relevant": [
+          "contract_02.pdf"
+        ],
+        "returned": [
+          "contract_02.pdf"
+        ],
+        "passages_returned": 8,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-03",
+        "kind": "exact",
+        "relevant": [
+          "contract_03.pdf"
+        ],
+        "returned": [
+          "contract_03.pdf",
+          "contract_06.pdf",
+          "contract_22.pdf",
+          "contract_21.pdf"
+        ],
+        "passages_returned": 5,
+        "documents_in_top_10_passages": 4,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-04",
+        "kind": "exact",
+        "relevant": [
+          "contract_04.pdf"
+        ],
+        "returned": [
+          "contract_04.pdf",
+          "contract_08.pdf",
+          "contract_19.pdf",
+          "contract_12.pdf",
+          "contract_07.pdf",
+          "contract_01.pdf",
+          "contract_09.pdf",
+          "contract_45.pdf",
+          "contract_13.pdf",
+          "contract_16.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 5,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-05",
+        "kind": "exact",
+        "relevant": [
+          "contract_07.pdf"
+        ],
+        "returned": [
+          "contract_07.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-06",
+        "kind": "exact",
+        "relevant": [
+          "contract_08.pdf"
+        ],
+        "returned": [
+          "contract_08.pdf"
+        ],
+        "passages_returned": 4,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-07",
+        "kind": "exact",
+        "relevant": [
+          "contract_09.pdf"
+        ],
+        "returned": [
+          "contract_09.pdf",
+          "contract_22.pdf"
+        ],
+        "passages_returned": 6,
+        "documents_in_top_10_passages": 2,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-08",
+        "kind": "exact",
+        "relevant": [
+          "contract_11.pdf"
+        ],
+        "returned": [
+          "contract_11.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-09",
+        "kind": "exact",
+        "relevant": [
+          "contract_12.pdf"
+        ],
+        "returned": [
+          "contract_12.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-10",
+        "kind": "exact",
+        "relevant": [
+          "contract_13.pdf"
+        ],
+        "returned": [
+          "contract_13.pdf"
+        ],
+        "passages_returned": 3,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-11",
+        "kind": "exact",
+        "relevant": [
+          "contract_14.pdf"
+        ],
+        "returned": [
+          "contract_14.pdf"
+        ],
+        "passages_returned": 44,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-12",
+        "kind": "exact",
+        "relevant": [
+          "contract_15.pdf"
+        ],
+        "returned": [
+          "contract_15.pdf",
+          "contract_26.pdf",
+          "contract_21.pdf",
+          "contract_24.pdf",
+          "contract_42.pdf",
+          "contract_25.pdf",
+          "contract_22.pdf",
+          "contract_44.pdf"
+        ],
+        "passages_returned": 15,
+        "documents_in_top_10_passages": 6,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-13",
+        "kind": "exact",
+        "relevant": [
+          "contract_16.pdf"
+        ],
+        "returned": [
+          "contract_16.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-14",
+        "kind": "exact",
+        "relevant": [
+          "contract_17.pdf"
+        ],
+        "returned": [
+          "contract_17.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-15",
+        "kind": "exact",
+        "relevant": [
+          "contract_18.pdf"
+        ],
+        "returned": [
+          "contract_18.pdf"
+        ],
+        "passages_returned": 2,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-16",
+        "kind": "exact",
+        "relevant": [
+          "contract_19.pdf"
+        ],
+        "returned": [
+          "contract_19.pdf"
+        ],
+        "passages_returned": 3,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-17",
+        "kind": "exact",
+        "relevant": [
+          "contract_20.pdf"
+        ],
+        "returned": [
+          "contract_20.pdf"
+        ],
+        "passages_returned": 45,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-18",
+        "kind": "exact",
+        "relevant": [
+          "contract_21.pdf"
+        ],
+        "returned": [
+          "contract_25.pdf",
+          "contract_23.pdf",
+          "contract_26.pdf",
+          "contract_22.pdf",
+          "contract_21.pdf",
+          "contract_24.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 5,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 0.2
+      },
+      {
+        "id": "exact-19",
+        "kind": "exact",
+        "relevant": [
+          "contract_22.pdf"
+        ],
+        "returned": [
+          "contract_22.pdf"
+        ],
+        "passages_returned": 38,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "exact-20",
+        "kind": "exact",
+        "relevant": [
+          "contract_23.pdf"
+        ],
+        "returned": [
+          "contract_23.pdf",
+          "contract_42.pdf",
+          "contract_04.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "clause-01",
+        "kind": "clause",
+        "relevant": [
+          "contract_01.pdf"
+        ],
+        "returned": [
+          "contract_31.pdf",
+          "contract_06.pdf",
+          "contract_33.pdf",
+          "contract_50.pdf",
+          "contract_42.pdf",
+          "contract_36.pdf",
+          "contract_01.pdf",
+          "contract_18.pdf"
+        ],
+        "passages_returned": 8,
+        "documents_in_top_10_passages": 8,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 0.0,
+          "10": 1.0
+        },
+        "rr": 0.14285714285714285
+      },
+      {
+        "id": "clause-02",
+        "kind": "clause",
+        "relevant": [
+          "contract_02.pdf"
+        ],
+        "returned": [
+          "contract_02.pdf"
+        ],
+        "passages_returned": 1,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "clause-03",
+        "kind": "clause",
+        "relevant": [
+          "contract_03.pdf"
+        ],
+        "returned": [
+          "contract_48.pdf",
+          "contract_15.pdf",
+          "contract_17.pdf",
+          "contract_08.pdf",
+          "contract_20.pdf",
+          "contract_44.pdf",
+          "contract_12.pdf",
+          "contract_07.pdf",
+          "contract_51.pdf",
+          "contract_03.pdf"
+        ],
+        "passages_returned": 19,
+        "documents_in_top_10_passages": 9,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 0.0,
+          "10": 1.0
+        },
+        "rr": 0.1
+      },
+      {
+        "id": "clause-04",
+        "kind": "clause",
+        "relevant": [
+          "contract_04.pdf"
+        ],
+        "returned": [
+          "contract_04.pdf"
+        ],
+        "passages_returned": 1,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "clause-05",
+        "kind": "clause",
+        "relevant": [
+          "contract_05.pdf"
+        ],
+        "returned": [
+          "contract_05.pdf",
+          "contract_06.pdf"
+        ],
+        "passages_returned": 3,
+        "documents_in_top_10_passages": 2,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "clause-06",
+        "kind": "clause",
+        "relevant": [
+          "contract_06.pdf"
+        ],
+        "returned": [
+          "contract_06.pdf"
+        ],
+        "passages_returned": 1,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "clause-07",
+        "kind": "clause",
+        "relevant": [
+          "contract_07.pdf"
+        ],
+        "returned": [
+          "contract_07.pdf",
+          "contract_39.pdf"
+        ],
+        "passages_returned": 2,
+        "documents_in_top_10_passages": 2,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "clause-08",
+        "kind": "clause",
+        "relevant": [
+          "contract_08.pdf"
+        ],
+        "returned": [
+          "contract_43.pdf",
+          "contract_22.pdf",
+          "contract_38.pdf",
+          "contract_08.pdf",
+          "contract_12.pdf",
+          "contract_36.pdf"
+        ],
+        "passages_returned": 6,
+        "documents_in_top_10_passages": 6,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 0.25
+      },
+      {
+        "id": "clause-09",
+        "kind": "clause",
+        "relevant": [
+          "contract_09.pdf"
+        ],
+        "returned": [
+          "contract_09.pdf"
+        ],
+        "passages_returned": 1,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "clause-10",
+        "kind": "clause",
+        "relevant": [
+          "contract_10.pdf"
+        ],
+        "returned": [
+          "contract_10.pdf"
+        ],
+        "passages_returned": 1,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "clause-11",
+        "kind": "clause",
+        "relevant": [
+          "contract_11.pdf"
+        ],
+        "returned": [
+          "contract_11.pdf"
+        ],
+        "passages_returned": 1,
+        "documents_in_top_10_passages": 1,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "clause-12",
+        "kind": "clause",
+        "relevant": [
+          "contract_12.pdf"
+        ],
+        "returned": [
+          "contract_18.pdf",
+          "contract_15.pdf",
+          "contract_49.pdf",
+          "contract_33.pdf",
+          "contract_20.pdf",
+          "contract_01.pdf",
+          "contract_41.pdf",
+          "contract_13.pdf",
+          "contract_12.pdf",
+          "contract_31.pdf"
+        ],
+        "passages_returned": 12,
+        "documents_in_top_10_passages": 10,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 0.0,
+          "10": 1.0
+        },
+        "rr": 0.1111111111111111
+      },
+      {
+        "id": "clause-13",
+        "kind": "clause",
+        "relevant": [
+          "contract_13.pdf"
+        ],
+        "returned": [
+          "contract_19.pdf",
+          "contract_13.pdf"
+        ],
+        "passages_returned": 2,
+        "documents_in_top_10_passages": 2,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 0.5
+      },
+      {
+        "id": "clause-14",
+        "kind": "clause",
+        "relevant": [
+          "contract_14.pdf"
+        ],
+        "returned": [
+          "contract_12.pdf",
+          "contract_14.pdf"
+        ],
+        "passages_returned": 2,
+        "documents_in_top_10_passages": 2,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "rr": 0.5
+      },
+      {
+        "id": "para-01",
+        "kind": "paraphrase",
+        "relevant": [
+          "contract_07.pdf",
+          "contract_08.pdf",
+          "contract_33.pdf",
+          "contract_49.pdf",
+          "contract_52.pdf"
+        ],
+        "returned": [
+          "contract_21.pdf",
+          "contract_36.pdf",
+          "contract_34.pdf",
+          "contract_03.pdf",
+          "contract_25.pdf",
+          "contract_23.pdf",
+          "contract_22.pdf",
+          "contract_35.pdf",
+          "contract_41.pdf",
+          "contract_52.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 7,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 0.0,
+          "10": 0.2
+        },
+        "rr": 0.1
+      },
+      {
+        "id": "para-02",
+        "kind": "paraphrase",
+        "relevant": [
+          "contract_27.pdf",
+          "contract_28.pdf",
+          "contract_29.pdf",
+          "contract_30.pdf",
+          "contract_34.pdf",
+          "contract_46.pdf",
+          "contract_47.pdf",
+          "contract_51.pdf"
+        ],
+        "returned": [
+          "contract_43.pdf",
+          "contract_34.pdf",
+          "contract_16.pdf",
+          "contract_03.pdf",
+          "contract_27.pdf",
+          "contract_48.pdf",
+          "contract_07.pdf",
+          "contract_13.pdf",
+          "contract_26.pdf",
+          "contract_28.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 5,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.125,
+          "5": 0.25,
+          "10": 0.375
+        },
+        "rr": 0.5
+      },
+      {
+        "id": "para-03",
+        "kind": "paraphrase",
+        "relevant": [
+          "contract_01.pdf",
+          "contract_18.pdf",
+          "contract_20.pdf",
+          "contract_23.pdf",
+          "contract_24.pdf",
+          "contract_26.pdf",
+          "contract_32.pdf",
+          "contract_33.pdf",
+          "contract_38.pdf"
+        ],
+        "returned": [
+          "contract_20.pdf",
+          "contract_29.pdf",
+          "contract_17.pdf",
+          "contract_46.pdf",
+          "contract_39.pdf",
+          "contract_15.pdf",
+          "contract_43.pdf",
+          "contract_16.pdf",
+          "contract_09.pdf",
+          "contract_23.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 6,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.1111111111111111,
+          "3": 0.1111111111111111,
+          "5": 0.1111111111111111,
+          "10": 0.2222222222222222
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "para-04",
+        "kind": "paraphrase",
+        "relevant": [
+          "contract_08.pdf",
+          "contract_21.pdf",
+          "contract_22.pdf",
+          "contract_23.pdf",
+          "contract_26.pdf",
+          "contract_27.pdf",
+          "contract_34.pdf",
+          "contract_47.pdf",
+          "contract_50.pdf"
+        ],
+        "returned": [
+          "contract_42.pdf",
+          "contract_17.pdf",
+          "contract_52.pdf",
+          "contract_22.pdf",
+          "contract_13.pdf",
+          "contract_46.pdf",
+          "contract_11.pdf",
+          "contract_10.pdf",
+          "contract_09.pdf",
+          "contract_44.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 9,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 0.1111111111111111,
+          "10": 0.1111111111111111
+        },
+        "rr": 0.25
+      },
+      {
+        "id": "para-05",
+        "kind": "paraphrase",
+        "relevant": [
+          "contract_01.pdf",
+          "contract_03.pdf",
+          "contract_15.pdf",
+          "contract_21.pdf",
+          "contract_22.pdf",
+          "contract_24.pdf",
+          "contract_25.pdf",
+          "contract_26.pdf",
+          "contract_36.pdf",
+          "contract_51.pdf"
+        ],
+        "returned": [
+          "contract_12.pdf",
+          "contract_41.pdf",
+          "contract_13.pdf",
+          "contract_22.pdf",
+          "contract_29.pdf",
+          "contract_45.pdf",
+          "contract_44.pdf",
+          "contract_26.pdf",
+          "contract_25.pdf",
+          "contract_36.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 8,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 0.1,
+          "10": 0.4
+        },
+        "rr": 0.25
+      },
+      {
+        "id": "para-06",
+        "kind": "paraphrase",
+        "relevant": [
+          "contract_07.pdf",
+          "contract_08.pdf",
+          "contract_10.pdf",
+          "contract_12.pdf",
+          "contract_13.pdf",
+          "contract_19.pdf",
+          "contract_22.pdf",
+          "contract_37.pdf",
+          "contract_42.pdf",
+          "contract_51.pdf"
+        ],
+        "returned": [
+          "contract_31.pdf",
+          "contract_14.pdf",
+          "contract_27.pdf",
+          "contract_38.pdf",
+          "contract_21.pdf",
+          "contract_25.pdf",
+          "contract_22.pdf",
+          "contract_34.pdf",
+          "contract_11.pdf",
+          "contract_26.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 8,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 0.0,
+          "10": 0.1
+        },
+        "rr": 0.14285714285714285
+      },
+      {
+        "id": "para-07",
+        "kind": "paraphrase",
+        "relevant": [
+          "contract_29.pdf",
+          "contract_35.pdf",
+          "contract_37.pdf"
+        ],
+        "returned": [
+          "contract_29.pdf",
+          "contract_46.pdf",
+          "contract_10.pdf",
+          "contract_11.pdf",
+          "contract_09.pdf",
+          "contract_03.pdf",
+          "contract_16.pdf",
+          "contract_22.pdf",
+          "contract_45.pdf",
+          "contract_37.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 5,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.3333333333333333,
+          "3": 0.3333333333333333,
+          "5": 0.3333333333333333,
+          "10": 0.6666666666666666
+        },
+        "rr": 1.0
+      },
+      {
+        "id": "para-08",
+        "kind": "paraphrase",
+        "relevant": [
+          "contract_27.pdf",
+          "contract_28.pdf"
+        ],
+        "returned": [
+          "contract_29.pdf",
+          "contract_46.pdf",
+          "contract_21.pdf",
+          "contract_25.pdf",
+          "contract_27.pdf",
+          "contract_22.pdf",
+          "contract_40.pdf",
+          "contract_47.pdf",
+          "contract_36.pdf",
+          "contract_43.pdf"
+        ],
+        "passages_returned": 50,
+        "documents_in_top_10_passages": 5,
+        "unresolved_chunk_ids": [],
+        "error": null,
+        "recall": {
+          "1": 0.0,
+          "3": 0.0,
+          "5": 0.5,
+          "10": 0.5
+        },
+        "rr": 0.2
+      }
+    ]
+  }
 }

@@ -56,25 +56,43 @@ it, in a second language, worse.
 
 ## 4. Today: modules and their dependencies
 
-Eleven modules in `app/`. The import graph is acyclic and deliberately so.
+Twenty modules in `app/`. The import graph is acyclic and deliberately so, and it is listed
+bottom-up: nothing on a line imports anything below it.
 
 ```
 context.py      -> nothing          the tenant, in a ContextVar
+chunks.py       -> nothing          splits a string into passages; opens no file, asks no clock
+retrieve.py     -> nothing          the retriever seam and the RRF over it
+sources.py      -> nothing          where a tenant's material comes from; `files` today
 config.py       -> context          every env var and every per-tenant path
-llm.py          -> config           one POST to Ollama
-tenancy.py      -> config, context  the control plane: tenants, tokens
-search.py       -> config           FTS5 keyword index, one file per tenant
+llm.py          -> config           one POST to the model server
+gateway.py      -> config, llm      the inference plane: /v1, no tenant, no storage
+tenancy.py      -> config, context  the control plane: tenants, tokens, aliases
+jobs.py         -> config, context  in-memory queue and worker threads
+plane.py        -> config, context, tenancy    the /api/v1 tenant bridge
+db.py           -> config, context, tenancy    read-only PostgreSQL
 tools.py        -> config           file tools, sandboxed to the tenant folder
-jobs.py         -> context, config  in-memory queue and worker threads
-db.py           -> config, tenancy, context    read-only PostgreSQL
-agent.py        -> db, jobs, llm, search, tools, config
-main.py         -> everything       FastAPI, 12 routes, the auth dependency
+ingest.py       -> config, sources  the producer pipeline and the manifest
+parse.py        -> ingest           suffix -> backend table, Docling behind it
+producers.py    -> chunks, ingest, parse       text and chunks: what gets derived
+search.py       -> config, ingest, producers   FTS5 over whole DOCUMENTS
+passages.py     -> config, ingest, producers, retrieve, search    FTS5 over PASSAGES
+intake.py       -> ingest, jobs, passages, search    what happens to a new file, in one place
+agent.py        -> config, db, jobs, llm, search, tools
+main.py         -> everything       FastAPI, the auth dependency, the three planes
 ```
 
 `context.py` imports nothing because `config` imports it and `tenancy` imports `config`, so
-it has to sit at the bottom. Two edges are function-local imports rather than module-level
-ones (`tools -> db`, `db -> search`) purely to keep it that way. If you add an import and
-something starts failing at startup, that is why.
+it has to sit at the bottom. Three edges are function-local imports rather than module-level
+ones (`tools -> db`, `tools -> intake`, `db -> intake`) purely to keep it that way. If you
+add an import and something starts failing at startup, that is why.
+
+**`intake.py` is the one to read before adding anything to the read path.** Both indexes are
+brought up to date there, because before it existed three call sites each decided what
+happens to a new file and they had already drifted once. `search.py` and `passages.py` are
+siblings that never call each other's write path, and `passages.index_file` deliberately
+does **not** bring the pipeline up to date the way `search.index_file` still does: two
+consumers each running the pipeline for themselves is that same drift, arriving again.
 
 ### The one rule inside the code that matters most
 
@@ -86,7 +104,9 @@ Storage follows from it:
 
 ```
 data/<tenant>/                 customer documents          DATA_ROOT
-index/<tenant>.sqlite3         FTS5 index, disposable      INDEX_ROOT
+index/<tenant>.sqlite3         FTS5 indexes, disposable    INDEX_ROOT
+  documents                    whole documents, for search_files     Step 1
+  chunks                       passages, for retrieval               Step 4.4
 control/control.sqlite3        tenants, tokens             CONTROL_DIR
 logs/server.log
 derived/<tenant>/              derived artifacts, disposable   DERIVED_ROOT
@@ -123,8 +143,18 @@ These are real and they shape the plan. None is a bug.
 
 - **No streaming.** `llm.py` hardcodes `"stream": False`. `/api/chat` blocks for the whole
   tool loop and returns one JSON body.
-- **No vector search.** `search.py` is FTS5 keyword matching only. This was a deliberate
-  choice, not an oversight.
+- **No vector search.** `search.py` and `passages.py` are FTS5 keyword matching only. This
+  was a deliberate choice, not an oversight: the `Retriever` seam in `retrieve.py` is the
+  place a vector retriever registers, and Step 5 is where it does. **A paraphrase of words
+  the document does not use will not be found today** — measured, not assumed:
+  `tests/fixtures/corpus/baseline.json` puts paraphrase queries at Recall@1 of 0.056.
+  The fusion that will combine the two exists and, with one retriever registered, **provably
+  does nothing** — `scripts/check_retrieval.py` asserts it returns the one list unchanged.
+- **The two indexes do not cover the same formats.** `search.SEARCHABLE` is three suffixes;
+  the chunk index covers everything that produces chunks, which is all ten formats in
+  `parse.py`'s table. So a `.docx` has passages and is not in the document index. Named in
+  `docs/plans/step-04-retrieval-plane.md` § 4.4 rather than closed quietly, because widening
+  the document index moves the 4.1 baseline that Step 4 is measured against.
 - **Jobs do not survive a restart.** The queue is in memory.
 - **Per-tenant database credentials do not work.** `tenancy.database_for()` raises for any
   row it finds, because no cipher was chosen. Only the bootstrap tenant reaches a database,
@@ -139,14 +169,20 @@ These are real and they shape the plan. None is a bug.
 ## 5. Target: three planes
 
 One FastAPI process, three groups of endpoints separated by what they may touch. All three
-are mounted as of 11 September; the retrieval plane's own endpoints are the part still to
-come, and the table marks which.
+are mounted, and the retrieval plane answers as of 12 September; the table marks what is
+still to come.
 
 | Plane | Endpoints | Tenant | May touch tenant storage |
 |---|---|---|---|
 | **Inference** | `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/audio/*` | none | **No, enforced by a source check** |
-| **Retrieval** | mounted and authenticated (Step 4.0); `/api/v1/retrieve` is Step 4.5, `/api/v1/documents` and `/api/v1/ingest/{name}` Step 4.6 | required, resolved through `tenant_alias` | Yes |
+| **Retrieval** | `POST /api/v1/retrieve` (Step 4.6); `/api/v1/documents` and `/api/v1/ingest/{name}` are Step 4.8 | required, resolved through `tenant_alias` | Yes |
 | **Local** | the existing `/api/*` and `app/agent.py` | required | Yes, unchanged |
+
+**Both `/v1` and `/api/v1` are frozen contracts**, compared independently on every run of
+`scripts/check_api_compat.py` against `docs/api/gateway-v1.released.json` and
+`docs/api/retrieval-v1.released.json`. A field may be **added**; the freeze forbids
+narrowing. It covers the *request* in both cases — the retrieval response shape is pinned by
+`tests/test_plane_retrieve.py` instead, and that file says why.
 
 The inference plane being unable to reach tenant storage is what bounds the damage from a
 leaked service token to "someone used your GPU" rather than "someone read every customer's

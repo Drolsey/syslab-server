@@ -888,9 +888,9 @@ the short version:
 - **3.2** built `app/gateway.py`. Verified live: alias round trip, streamed
   tool calls, multi-turn tool results.
 - **3.3** added `PUBLIC_MODE` and bounded the login throttle.
-- **3.4** (model profiles) is **Step 4.7** as of 11 September, where it becomes
-  the registry saying which model fills which role and how a vision or speech
-  model attaches. It was folded into Step 5 until then. The one part with a caller today — the
+- **3.4** (model profiles) became **Step 4.7**, `models.toml`, **done 14
+  September** — the registry saying which model fills which role and how a
+  vision or speech model attaches. The one part with a caller today — the
   website pins an alias, never a model name — already shipped in 3.2.
 - **3.5** is built on this side: the frozen `/v1` contract, `cloudflared` in
   compose behind an `.env`-activated profile, and `TRUST_CLIENT_IP_HEADER`.
@@ -937,11 +937,12 @@ the short version:
    stale.
 
    **The plan was rewritten on 11 September** around seams rather than
-   features, and **4.0 and 4.1 are both done** — see the sections below.
-   **Next here is 4.2**, the parser and source seam: Docling behind
-   `text` version 2, `Source` with `files` moved and not rewritten, and the
-   licence work on the models Docling downloads at runtime, which its own MIT
-   does not cover. It is now the longest sub-step in the step.
+   features, and **Step 4 is now COMPLETE, 14 September** — 4.0 through 4.8 all
+   done. `POST /api/v1/retrieve` answers, `models.toml` declares five model
+   roles with `chat` filled and an empty role refusing rather than falling
+   back, and `GET /api/v1/documents` / `GET /api/v1/documents/{name}` /
+   `POST /api/v1/ingest/{name}` round out the plane as thin tenant-scoped
+   wrappers. `/api/v1` frozen at 4 routes. See the sections below.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
@@ -995,6 +996,322 @@ list is that list in order, so Step 4 ships RRF that provably does nothing and
 Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
+
+## 4.7 and 4.8: Step 4 is complete
+
+14 September. Both remaining sub-steps, and neither needed to touch anything
+that already worked — the plan called both small, and they were.
+
+**4.7, `models.toml` and `app/models.py`.** Five roles declared (`chat`,
+`embed`, `vision`, `stt`, `tts`), one filled. `model_for(role)` raises
+`RoleUnavailable` for an empty or unknown role, never a default and never
+another role's model — the same rule `context.current_tenant()` already
+enforces for tenancy, mirrored deliberately rather than invented fresh.
+`app/llm.py` is untouched: `LLM_BASE_URL` / `LLM_MODEL` still come from `.env`
+via `app/config.py`, and `models.toml`'s `chat` entry documents that same
+deployment rather than replacing it. Nothing today needs two chat
+configurations to agree with each other, and wiring one through the other
+before anything needed it would have been exactly the kind of premature
+mechanism this whole plan argues against. `tests/test_models.py`, 8 tests.
+
+**4.8, the rest of the plane.** `GET /api/v1/documents`, `GET
+/api/v1/documents/{name}`, `POST /api/v1/ingest/{name}` in `app/plane.py`.
+Genuinely thin: `require_tenant` already sets the tenant before any handler
+runs, and `tools.list_files()`, `ingest.status()`, `config.resolve_in_data_dir()`
+already resolve through `current_tenant()`, so there was no tenant-scoping
+logic left to write. **One departure from a straight passthrough, and it is
+the interesting part.** `tools.list_files()` also reports `folder`, an
+absolute path on this server's own disk — fine for `/api/files`, the
+same-process admin surface, and not something a customer's own website has
+any business learning about the host it happens to be running on. `folder` is
+dropped from `GET /api/v1/documents`; the other two routes return Step 2.3's
+shapes unmodified, because everything in them already describes the calling
+tenant's own document and nothing else. `docs/api/retrieval-v1.released.json`
+re-frozen additively, 1 route to 4, `check_api_compat.py` clean both sides.
+`tests/test_plane_documents.py`, 19 tests, including that another tenant's
+document name 404s exactly like one that was never real — this module's own
+rule for ids, applied to filenames for the same reason.
+
+Suite 627 → **654**. **Step 4, the retrieval plane, is done end to end**:
+source, producer, retriever and model-role seams all exist and are gated: the
+next thing to attach to any of them — a second retriever, a filled `embed`
+role, a connector beyond `files` — is Step 5 or later, named in section 9 of
+`docs/plans/step-04-retrieval-plane.md`, and none of them requires touching
+what is built here.
+
+## 4.6: the plane answers, and `coverage` needed its own query to be worth anything
+
+12 September. `POST /api/v1/retrieve` is in `app/plane.py`, on the router 4.0
+mounted and authenticated six sub-steps ago. It returns passages with citations,
+respects a token budget, filters by source, and carries a `coverage` block that
+says *"2 of 14"* out loud. **`/api/v1` is frozen.** Suite 593 → **627**, and 21
+deliberate breaks were all caught.
+
+It is a **mapping onto the wire**, which was the intent: `retrieve.search()`
+ranks, `passages.coverage()` counts, and what is left in the route is the
+shape, the budget, and saying what the answer is not.
+
+### `coverage` is the part worth reading twice
+
+The plane asks the **seam** for its ranking, and the seam carries ranks and
+nothing else. So a coverage count assembled from what came back **would have
+equalled `k` every time and agreed with itself every time** — which is exactly
+what an invented number looks like, and this is the one field decision 5.6
+rests on. It gets its own function: two `COUNT(*)`s against a match the index
+has already done. The gate is that `matched` is **not** the returned count.
+
+**And what `matched` will mean at Step 5 is not settled.** It is the keyword
+index's count — how many passages the FTS5 expression matched. A vector
+retriever matches *everything* at some distance, so the word loses its obvious
+meaning the day the second retriever lands. Written into
+`passages.coverage()`'s docstring and the plan rather than left to be
+discovered. `searched` is unaffected: it is how many passages were in scope,
+which is true whoever does the searching.
+
+### The budget is strict, and strict had to be decided
+
+A 600-token passage does not go into a 500-token budget. Handing it over anyway
+blows the budget of a caller who asked precisely so that would not happen,
+which makes the field a decoration. It also **stops rather than skipping
+ahead** to a smaller passage further down the ranking: skipping would fill the
+budget more completely and quietly return a worse-ranked set as though it were
+the best one.
+
+`truncated` means *"the budget stopped this"* and never *"that was all there
+was"*. The one case where `returned` is 0 while `matched` is not — a first
+passage larger than the whole budget — says so in `what_this_means` instead of
+looking like an empty result.
+
+### The source filter changed the seam, one sub-step after shipping it
+
+`Retriever.search` takes `sources` now. Filtering after retrieval was the
+alternative and it makes **two numbers lie at once**: `k` comes back short with
+no explanation, and `matched` counts passages the caller excluded, so
+`coverage` reports a census of the wrong corpus. Changing a seam this soon
+after building it is awkward and it is still right — better now than after a
+second retriever exists.
+
+**An empty source list is nothing, not everything.** Of the two surprises,
+"nothing came back" costs a retry and "everything came back" spends the
+caller's token budget on material they explicitly excluded.
+
+**Another tenant's source filters to nothing and is not an error**, because the
+filter runs inside the asking tenant's own index and a foreign filename matches
+no row. There is no code for that case — and "there is no code for it" is an
+argument rather than a check, so it is gated: 200, zero passages, `searched: 0`,
+and the other tenant's words nowhere in the response body.
+
+### One honest limit of the freeze
+
+`scripts/check_api_compat.py` now holds **two** contracts, compared and
+reported independently, and `--freeze` takes a name so one can be re-frozen
+without touching the other. But the freeze covers the **request**. This
+endpoint returns a `dict`, so FastAPI emits an open object for its 200, and
+declaring a response model to close it would fight the freeze's own rule that a
+field may be *added* — pydantic strips what a model does not name.
+
+Every load-bearing field in section 6 of the plan — `found_by`, `coverage`,
+`truncated`, `what_this_means` — is in the **response**. So the response shape
+is pinned by exact-key-set assertions in `tests/test_plane_retrieve.py`, and
+the gate's own header says it does not cover them. **A freeze that looked like
+it covered them and did not would be worse than no freeze**, which is 4.4's
+inert-check lesson applied before it could cost anything.
+
+### Four gaps in the tests, and all four were the same mistake
+
+Found by breaking, not by reading. Every one was a test whose fixture never
+built the case it claimed to assert on — 4.3's lesson for the third sub-step
+running:
+
+- The budget tests used a budget nothing ever hit, so `>` and `>=` in
+  `fit_budget` were indistinguishable and an off-by-one that silently drops a
+  passage would have passed.
+- `tokens_returned` was asserted where nothing was ever cut, so "what shipped"
+  and "what was considered" were the same number.
+- `coverage.returned` was asserted where it happened to equal `k`.
+- **Every coverage test used a query whose AND pass matched**, so the
+  AND-then-OR fallback was never exercised. A coverage figure taken from the
+  AND pass would have reported `matched: 0` above a response carrying real
+  passages — self-contradicting, and in the direction that makes an aggregate
+  shortfall look like no shortfall at all.
+
+**Next is 4.7**, `models.toml` with five roles and one filled, where the gate is
+that an empty role is *unavailable* and never a silent fallback — the same rule
+as `current_tenant()` raising rather than defaulting. Then **4.8**, thin
+tenant-scoped wrappers over what Step 2.3 already built.
+
+## 4.5: the fusion is in, and it provably does nothing
+
+12 September. `retrieve.fuse()` is Reciprocal Rank Fusion at k = 60 with a
+per-retriever weight defaulting to 1.0, `retrieve.search()` asks every
+registered retriever and fuses what comes back, and **one retriever is
+registered**, so fusing a single ranked list is that list in the same order.
+**MRR 0.768, unmoved.** That is the whole sub-step and it is deliberate: build
+the machinery, prove it against known-good behaviour, then move the interesting
+thing behind it. Step 5 turns it on by appending to a list.
+
+**The gate asserts on the chunk_ids position by position, not on the metrics**,
+and the difference is bigger than it looks. 42 queries at a depth of 50 is about
+2,100 positions that have to agree exactly. Equal MRR is a much weaker claim: a
+fusion that swapped two passages of the same contract, or two passages neither
+of which is relevant, scores identically and is just as broken. **The gate was
+then broken on purpose** — `fuse` made to sort by `chunk_id` — and it failed 33
+of 42 on order, all five metrics, and returned 1. After 4.4, a gate that has
+never been watched to fail does not count.
+
+**And the section says out loud when it is supposed to start failing.** The day
+Step 5 registers a second retriever, the order assertion **must** break: a
+fusion of two lists that still returns the first one unchanged means the second
+one is not reaching it. A gate that would keep quietly passing through the exact
+change it exists to observe is 4.4's inert check wearing a different hat.
+
+### Two things worth carrying, both of them 4.3's reasoning reused
+
+**The arithmetic is exact — `Fraction`, not float.** Ranks summed as floats make
+the total depend on the order the terms were added, which is the registration
+order, which is which module imported first. Two mathematically tied passages
+would sort by whichever sum happened to round up, and the answer would move the
+day an unrelated import moved. Ties are real ties now, broken by the best single
+rank and finally by `chunk_id`, so the order is total and nothing is left to
+chance. This is `app/chunks.py` counting tokens in integers, one file over.
+
+**`Fused` has no score, for a reason `Hit` does not have.** 1/61 is the best a
+passage can score with one retriever and 2/61 with two — so the same passage,
+equally well retrieved, **doubles** the day Step 5 ships. Anybody who had
+thresholded on that number would have changed behaviour without a single line of
+their own code moving. The order is the output.
+
+### What it refuses, and two decisions the plan had not made
+
+Four refusals, each because the quiet version is worse: a retriever listing a
+passage **twice** (a repeat counts twice, lands it at the top, and nothing in
+the output looks wrong — so it is refused rather than deduplicated), two hits at
+one rank, `k < 1`, and a **negative weight**. That last one is incoherent rather
+than merely odd: absence contributes zero, so a negative weight ranks a passage
+below one that nothing found at all. Weight 0 is allowed, contributes nothing,
+and its hits sort last rather than vanishing — **to take a retriever out of an
+answer, do not ask it.**
+
+Section 6 of the plan had not settled either of these:
+
+- **Each retriever is asked for the full `limit`, not `limit/n`.** Two
+  retrievers asked for four, agreeing on nothing, give eight passages fused from
+  two lists of four — and a passage ranked fifth by both, which is the strongest
+  signal short of unanimity, is not even visible. Depth is what makes the fused
+  order mean anything.
+- **A failed retriever is named, never swallowed.** `failed` carries the reason,
+  because a fused list missing the vector side is a worse answer that looks
+  exactly like a normal one, and this project has already paid for a result that
+  looked right because nothing had run. When *every* retriever fails it raises,
+  since an empty list already means "nothing matched".
+
+**Suite 566 → 591.** Twelve deliberate breaks, twelve caught — and **one test
+was wrong and passed anyway**, which is the third time in three sub-steps that
+breaking found what reading did not. The tie test used two plausible-looking
+rank patterns whose scores differed in the fourth decimal, asserted the ordering
+the scores already gave, and would have passed with the tiebreak deleted
+entirely. **A tie has to be constructed, not hoped for** — it is built now from a
+weight that is exact in binary, so two passages score exactly 1/122. A
+thirteenth break turned out not to be a bug at all: a penalty subtracted equally
+from every passage reorders nothing, and with no score on `Fused` there was
+nothing observable to change.
+
+**Next is 4.6**, `POST /api/v1/retrieve`, and it should be a mapping onto the
+wire rather than new retrieval logic. `retrieve.search()` returns fused passages
+with `found_by` and names any retriever that failed;
+`passages.search_passages()` already measures `matched` separately from
+`returned`, which is decision 5.6's load-bearing half. Two things recorded
+earlier are waiting for it: a `chunk_id` is **not globally unique**, and the
+table's offset columns are `start_char` / `end_char` against `start` / `end` on
+the wire.
+
+## 4.4: the number moved, and two gates turned out to have been asleep
+
+12 September. `app/passages.py` puts the chunks into a `chunks` FTS5 table inside
+the tenant's **existing** `index/<tenant>.sqlite3`, `intake` populates it beside
+the document index, and `Keyword` is the first thing to implement the retriever
+seam. **Overall MRR 0.576 → 0.768** over the same 52 contracts and the same 42
+queries.
+
+| | MRR | R@1 | R@10 |
+|---|---|---|---|
+| documents (4.1 baseline) | 0.576 | 0.458 | 0.685 |
+| **passages (4.4)** | **0.768** | **0.653** | **0.871** |
+| clause, documents | 0.210 | 0.071 | 0.571 |
+| **clause, passages** | **0.686** | **0.571** | **1.000** |
+
+**4.1's prediction was right and by more than it claimed.** It said ANDing nine
+common legal words inside a 512-token chunk should be far more selective than
+inside a fifty-page contract, so `clause` should move substantially *or the
+chunker is wrong*. `clause` more than tripled and its Recall@10 is now 1.000:
+**every one of the 42 queries finds its contract in the top ten**, where
+document search missed eleven — and six of those eleven were not paraphrases.
+`exact` was 0.938 and barely moved, which is the right shape: a rare string was
+never the problem.
+
+**Paraphrase moved and is still the worst kind**, 0.312 → 0.430 MRR at Recall@1
+of 0.056. Keyword search cannot match words a contract does not use. That is
+Step 5's whole job, and those queries are in the golden set precisely so the
+improvement can be measured rather than asserted.
+
+**The gate prints two rows per metric, and the first one must not move.** It
+did not, to three decimals. 4.4 adds a second index and changes nothing about
+the first, so drift in the document row is a regression to explain before the
+passage row means anything at all.
+
+**The comparison needed a judgement call and it is written where it is made.**
+The baseline's Recall@10 means "the right document was among ten *documents*",
+and passages of one document cluster — the ten best passages of a query are
+**3.3 distinct documents on average**, measured. Folding ten passages down would
+have compared ten documents against three and called the difference a
+regression. So each query asks for fifty passages and they fold by first
+appearance. Rank 1 and MRR do not depend on that depth and are the honest
+headline; R@10 is the one it helps.
+
+### Two checks were inert, and neither had ever been seen to fail
+
+This is the part worth carrying forward. Both were found by breaking the thing
+on purpose, not by reading.
+
+- **A `check_gateway_isolation.py` pattern contained a literal backspace
+  character** — an escape eaten somewhere between an editor and the file. It
+  compiled, ran against every line of `app/gateway.py`, matched nothing, and was
+  indistinguishable from a clean bill of health. Found by adding
+  `from app import passages` to `gateway.py` deliberately and noticing that
+  **nothing complained.** The gate now turns each row's description back into
+  the line of code it describes and requires the pattern to match it before it
+  trusts any of them. All 31 are alive.
+- **A `check_isolation.py` check asserted on config rather than on what was
+  opened.** "Both tables live in the tenant's own index file" read
+  `index_path()` to prove what `connect()` had opened. With tenant scoping
+  broken on purpose it kept saying PASS while the three checks beside it failed.
+  It asks SQLite now — `PRAGMA database_list`, via `passages.opened_path()`.
+
+`check_gateway_isolation.py` had already been caught *stale* twice, missing a
+module that existed. **A row that is present, looks right and is inert is
+worse**, because staleness is at least visible to anyone comparing the file list.
+It is 4.3's lesson about tests arriving at the gates: **a check nothing has ever
+seen fail is a claim, not a check.**
+
+### Two things it recorded for 4.6 rather than fixing
+
+- **A `chunk_id` is not globally unique.** It is `source#ordinal` with one index
+  per tenant, so two tenants who both hold a `contract.pdf` both hold a
+  `contract.pdf#0`. Resolving it gives each of them their own passage and never
+  the other's — the stronger property, and gated now — but a `chunk_id` in a log
+  line or a cache key means nothing without the tenant beside it.
+- **The two indexes do not cover the same formats.** `search.SEARCHABLE` is
+  three suffixes; the chunk index covers all ten formats in `parse.py`'s table.
+  A `.docx` has passages and is not in the document index. Widening it is two
+  lines and is deliberately *not* done inside 4.4: it would move the 4.1
+  baseline that every sub-step here is measured against, so it is a change that
+  needs its own before-and-after.
+
+**Suite 543 → 566** passed, 1 skipped, with ten deliberate breaks and ten
+failures. `check_isolation` 54 → **58**, and a leaked passage is why it asserts
+on the returned **text** rather than on a count: a leaked search result is a
+filename, while a leaked passage is a paragraph of the other tenant's contract,
+quoted and already formatted to drop into an answer.
 
 ## 4.3: there are passages now, and the pipeline learned that producers read each other
 
@@ -1841,6 +2158,30 @@ One more from 4.3, and it is about the tests rather than the code:
     turned on the test suite: **a test nothing has ever seen fail is a row
     nothing ever reads.**
 
+    **It has now recurred in 4.4, 4.5 and 4.6, and one sub-species accounts for
+    almost all of it: the fixture never builds the case the test names.** A
+    budget nothing hits cannot tell `>` from `>=`. A query whose AND pass
+    matches never exercises the OR fallback. A `k` that happens to equal the
+    number returned cannot tell `k` from `returned`. A tie whose scores differ
+    in the fourth decimal is not a tie. Every one passed against deliberately
+    broken code, and every one was found in a minute by breaking the property.
+    **When a test names a boundary, assert that the fixture is ON it.**
+
+And one from 4.4, which is lesson 11 again one level up and the worst place for
+it to be:
+
+12. **The gates are code, and they are the code nobody watches fail.** Two of
+    them were inert. One had a **literal backspace character** where a `\b` was
+    meant — it compiled, it ran, it matched nothing, it printed PASS. The other
+    read `index_path()` to prove what `connect()` had opened, so it passed while
+    tenant scoping was deliberately broken and the three checks beside it
+    failed. **Assert on what the system did, asked of the system** — `PRAGMA
+    database_list`, not the config that was supposed to have been used — and
+    **make a gate prove its own patterns are alive** before trusting what they
+    report. A stale gate is at least visible to anyone comparing a file list.
+    An inert one looks exactly like a clean bill of health, and this file had
+    already recorded the same gate being caught stale twice.
+
 ## The client database
 
 A client PostgreSQL instance on GCP; host, name and credentials live in
@@ -1855,11 +2196,12 @@ views, not client data.
 
 ## Run these to confirm the state
 
-    py -m pytest -q                           # 543 passed, 1 skipped
-    py scripts/check_api_compat.py
-    py scripts/check_gateway_isolation.py
-    py scripts/check_isolation.py             # 54 passed, 1 not tested on Windows
+    py -m pytest -q                           # 654 passed, 1 skipped
+    py scripts/check_api_compat.py            # /v1 and /api/v1, judged separately
+    py scripts/check_gateway_isolation.py     # 31 rows, each proved alive before it is trusted
+    py scripts/check_isolation.py             # 58 passed, 1 not tested on Windows
     py scripts/check_ingest.py                # 37 of 37, formats, offsets and byte-identical chunks
-    py scripts/check_retrieval.py             # MRR 0.576 against the committed baseline
+    py scripts/check_retrieval.py             # documents 0.576 unmoved, passages 0.768,
+                                              # and the fusion changes neither
     py scripts/check_agent.py                 # needs the model up
     py scripts/check_remote.py
