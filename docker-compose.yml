@@ -69,8 +69,26 @@ services:
       # graphs 0.81). Still read the startup log and record the real numbers --
       # "GPU KV cache size" and "Maximum concurrency" -- the way 2026-09-08
       # did. If it disagrees, 8192 still works and this comes down.
+      #
+      # 2026-09-14, 16384 -> 32768: "anything here asks for" was wrong, not
+      # projected-and-missed wrong but assumption wrong. The database-agent app
+      # -- a real consumer, not a projection -- hit both edges of 16384 in one
+      # conversation: max_tokens=32000 rejected outright against
+      # max_model_len=16384, and separately a schema-plus-history prompt
+      # measured at 16,334 input tokens, 50 short of the entire budget with
+      # nothing left for an answer. 32768 is still native to this model --
+      # Qwen3-14B is trained to 32,768 tokens, so this spends headroom the
+      # model already has rather than extending past it (that would be YaRN,
+      # a different and lossier lever, not needed here).
+      #
+      # Costs concurrency the same way 16384 bought it off 32768 the first
+      # time: the ~76,700-token cache measured 2026-09-09 divides into ~4.68x
+      # at 16384 or a projected ~2.34x at 32768. Projected, not measured --
+      # read the startup log and record "GPU KV cache size" and "Maximum
+      # concurrency" the way every number above this line was, before trusting
+      # this one.
       - --max-model-len
-      - "16384"
+      - "32768"
       # 0.70. This was 0.85 for one day and is back down, and the sequence is
       # the point rather than a wobble -- read it as one decision made twice
       # with different weights on the card.

@@ -9,7 +9,7 @@
 [roles.chat]
 model = "Qwen/Qwen3-14B-AWQ"
 provider = "vllm"
-context_tokens = 16384
+context_tokens = 32768
 
 [roles.embed]
 [roles.vision]
