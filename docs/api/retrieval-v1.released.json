@@ -100,6 +100,120 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/documents": {
+      "get": {
+        "description": "What is in this tenant's folder.\n\nNOT a straight passthrough of tools.list_files(): that function also\nreports `folder`, an absolute path on this server's own disk. `/api/files`\nis same-process admin surface and can say that; `/api/v1` is the frozen\nsurface the website relies on, and handing a stranger this host's\nfilesystem layout is the same mistake this module's own header warns\nagainst for tenant ids -- so `folder` does not cross onto this wire.",
+        "operationId": "list_documents_api_v1_documents_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Documents Api V1 Documents Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Documents",
+        "tags": [
+          "retrieval"
+        ]
+      }
+    },
+    "/api/v1/documents/{name}": {
+      "get": {
+        "description": "Is this document ready, and what failed -- Step 2.3's own question.\n\nReturned as-is, unlike list_documents: everything ingest.status() reports\nis about the calling tenant's own document, so there is no host path or\nother tenant's information to filter out of it.",
+        "operationId": "document_status_api_v1_documents__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Document Status Api V1 Documents  Name  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Document Status",
+        "tags": [
+          "retrieval"
+        ]
+      }
+    },
+    "/api/v1/ingest/{name}": {
+      "post": {
+        "description": "Bring one of this tenant's documents up to date.\n\nReturns once the fast producers are done; anything slow is a job id in the\nresponse rather than time spent in this request, the same contract\nPOST /api/ingest/{name} already gives -- intake.arrived() decides that\nsplit, not this wrapper.",
+        "operationId": "ingest_document_api_v1_ingest__name__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ingest Document Api V1 Ingest  Name  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Document",
+        "tags": [
+          "retrieval"
+        ]
+      }
+    },
     "/api/v1/retrieve": {
       "post": {
         "description": "Which parts of this customer's material bear on this question.\n\nPassages and never prose -- README.md's boundary rule: this server never\nlearns what a conversation is. Query rewriting from the turn before and\nanswer synthesis are the website's, because they need the conversation and\nit is not here.\n\nTHE COUNTS COME FROM THE INDEX AND THE RANKING COMES FROM THE SEAM, and\nthey are two calls on purpose. `retrieve.search()` returns ranks and no\nscores, so a coverage figure assembled from what it handed back would equal\n`k` every time and would agree with itself every time. `passages.coverage()`\nasks the index instead: two COUNT(*)s against a match it has already done.\n\nA SOURCE THAT IS NOT THIS TENANT'S FILTERS TO NOTHING AND IS NOT AN ERROR.\nThere is nothing to reject: the filter is applied inside the tenant's own\nindex, so a name from another tenant matches no row there. Answering \"no\nsuch document\" would confirm a filename to whoever guessed it, and the 404\nrule in this module's own header is the same rule. It is not a special\ncase in the code, which is why it cannot rot -- but it IS a gated\nproperty, because \"there is no code for it\" is an argument and not a check.",
@@ -147,7 +261,7 @@
   },
   "x-syslab-frozen": {
     "checked-by": "scripts/check_api_compat.py",
-    "frozen": "2026-09-12",
+    "frozen": "2026-09-14",
     "why": "Step 4.6. The retrieval plane. Fields may be ADDED; nothing may narrow. `found_by`, `coverage` and the absent score are where later steps will push, and all three were chosen for that."
   }
 }

@@ -118,6 +118,37 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   Exact now.
 
 ### Added
+- **`GET /api/v1/documents`, `GET /api/v1/documents/{name}`, `POST /api/v1/ingest/{name}`**
+  (`app/plane.py`), Step 4.8 — **the rest of the plane, and genuinely thin wrappers.**
+  `require_tenant` already calls `context.set_tenant()` before any of these run, and
+  `tools.list_files()`, `ingest.status()` and `config.resolve_in_data_dir()` already resolve
+  through `config.data_dir()` → `current_tenant()`, so no route does its own tenant scoping —
+  there was nothing left to write beyond the mapping onto the wire, the same shape 4.6 took.
+  `tests/test_plane_documents.py`, 19 tests, suite 627 → **646**.
+  - **One deliberate departure from a straight passthrough.** `tools.list_files()` also
+    reports `folder`, an absolute path on this server's own disk — fine for `/api/files`,
+    same-process admin surface, and not something a customer's website should ever learn
+    about the host it happens to be running on. `GET /api/v1/documents` drops it and renames
+    `files` to `documents`; `GET /api/v1/documents/{name}` and the ingest route return
+    Step 2.3's shapes unmodified, because everything in them is already about the calling
+    tenant's own document.
+  - **Re-frozen**, additively: `docs/api/retrieval-v1.released.json` grew from 1 route to 4,
+    `check_api_compat.py` reporting only additions and no breaking change either side.
+- **`models.toml` and `app/models.py`**, Step 4.7 — **the model role registry.** Five roles
+  declared (`chat`, `embed`, `vision`, `stt`, `tts`); one filled. `model_for(role)` raises
+  `RoleUnavailable` for an empty or unknown role rather than returning a default or another
+  role's model — the same rule `context.current_tenant()` already enforces for tenancy, for
+  the same reason: a default is how "embed is not deployed yet" quietly becomes "embed
+  silently used chat instead." `tests/test_models.py`, 8 tests, suite 646 → **654**.
+  - **Deliberately does not touch `app/llm.py`.** `LLM_BASE_URL` / `LLM_MODEL` keep coming
+    from `.env` via `app/config.py` exactly as before; `models.toml`'s `chat` entry documents
+    that same deployment rather than replacing it, because nothing today needs two chat
+    configurations to agree with each other. The seam is for the day a producer needs to ask
+    "is embed available" — proven the cheapest way that fits, the same discipline 4.5's
+    fusion used.
+  - **`_ROLES` loads once at import**, a module-level dict in the shape of `config.py`'s own
+    constants, and tests monkeypatch it the same way `tests/test_plane_retrieve.py` already
+    monkeypatches `config.RETRIEVAL_TOKENS`.
 - **`POST /api/v1/retrieve`** (`app/plane.py`), Step 4.6 — **the retrieval plane answers.**
   Passages with citations, the token budget, the source filter and `coverage`, on the router
   4.0 mounted and authenticated. It is a **mapping onto the wire**: `retrieve.search()`

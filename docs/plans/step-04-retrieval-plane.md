@@ -1,6 +1,7 @@
 # Step 4: The Retrieval Plane, and the Seams Everything Else Plugs Into
 
-Status: **IN PROGRESS. 4.0 through 4.6 are done — the plane answers.** **Rewritten 11 September 2026**,
+Status: **COMPLETE. 4.0 through 4.8 are done — the plane answers, and the seams are all in place.**
+**Rewritten 11 September 2026**,
 after the requirements turned out to be wider than the first draft assumed. **All seven
 decisions signed off the same day**, 5.1 to 5.6 as recommended and 5.7 amended by Amro — see
 below, because the amendment is the best thing that happened to this plan.
@@ -24,11 +25,15 @@ out loud. `/api/v1` is frozen. It was a mapping onto the wire, as intended — t
 change it forced was pushing the source filter **into** the retriever seam, because filtering
 afterwards would have made `k` and `matched` both lie.
 
-**Next is 4.7, the model role registry**: `models.toml` with five roles, one filled. The gate
-is that an empty role is *unavailable* and never a silent fallback, asserted by asking for
-`embed` and getting a refusal with a reason — the same rule as `current_tenant()` raising
-rather than defaulting. Then **4.8**, the thin tenant-scoped wrappers over what Step 2.3
-already built. Both are small; Step 4 is nearly done.
+**4.7 and 4.8 shipped 14 September, and Step 4 is now complete.** `models.toml` declares five
+roles, one filled, and an empty role is *unavailable* and never a silent fallback — asserted by
+asking for `embed` and getting a refusal with a reason, the same rule as `current_tenant()`
+raising rather than defaulting. `app/llm.py` was deliberately left untouched: the registry
+documents today's deployment rather than replacing the config path that already works, because
+nothing yet needs two chat configurations to agree. And `GET /api/v1/documents`,
+`GET /api/v1/documents/{name}`, `POST /api/v1/ingest/{name}` round out the plane as thin
+tenant-scoped wrappers over what Step 2.3 already built — genuinely thin, since `require_tenant`
+already sets the tenant before any of them run. `/api/v1` is frozen at four routes.
 
 4.0 stands unchanged and is done — the tenant bridge is needed under every version of this.
 Everything from 4.1 onward is new.
@@ -885,8 +890,57 @@ another tenant's source filters to nothing rather than erroring informatively.
 role is *unavailable* and never a silent fallback, asserted by asking for `embed` and getting
 a refusal with a reason; `check_api_compat` freezes `/api/v1/*`.
 
+> **DONE, 14 September 2026.** `models.toml` (project root) and `app/models.py`.
+> `model_for(role)` raises `RoleUnavailable` for an empty or unknown role — mirroring
+> `app.context.current_tenant()` / `NoTenantError` deliberately rather than inventing a new
+> shape for the same rule. `_ROLES` loads once at import, a module-level dict in the style of
+> `config.py`'s own constants, and tests monkeypatch it exactly as `tests/test_plane_retrieve.py`
+> already monkeypatches `config.RETRIEVAL_TOKENS`. `tests/test_models.py`, 8 tests. Suite
+> 646 → **654**.
+>
+> **Returns a plain `dict`, not a per-role dataclass, deliberately.** `chat`, `embed`, `vision`,
+> `stt` and `tts` will need different fields as each is filled — a context window is not an
+> embedding dimension is not a sample rate — and there is nothing to validate yet for four of
+> the five roles. A schema is for when a second role is actually filled, not before.
+>
+> **`app/llm.py` is untouched, and that was a decision rather than an oversight.** `LLM_BASE_URL`
+> / `LLM_MODEL` still come from `.env` via `app/config.py` exactly as before this sub-step;
+> `models.toml`'s `chat` entry documents that same deployment rather than becoming a second
+> source of truth for it. Nothing today calls `model_for("chat")` in production code — the
+> seam exists for the day a producer needs to ask whether a role is available, the same
+> discipline 4.5's fusion used to ship something that provably does nothing yet.
+
 **4.8 The rest of the plane.** `GET /api/v1/documents`, `GET /api/v1/documents/{name}`,
 `POST /api/v1/ingest/{name}` — thin tenant-scoped wrappers over what Step 2.3 already built.
+
+> **DONE, 14 September 2026.** All three routes in `app/plane.py`, on the router 4.0 mounted,
+> each gated by the same `require_tenant` dependency as `/retrieve`. `tests/test_plane_documents.py`,
+> 19 tests. Suite 627 → **646**.
+>
+> **Genuinely thin, because `require_tenant` already did the only hard part.** It calls
+> `context.set_tenant()` before any handler runs, and `tools.list_files()`, `ingest.status()`
+> and `config.resolve_in_data_dir()` already resolve everything through `config.data_dir()` →
+> `current_tenant()`. There was no tenant-scoping logic left to write in this sub-step — only
+> the mapping onto the wire, the same shape 4.6 took for `/retrieve`.
+>
+> **One deliberate departure from a straight passthrough, found by asking what each field
+> means to an external caller rather than an internal one.** `tools.list_files()` also
+> reports `folder`, an absolute path on this server's own disk. That is fine for `/api/files`,
+> same-process admin surface; `/api/v1` is the frozen surface a customer's own website relies
+> on, and handing it this host's filesystem layout is the same class of mistake this module's
+> own header names for tenant ids. `GET /api/v1/documents` drops `folder` and renames `files`
+> to `documents`. The other two routes return Step 2.3's shapes unmodified: everything in
+> `ingest.status()` and `intake.arrived()`'s output already describes the calling tenant's own
+> document, so there is no host-path or cross-tenant leak to filter out of them.
+>
+> **`docs/api/retrieval-v1.released.json` re-frozen additively**, 1 route to 4,
+> `check_api_compat.py` reporting the three additions and no breaking change on either frozen
+> contract.
+>
+> **Step 4 is complete.** Source, producer, retriever and model-role seams all exist and are
+> gated. What attaches to them next — a second retriever, a filled `embed` role, a source
+> beyond `files` — is Step 5 or later, section 9, and none of it requires touching what is
+> built here.
 
 ---
 

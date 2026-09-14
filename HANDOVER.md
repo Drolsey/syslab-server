@@ -888,9 +888,9 @@ the short version:
 - **3.2** built `app/gateway.py`. Verified live: alias round trip, streamed
   tool calls, multi-turn tool results.
 - **3.3** added `PUBLIC_MODE` and bounded the login throttle.
-- **3.4** (model profiles) is **Step 4.7** as of 11 September, where it becomes
-  the registry saying which model fills which role and how a vision or speech
-  model attaches. It was folded into Step 5 until then. The one part with a caller today — the
+- **3.4** (model profiles) became **Step 4.7**, `models.toml`, **done 14
+  September** — the registry saying which model fills which role and how a
+  vision or speech model attaches. The one part with a caller today — the
   website pins an alias, never a model name — already shipped in 3.2.
 - **3.5** is built on this side: the frozen `/v1` contract, `cloudflared` in
   compose behind an `.env`-activated profile, and `TRUST_CLIENT_IP_HEADER`.
@@ -937,12 +937,12 @@ the short version:
    stale.
 
    **The plan was rewritten on 11 September** around seams rather than
-   features, and **4.0 through 4.6 are done — the retrieval plane answers**, at
-   `POST /api/v1/retrieve`, with `/api/v1` frozen. See the sections below.
-   **Next here is 4.7**, `models.toml` with five roles and one filled, where the
-   gate is that an empty role is *unavailable* and never a silent fallback.
-   Then **4.8**, the thin tenant-scoped wrappers over what Step 2.3 built. Both
-   are small.
+   features, and **Step 4 is now COMPLETE, 14 September** — 4.0 through 4.8 all
+   done. `POST /api/v1/retrieve` answers, `models.toml` declares five model
+   roles with `chat` filled and an empty role refusing rather than falling
+   back, and `GET /api/v1/documents` / `GET /api/v1/documents/{name}` /
+   `POST /api/v1/ingest/{name}` round out the plane as thin tenant-scoped
+   wrappers. `/api/v1` frozen at 4 routes. See the sections below.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
@@ -996,6 +996,48 @@ list is that list in order, so Step 4 ships RRF that provably does nothing and
 Step 5 turns it on by appending to a list. That is the 2.1 pattern — build the
 machinery, prove it against known-good behaviour, then move the interesting
 thing behind it — and 2.1 is the sub-step where the gate caught two real bugs.
+
+## 4.7 and 4.8: Step 4 is complete
+
+14 September. Both remaining sub-steps, and neither needed to touch anything
+that already worked — the plan called both small, and they were.
+
+**4.7, `models.toml` and `app/models.py`.** Five roles declared (`chat`,
+`embed`, `vision`, `stt`, `tts`), one filled. `model_for(role)` raises
+`RoleUnavailable` for an empty or unknown role, never a default and never
+another role's model — the same rule `context.current_tenant()` already
+enforces for tenancy, mirrored deliberately rather than invented fresh.
+`app/llm.py` is untouched: `LLM_BASE_URL` / `LLM_MODEL` still come from `.env`
+via `app/config.py`, and `models.toml`'s `chat` entry documents that same
+deployment rather than replacing it. Nothing today needs two chat
+configurations to agree with each other, and wiring one through the other
+before anything needed it would have been exactly the kind of premature
+mechanism this whole plan argues against. `tests/test_models.py`, 8 tests.
+
+**4.8, the rest of the plane.** `GET /api/v1/documents`, `GET
+/api/v1/documents/{name}`, `POST /api/v1/ingest/{name}` in `app/plane.py`.
+Genuinely thin: `require_tenant` already sets the tenant before any handler
+runs, and `tools.list_files()`, `ingest.status()`, `config.resolve_in_data_dir()`
+already resolve through `current_tenant()`, so there was no tenant-scoping
+logic left to write. **One departure from a straight passthrough, and it is
+the interesting part.** `tools.list_files()` also reports `folder`, an
+absolute path on this server's own disk — fine for `/api/files`, the
+same-process admin surface, and not something a customer's own website has
+any business learning about the host it happens to be running on. `folder` is
+dropped from `GET /api/v1/documents`; the other two routes return Step 2.3's
+shapes unmodified, because everything in them already describes the calling
+tenant's own document and nothing else. `docs/api/retrieval-v1.released.json`
+re-frozen additively, 1 route to 4, `check_api_compat.py` clean both sides.
+`tests/test_plane_documents.py`, 19 tests, including that another tenant's
+document name 404s exactly like one that was never real — this module's own
+rule for ids, applied to filenames for the same reason.
+
+Suite 627 → **654**. **Step 4, the retrieval plane, is done end to end**:
+source, producer, retriever and model-role seams all exist and are gated: the
+next thing to attach to any of them — a second retriever, a filled `embed`
+role, a connector beyond `files` — is Step 5 or later, named in section 9 of
+`docs/plans/step-04-retrieval-plane.md`, and none of them requires touching
+what is built here.
 
 ## 4.6: the plane answers, and `coverage` needed its own query to be worth anything
 
@@ -2154,7 +2196,7 @@ views, not client data.
 
 ## Run these to confirm the state
 
-    py -m pytest -q                           # 627 passed, 1 skipped
+    py -m pytest -q                           # 654 passed, 1 skipped
     py scripts/check_api_compat.py            # /v1 and /api/v1, judged separately
     py scripts/check_gateway_isolation.py     # 31 rows, each proved alive before it is trusted
     py scripts/check_isolation.py             # 58 passed, 1 not tested on Windows

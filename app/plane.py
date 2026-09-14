@@ -66,7 +66,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app import config, context, passages, retrieve, tenancy
+from app import config, context, ingest, intake, passages, retrieve, tenancy, tools
 
 # The prefix is frozen surface, the same way /v1 is: the website deploys
 # separately, so a narrowing here is found by a customer rather than by a test.
@@ -349,3 +349,62 @@ def retrieve_passages(body: RetrieveRequest = Body(...)) -> dict:
         "truncated": truncated,
         "what_this_means": what_this_means(coverage, truncated),
     }
+
+
+# --------------------------------------------------------------------------
+# GET /api/v1/documents, GET /api/v1/documents/{name}, POST /api/v1/ingest/{name}  (4.8)
+# --------------------------------------------------------------------------
+#
+# Thin wrappers over what Step 2.3 already built (app/tools.py, app/ingest.py,
+# app/intake.py), the way 4.6's own header says this file would grow. Nothing
+# below does its own tenant scoping: require_tenant already called
+# context.set_tenant() before any of these run, and tools.list_files(),
+# ingest.status() and config.resolve_in_data_dir() already resolve through
+# config.data_dir() -> context.current_tenant(). A wrapper that re-derived
+# the tenant here would be a second, redundant place for that rule to rot.
+
+@router.get("/documents", dependencies=[Depends(require_tenant)])
+def list_documents() -> dict:
+    """What is in this tenant's folder.
+
+    NOT a straight passthrough of tools.list_files(): that function also
+    reports `folder`, an absolute path on this server's own disk. `/api/files`
+    is same-process admin surface and can say that; `/api/v1` is the frozen
+    surface the website relies on, and handing a stranger this host's
+    filesystem layout is the same mistake this module's own header warns
+    against for tenant ids -- so `folder` does not cross onto this wire.
+    """
+    listing = tools.list_files()
+    return {"count": listing["count"], "documents": listing["files"]}
+
+
+@router.get("/documents/{name}", dependencies=[Depends(require_tenant)])
+def document_status(name: str) -> dict:
+    """Is this document ready, and what failed -- Step 2.3's own question.
+
+    Returned as-is, unlike list_documents: everything ingest.status() reports
+    is about the calling tenant's own document, so there is no host path or
+    other tenant's information to filter out of it.
+    """
+    try:
+        return ingest.status(name)
+    except ingest.IngestError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/ingest/{name}", dependencies=[Depends(require_tenant)])
+def ingest_document(name: str) -> dict:
+    """Bring one of this tenant's documents up to date.
+
+    Returns once the fast producers are done; anything slow is a job id in the
+    response rather than time spent in this request, the same contract
+    POST /api/ingest/{name} already gives -- intake.arrived() decides that
+    split, not this wrapper.
+    """
+    try:
+        path = config.resolve_in_data_dir(name)
+    except config.UnsafePathError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(404, f"No file named {name!r}.")
+    return intake.arrived(path)
