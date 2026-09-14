@@ -114,6 +114,59 @@ services:
               count: all
               capabilities: [gpu]
 
+  # Self-hosted Postgres for the Database Agent app: its own Company/User/
+  # AppDocument/AppSecret/AuditEvent tables, and INTAJ's Observations DB --
+  # both moving off Medi-Merchant's Cloud SQL instance so that database stays
+  # scoped to Medi-Merchant's own data. No ports published: cloudflared
+  # reaches it over this compose network by service name ("postgres:5432"),
+  # so unlike vLLM and the app this needs no host port, no firewall rule, and
+  # no host.docker.internal mapping.
+  postgres:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: syslab_admin
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+
+  # The Database Agent app itself (Next.js). Reaches its own database over
+  # this compose network by service name ("postgres:5432" -- see PGHOST in
+  # database-agent/.env), so like postgres it needs no host port, no
+  # firewall rule, and no host.docker.internal mapping. Reaches
+  # Medi-Merchant's Cloud SQL database directly over the public internet
+  # (MEDIMERCHANT_PGHOST), same as any other client of that instance.
+  # cloudflared reaches it the same way it reaches every other local
+  # service: by service name over this network.
+  database-agent:
+    build: /home/syslab/database-agent
+    restart: unless-stopped
+    env_file:
+      - /home/syslab/database-agent/.env
+    depends_on:
+      - postgres
+
+  # Object storage for the Database Agent app's attachments and generated
+  # report files -- currently in-memory there (BLOB_DRIVER unset), so every
+  # upload is lost on restart. S3-compatible, so the app's existing S3 blob
+  # driver (lib/providers/aws.ts) talks to it with zero code changes, the
+  # same way it would talk to real AWS S3 or Cloudflare R2. No ports
+  # published: cloudflared reaches it over this compose network by service
+  # name (storage.systemslab.app --> http://minio:9000), the same pattern as
+  # postgres. Console (port 9001) is not exposed -- nothing here needs the
+  # web UI, only the S3 API.
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    volumes:
+      - minio-data:/data
+
   # Step 3.5: the network path. Outbound only -- this dials Cloudflare and
   # keeps the connection open, so the box needs no port forwarded, no static
   # address and no inbound firewall rule at all. That is the whole reason
@@ -142,6 +195,18 @@ services:
       - "host.docker.internal:host-gateway"
 
 volumes:
+  minio-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/syslab/.miniodata
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/syslab/.pgdata
   huggingface-cache:
     driver: local
     driver_opts:
