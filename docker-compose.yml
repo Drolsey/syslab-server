@@ -124,6 +124,19 @@ services:
       - --enable-auto-tool-choice
       - --tool-call-parser
       - hermes
+      # 2026-09-15: Qwen3 thinks by default, and without this flag its
+      # <think>...</think> reasoning was inlined straight into `content` with
+      # no separate field -- confirmed live, and it's what made a
+      # database-agent bug transcript look like the model narrating its own
+      # recovery mid-answer. database-agent already has a stopgap for this
+      # (`ThinkFilter` in lib/agent/index.ts, commit bb18516) that strips the
+      # tags out of the stream app-side; this is the real fix, so reasoning
+      # comes back as its own field instead of text to pattern-match out.
+      # "qwen3" is the name this vLLM v0.28.0 image registers for it --
+      # confirmed against vllm.reasoning._REASONING_PARSERS_TO_REGISTER inside
+      # the running container, not guessed from the model name.
+      - --reasoning-parser
+      - qwen3
     deploy:
       resources:
         reservations:
