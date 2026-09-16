@@ -910,10 +910,26 @@ the short version:
    the gate passes on the screen while nothing has run. Gate it on the query
    log instead, and treat the `tool_choice` retry as a prerequisite rather
    than a follow-up.
+
+   **Update, 14 September: the Postgres decision this item was waiting on is
+   made, but not the way "from Cloud Run" describes.** `docker-compose.yml`
+   now runs `postgres`, `minio`, and the `database-agent` app itself as
+   compose services on this box — self-hosted rather than a Cloud Run
+   deployment reaching in over a tunnel. That answers "where does the
+   website's database come from" (a throwaway-turned-real Postgres in
+   Docker, plus MinIO standing in for the S3 blob driver that had been
+   running in-memory). It does not answer the gate as written: this is the
+   app running *on* the syslab box, not Cloud Run calling *into* it, and
+   `docs/architecture.md` §6 still diagrams the latter. Whether the compose
+   service is a local integration rig or a quiet change of the intended
+   topology has not been decided out loud anywhere — worth settling before
+   calling the Step 3 gate passed or superseded either way.
 2. **Stand the tunnel up.** `docs/runbook.md` § Publishing it. Cloudflare Zero
    Trust, then `COMPOSE_PROFILES=public` and the token in `.env`, then Access
    with a service token in front, and only then `PUBLIC_MODE=true` and
-   `TRUST_CLIENT_IP_HEADER=true`.
+   `TRUST_CLIENT_IP_HEADER=true`. **Still not done as of 15 September** —
+   `.env.example` still ships `COMPOSE_PROFILES=`, `CLOUDFLARE_TUNNEL_TOKEN=`
+   and `PUBLIC_MODE=false`, all empty/off.
 3. ~~**Prove the reboot.**~~ **Done 9 September.** The app returned on its own
    15 seconds after kernel boot, vLLM at ~54s, both units `enabled`, serving
    the 14B at 16384. The claim this file used to make without proof is now
@@ -943,6 +959,12 @@ the short version:
    back, and `GET /api/v1/documents` / `GET /api/v1/documents/{name}` /
    `POST /api/v1/ingest/{name}` round out the plane as thin tenant-scoped
    wrappers. `/api/v1` frozen at 4 routes. See the sections below.
+5. **Step 5 (embeddings) and Step 6 (speech) — still no plan, as of 15
+   September.** Named as open since Step 4 was signed off on 11 September;
+   nothing below has moved this. VRAM fits both after the 14B swap, but the
+   32768 context change (14 September, see `CHANGELOG.md`) has not been
+   re-measured against that headroom the way every prior context change was
+   — `docs/models.md`'s free-VRAM figures for Steps 5/6 predate it.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
@@ -1038,6 +1060,68 @@ next thing to attach to any of them — a second retriever, a filled `embed`
 role, a connector beyond `files` — is Step 5 or later, named in section 9 of
 `docs/plans/step-04-retrieval-plane.md`, and none of them requires touching
 what is built here.
+
+## 14-15 September: the window grows again, the stack gets self-hosted, and a measurement tool exists but has not been used
+
+Four commits, none of them a Step 4/5/6 sub-step — infrastructure that the
+model-gateway path (`/v1`, Step 3) needed once a real caller started hitting
+it, not the retrieval plane this file had just finished.
+
+**`--max-model-len` 16384 → 32768, 14 September.** Not a repeat of the
+8192→16384 reasoning, which was "anything here asks for" — an assumption.
+This one has a named cause: the database-agent app, a real consumer rather
+than a projection, hit both edges of 16384 in a single conversation.
+`max_tokens: 32000` was rejected outright against the 16384 window, and
+separately a schema-plus-history prompt measured at 16,334 input tokens — 50
+short of the whole budget, with nothing left for a reply. 32768 is native to
+Qwen3-14B's own training length, so this spends headroom the model already
+has. **Projected, not measured, and flagged as such in `CHANGELOG.md`**: the
+~76,700-token cache measured 9 September divides into a projected ~2.34x at
+32768, down from ~4.68x at 16384. The last two context changes were each
+measured off the startup log after the fact; this one has not been yet.
+
+**Postgres, MinIO and the `database-agent` app itself joined
+`docker-compose.yml`, 14 September.** This is the decision the 9 September
+checkpoint left open — where the website's own database comes from — settled
+in favour of a self-hosted Postgres in Docker rather than an existing Cloud
+SQL instance, with MinIO added on top to replace the app's in-memory blob
+driver (every upload had been surviving only until the next restart). The
+app runs as its own compose service, `build: /home/syslab/database-agent`,
+reachable by `cloudflared` the way every other local service on this box is.
+**What this does not settle**, and nothing written down settles it either:
+`docs/architecture.md` §6 diagrams the production path as `Cloud Run ->
+Cloudflare Tunnel -> FastAPI`, the website calling in from its own
+deployment. What is built is the opposite direction — the website running
+*on* this box. Whether that is a local integration rig standing in for Cloud
+Run, or a quiet change of the intended topology for the `/v1` path, is an
+open question. See item 1 of "Next, in order" above, which this update also
+revises.
+
+**`--reasoning-parser qwen3` added to the vLLM container, 15 September.**
+Qwen3 thinks by default, and without this flag its `<think>…</think>`
+reasoning had been inlined straight into `content` with no separate field —
+confirmed live, and traced to at least one database-agent bug transcript
+that read as the model narrating its own recovery mid-answer.
+database-agent's `ThinkFilter` (`lib/agent/index.ts`, commit `bb18516`) has
+been stripping those tags out app-side as a stopgap; this is the real fix,
+one layer closer to the source. `ThinkFilter` is still present in
+database-agent as of this writing — this change makes removing it possible,
+it does not do so.
+
+**`scripts/bench_gateway.py`, 15 September.** Answers "Concurrency is
+unmeasured" below with a tool rather than a number: it fires concurrent
+requests shaped like real traffic (700–23,283 input tokens, per this file's
+own transcripts) and measures what the gateway does, instead of trusting
+vLLM's startup-log bound, which assumes every concurrent request fills the
+entire window at once. **Built, not yet run against the box** — no numbers
+from it appear anywhere in this file or in `docs/models.md` yet.
+
+Nothing here touched Step 4, Step 5 or Step 6 directly, and the suite count
+is unchanged from 654. The reason this thread exists at all is the same
+lesson `docs/models.md` keeps recording: a plan's numbers are provisional
+until a real caller exercises them, and database-agent hitting the 16384
+ceiling is the second time that caller — not this file's own tests — found
+the edge first.
 
 ## 4.6: the plane answers, and `coverage` needed its own query to be worth anything
 
@@ -2088,9 +2172,12 @@ pass, and did not.
 - **Gateway usage accounting is pass-through only.** The `usage` block reaches
   the caller; nothing here records per-token spend. Wanted before Step 7's
   measurement window, which is when someone asks what the hardware served.
-- **Concurrency is unmeasured.** Every number in `docs/models.md` is
-  one-request-at-a-time. Continuous batching is the reason vLLM was chosen and
-  nothing has yet exercised it.
+- **Concurrency is unmeasured — a tool for it exists now, unrun.** Every number
+  in `docs/models.md` is one-request-at-a-time. `scripts/bench_gateway.py`,
+  added 15 September, fires concurrent requests shaped like real traffic and
+  measures what happens instead of trusting vLLM's worst-case startup-log
+  bound. It has not yet been pointed at the box and had its numbers recorded
+  here or in `docs/models.md`.
 - **Jobs are in memory** and do not survive an app restart, silently. A named
   deferred step in the architecture plan.
 

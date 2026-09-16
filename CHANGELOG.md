@@ -17,6 +17,54 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 
 ## [Unreleased]
 
+### Added
+- **`scripts/bench_gateway.py`.** Fires concurrent requests shaped like real traffic
+  (700–23,283 input tokens, per the project's own transcripts) at the gateway and measures
+  what actually happens, rather than trusting vLLM's startup-log concurrency bound, which
+  assumes every concurrent request fills the whole `--max-model-len` window at once —
+  worst-case, not representative. Answers "**Concurrency is unmeasured**" from Known Issues
+  below; the bench itself has not yet been run against the box and its numbers recorded.
+- **`docker-compose.yml` gains `postgres`, `minio`, and a `database-agent` service.**
+  Self-hosted Postgres for the Database Agent app's own tenant tables and INTAJ's
+  Observations DB, off Medi-Merchant's Cloud SQL instance so that stays scoped to
+  Medi-Merchant's own data; MinIO gives it S3-compatible object storage for attachments and
+  generated reports, replacing the in-memory driver it ran with before (every upload
+  survived only until the next restart). The app itself now runs as its own compose
+  service (`build: /home/syslab/database-agent`), reachable by `cloudflared` the same way
+  every other local service is. This is the decision the 9 September checkpoint left open
+  — "a throwaway Postgres in Docker … or an existing Cloud SQL instance" — resolved in
+  favour of the Docker option, plus object storage the earlier note hadn't asked for.
+  **Not yet reconciled against `docs/architecture.md` §6**, which still diagrams the
+  website reaching this box as `Cloud Run -> Cloudflare Tunnel -> FastAPI`: that diagram is
+  about the retrieval plane (`/api/v1`, a website in its own deployment calling in), while
+  this compose service runs the website itself, on this box. Whether that's a local
+  integration rig or the intended production topology for the model-gateway path is an
+  open question, not a decision recorded anywhere yet.
+
+### Changed
+- **The served model's context grew again: `--max-model-len` 16384 → 32768.**
+  Per this changelog's own rule, the values: model and quantisation unchanged
+  (`Qwen/Qwen3-14B-AWQ`, revision `31c69efc`), `--gpu-memory-utilization` unchanged at 0.70,
+  context 16384 → **32768**. Not a re-run of the 8192→16384 reasoning ("anything here asks
+  for" was an assumption, not a measurement) — a real consumer, the database-agent app, hit
+  both edges of 16384 in one conversation: `max_tokens: 32000` rejected outright against a
+  16384 window, and separately a schema-plus-history prompt measured at 16,334 input
+  tokens, 50 short of the entire budget with nothing left for a reply. 32768 is native to
+  Qwen3-14B's training length, so this spends headroom the model already has rather than
+  extending past it (YaRN, not needed here). **Projected, not measured**: concurrency
+  ~4.68x at 16384 becomes a projected ~2.34x at 32768, off the ~76,700-token cache measured
+  9 September — read the startup log and record the real "GPU KV cache size" and "Maximum
+  concurrency" lines before trusting this number, the way every context change before it
+  was recorded.
+- **`--reasoning-parser qwen3` added to the vLLM container.** Qwen3 thinks by default, and
+  without this flag its `<think>…</think>` reasoning was inlined straight into `content`
+  with no separate field — confirmed live, and it produced at least one database-agent bug
+  transcript that read as the model narrating its own recovery mid-answer. database-agent's
+  `ThinkFilter` (`lib/agent/index.ts`, commit `bb18516`) is a string-matching stopgap for
+  exactly this, done app-side; this is the real fix, so reasoning now arrives as its own
+  field. `ThinkFilter` itself is still in `database-agent` as of this writing — removing it
+  is a `database-agent`-side cleanup this change makes possible but does not itself do.
+
 ### Fixed
 - **A check in `scripts/check_gateway_isolation.py` matched nothing and printed PASS.**
   Adding the `app.passages` rows put a **literal backspace character** into the source where
