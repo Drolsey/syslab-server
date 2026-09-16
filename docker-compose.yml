@@ -148,10 +148,18 @@ services:
   # Self-hosted Postgres for the Database Agent app: its own Company/User/
   # AppDocument/AppSecret/AuditEvent tables, and INTAJ's Observations DB --
   # both moving off Medi-Merchant's Cloud SQL instance so that database stays
-  # scoped to Medi-Merchant's own data. No ports published: cloudflared
-  # reaches it over this compose network by service name ("postgres:5432"),
-  # so unlike vLLM and the app this needs no host port, no firewall rule, and
-  # no host.docker.internal mapping.
+  # scoped to Medi-Merchant's own data. cloudflared reaches it over this
+  # compose network by service name ("postgres:5432"), so that path needs no
+  # host port, no firewall rule, and no host.docker.internal mapping.
+  #
+  # Ports/firewall for *direct* external clients (ones that can't go through
+  # the tunnel, e.g. AppSheet, which connects from Google's own IP ranges)
+  # are managed dynamically by syslab-ops's Networking panel - see
+  # /api/db/network in ops/app.py. Off by default: the "ports:" mapping
+  # below only exists while that's toggled on, and DOCKER-USER only ever
+  # allows the IPs on its allowlist. The pgcerts volume is always mounted
+  # (harmless when unused) so the panel can point ssl_cert_file/ssl_key_file
+  # at it the first time it's needed, without a separate compose change.
   postgres:
     image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
     restart: unless-stopped
@@ -161,6 +169,7 @@ services:
       POSTGRES_DB: postgres
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - /home/syslab/.pgcerts:/pgcerts:ro
 
 
   # The Database Agent app itself (Next.js). Reaches its own database over
