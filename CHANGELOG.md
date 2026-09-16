@@ -51,11 +51,16 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   16384 window, and separately a schema-plus-history prompt measured at 16,334 input
   tokens, 50 short of the entire budget with nothing left for a reply. 32768 is native to
   Qwen3-14B's training length, so this spends headroom the model already has rather than
-  extending past it (YaRN, not needed here). **Projected, not measured**: concurrency
-  ~4.68x at 16384 becomes a projected ~2.34x at 32768, off the ~76,700-token cache measured
-  9 September — read the startup log and record the real "GPU KV cache size" and "Maximum
-  concurrency" lines before trusting this number, the way every context change before it
-  was recorded.
+  extending past it (YaRN, not needed here). **Confirmed measured 16 September**: KV cache
+  is unchanged at 9.27 GiB / 60,768 tokens (the budget and weights did not move, only the
+  window did), so concurrency is exact division against a fixed pool — 3.71x at 16384,
+  **1.85x at 32768**. (An earlier version of this entry projected ~2.34x off a figure that
+  was itself a projection, not a measurement — see `docs/models.md` § "16384 to 32768" for
+  the correction and the real numbers.) Free VRAM for Steps 5/6 does not move either: it is
+  set by `--gpu-memory-utilization` and the weights, neither of which changed, confirmed at
+  ~8.4 GiB against the ~9.4 GiB recorded at 16384. Still unmeasured: sustained throughput
+  under real concurrent load — 1.85x is vLLM's own worst-case bound, not what
+  `scripts/bench_gateway.py` will show once it is actually run.
 - **`--reasoning-parser qwen3` added to the vLLM container.** Qwen3 thinks by default, and
   without this flag its `<think>…</think>` reasoning was inlined straight into `content`
   with no separate field — confirmed live, and it produced at least one database-agent bug

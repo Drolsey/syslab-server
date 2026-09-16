@@ -966,6 +966,19 @@ the short version:
    re-measured against that headroom the way every prior context change was
    — `docs/models.md`'s free-VRAM figures for Steps 5/6 predate it.
 
+   **Update, 16 September: the VRAM concern above is resolved, and Step 5 has
+   a plan.** The 32768 startup log is now read (see the correction two
+   sections up): free VRAM for Steps 5/6 was never a function of
+   `--max-model-len` — it is set by `--gpu-memory-utilization` and the
+   weights, neither of which the context change touched — and is confirmed
+   at ~8.4 GiB, in line with the ~9.4 GiB this file already had. The one
+   real blocker sub-step 5.0 still names is the `sqlite-vec` licence, still
+   `unverified` in `docs/licences.md` (one person, five minutes, opening
+   `LICENSE-APACHE`/`LICENSE-MIT` in that repo).
+   `docs/plans/step-05-embeddings.md` — five decisions, seven sub-steps each
+   with its own gate, risks, rollback, to the standard of 0-4. **PLANNED, NOT
+   STARTED.** Step 6 still has nothing.
+
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
 10 September. `docs/plans/step-04-retrieval-plane.md`, to the standard of 0-3:
@@ -1075,10 +1088,18 @@ than a projection, hit both edges of 16384 in a single conversation.
 separately a schema-plus-history prompt measured at 16,334 input tokens — 50
 short of the whole budget, with nothing left for a reply. 32768 is native to
 Qwen3-14B's own training length, so this spends headroom the model already
-has. **Projected, not measured, and flagged as such in `CHANGELOG.md`**: the
-~76,700-token cache measured 9 September divides into a projected ~2.34x at
-32768, down from ~4.68x at 16384. The last two context changes were each
-measured off the startup log after the fact; this one has not been yet.
+has. **Confirmed measured 16 September** (an earlier version of this entry
+called it projected, off a figure — 76,700 tokens, 4.68x — that was itself an
+unmeasured projection from a different comparison, not this one; see
+`docs/models.md` § "16384 to 32768" for the correction): the KV cache pool
+is unchanged at 9.27 GiB / 60,768 tokens, since neither the weights nor
+`--gpu-memory-utilization` moved — only the window did — so concurrency is
+exact division against a fixed pool: 3.71x at 16384, **1.85x at 32768**. Free
+VRAM for Steps 5/6 is likewise unchanged in substance (~8.4 GiB against the
+~9.4 GiB recorded at 16384), because that number was never a function of
+context length. Still open: sustained throughput under real concurrent load,
+which is a different question than this startup-log bound answers —
+`scripts/bench_gateway.py` exists to measure it and has not been run.
 
 **Postgres, MinIO and the `database-agent` app itself joined
 `docker-compose.yml`, 14 September.** This is the decision the 9 September

@@ -271,6 +271,66 @@ scenario). Had it regressed, the fallback keeping the larger model was
 16384 at about the old concurrency. It was not needed, and is recorded here
 only so the next person does not have to re-derive it.
 
+### 16384 to 32768, 14 September, confirmed measured 16 September
+
+Not a repeat of the 8192→16384 move, and not the model-swap projection either
+— those changed the weights or the budget, and both had to re-derive the
+overhead from scratch. This changes only `--max-model-len`, with the model
+and `--gpu-memory-utilization` (0.70) held fixed, so the KV cache pool itself
+does not move — only how many requests' worth of it a full-length request
+now costs.
+
+```
+Available KV cache memory: 9.27 GiB
+GPU KV cache size: 60,768 tokens, Maximum concurrency for 32,768 tokens per
+  request: 1.85x
+```
+
+**KV cache is unchanged — 9.27 GiB, 60,768 tokens, the same pool 16384 had.**
+Concurrency is pure division against a fixed pool: 60,768 ÷ 16,384 = 3.71x
+(recorded 9 September) and 60,768 ÷ 32,768 = 1.85x (this measurement) —
+doubling the window exactly halves the ceiling, with no overhead surprise
+this time, because nothing about the budget or the weights changed for vLLM
+to mis-estimate.
+
+**Correction to this file's own record:** the "Down to 14B" section above
+cites "~76,700-token cache measured 9 September" while reasoning about what
+32768 would cost — that number was never measured. It is the *projected*
+figure from the paragraph just above it ("Predicted 11.71 GiB … 76,743
+tokens … Measured 9.27 GiB … 60,768 tokens"), and using it produced a
+projected concurrency of ~2.34x for this change, in `HANDOVER.md` and
+`CHANGELOG.md`, before this section existed. The real number, measured, is
+**1.85x**. Both documents are corrected alongside this entry.
+
+**Free VRAM for Steps 5 and 6 does not need re-measuring for this reason —
+it was never a function of `--max-model-len`.** The same startup log:
+
+```
+Free memory on device (30.86/31.36 GiB) on startup. Desired GPU memory
+utilization is (0.7, 21.95 GiB). Actual usage is 11.22 GiB for consumed
+memory (weights + non-torch), 1.46 GiB for peak activation, and 0.52 GiB
+for CUDAGraph memory. Current kv cache memory in use is 9.27 GiB.
+```
+
+11.22 + 1.46 + 0.52 + 9.27 = 22.47 GiB against the 21.95 GiB budget — the
+same small overshoot this log has shown at every prior setting — leaving
+**30.86 − 22.47 ≈ 8.4 GiB** free outside vLLM's budget, against the ~9.4 GiB
+recorded at 16384. Consistent within the log's own run-to-run noise, not a
+regression: `--gpu-memory-utilization` and the model's weights are what set
+this number, and neither changed. `HANDOVER.md`'s "Next, in order" item 5
+and `docs/plans/step-05-embeddings.md`'s sub-step 5.0 both flagged this
+figure as needing re-measurement before Step 5 spends against it — it has
+now been re-measured, and the flag was more caution than the arithmetic
+turned out to need.
+
+**Still not measured by this: sustained throughput under real concurrent
+load.** 1.85x is vLLM's own worst-case accounting — every concurrent request
+assumed to fill the full 32768 window at once — not what the box delivers
+against traffic shaped like this project's own transcripts (700–23,283
+input tokens, per `scripts/bench_gateway.py`'s own docstring). That bench
+exists now and has not been run; this measurement answers a different
+question than it will.
+
 ## Serving stack, pinned
 
 | Component | Version | Pin |
@@ -289,12 +349,14 @@ Launch flags that are not optional, and why (see
 - `--enable-auto-tool-choice --tool-call-parser hermes` — without both, every
   `tool_choice` value except `"none"` returns HTTP 400 and the website's agent
   cannot call a tool at all.
-- `--max-model-len 16384` — the VRAM budget above. Callers do not have to know
+- `--max-model-len 32768` — the VRAM budget above. Callers do not have to know
   this number: `app/gateway.py` reads it from `/v1/models` and clamps
   `max_tokens` to what is left after the prompt. Without that the website's
-  `max_tokens: 32000` is an HTTP 400 on every single request. Raised from 8192
-  on 9 September; see the section below for why 8192 turned out to be too small
-  for a different reason than concurrency.
+  `max_tokens: 32000` is an HTTP 400 on every single request. Raised from
+  8192 to 16384 on 9 September (see the section above for why 8192 turned out
+  to be too small for a different reason than concurrency), then to 32768 on
+  14 September when the same `max_tokens: 32000` request cleared 16384 but a
+  real schema-plus-history prompt still measured within 50 tokens of it.
 - `--gpu-memory-utilization 0.70` — everything left after the weights becomes
   KV cache, which is what concurrency is made of. Was 0.85 for one day; the 14B
   made that spending unnecessary, and the section below has both trades.
@@ -305,8 +367,8 @@ Launch flags that are not optional, and why (see
 
 `Qwen/Qwen3-14B-AWQ`, pinned to revision `31c69efc`, served by the `vllm`
 service in `docker-compose.yml` and advertised to callers only as the alias
-`syslab-default` (Step 3.2). It replaced `Qwen/Qwen3-32B-AWQ` on 9 September —
-see "Down to 14B" below, **including the part that is not yet measured.**
+`syslab-default` (Step 3.2), at a 32768-token window — see "Down to 14B" and
+"16384 to 32768" above. It replaced `Qwen/Qwen3-32B-AWQ` on 9 September.
 
 The 32B replaced `Qwen/Qwen3-8B-AWQ`, which was the Step 1 smoke-test model and
 proved the container and the reboot-persistence gate. The swap was not

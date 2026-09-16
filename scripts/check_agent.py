@@ -80,7 +80,13 @@ def show_trace(outcome: dict) -> None:
             print(f"             -> {str(step['result'])[:200]}")
 
 
-def scenario(name: str, question: str, check, expect_tools: set[str] | None = None) -> None:
+def scenario(
+    name: str,
+    question: str,
+    check,
+    expect_tools: set[str] | None = None,
+    expect_any_of: set[str] | None = None,
+) -> None:
     print(f"\n{name}\n{LINE}")
     print(f'  Q: "{question}"')
     started = time.time()
@@ -104,6 +110,11 @@ def scenario(name: str, question: str, check, expect_tools: set[str] | None = No
         missing = ", ".join(sorted(expect_tools - used))
         print(f"  FAIL  expected it to call: {missing}")
         results.append((name, False, f"did not call {missing}"))
+        return
+    if expect_any_of and not (expect_any_of & used):
+        wanted = " or ".join(sorted(expect_any_of))
+        print(f"  FAIL  expected it to call one of: {wanted}")
+        results.append((name, False, f"called none of {wanted}"))
         return
 
     ok, detail = check(answer, outcome)
@@ -157,7 +168,14 @@ def main() -> int:
         "3. Finds a file from a loose description",
         "I have an invoice somewhere in my folder. What is its reference number?",
         lambda answer, _: (INVOICE_REF in answer, f"found {INVOICE_REF} without being given the filename"),
-        expect_tools={"list_files"},
+        # list_files or search_files: both are legitimate ways to find a file
+        # from a loose description -- app/agent.py's own prompt tells the
+        # model to reach for search_files when it wants a specific file by
+        # content rather than an inventory. Requiring exactly list_files
+        # failed this on 9 September when the model correctly used
+        # search_files and still found the right reference number; the tool
+        # choice was right, the assertion was too strict. See docs/models.md.
+        expect_any_of={"list_files", "search_files"},
     )
 
     def wrote_the_row(_answer, _outcome):
