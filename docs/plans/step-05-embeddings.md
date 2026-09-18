@@ -1,8 +1,8 @@
 # Step 5: Embeddings, and Turning On the Fusion That Provably Does Nothing
 
-Status: **PLANNED, NOT STARTED. Drafted 16 September 2026 — needs sign-off before any of
-it is built**, to the standard of Steps 0-4: decisions named with what loses, sub-steps
-each with its own gate, risks, rollback.
+Status: **PLANNED. Drafted 16 September 2026 — needs sign-off before 5.1 onward is built.**
+5.0 is DONE (18 September); nothing else has started. Written to the standard of Steps 0-4:
+decisions named with what loses, sub-steps each with its own gate, risks, rollback.
 
 **This step has one job stated in Step 4's own plan**: `retrieve.fuse()` is Reciprocal Rank
 Fusion over a registry that holds exactly one retriever, and fusing a single ranked list is
@@ -89,15 +89,13 @@ path (every ingested chunk) as well as the read path (every query), where speech
 
 ### 5.2 Which vector store
 
-**`sqlite-vec`, provisionally — gated on a licence check nobody has done yet.**
-`docs/licences.md` already records the reasoning: dual Apache-2.0/MIT per the repository's own
-front page, but that reading came through a fetch-and-summarise tool, which the licence file's
-own rule excludes as a primary source. The row stays `unverified` until a person opens
-`LICENSE-APACHE` and `LICENSE-MIT` in the sqlite-vec repository directly — one minute of
-work, already identified, not done. **This step does not start building against sqlite-vec
-before that minute happens**, the same discipline that held for Docling in Step 4.2.
+**`sqlite-vec` — licence VERIFIED 18 September 2026.** `docs/licences.md` now records a
+person's own reading of `LICENSE-APACHE` and `LICENSE-MIT` in the sqlite-vec repository: dual
+Apache-2.0/MIT, both standard text, both copyright Alex Garcia 2024, no additional terms. That
+was the one blocker 5.0 named, the same discipline that held for Docling in Step 4.2, and it is
+now cleared — this step can build against sqlite-vec.
 
-Chosen provisionally over standing up a separate vector database (Qdrant, pgvector, etc.)
+Chosen over standing up a separate vector database (Qdrant, pgvector, etc.)
 for the same reason SQLite already won for the keyword and passage indexes: one file per
 tenant, disposable by construction, no second service to run, back up or isolate between
 tenants. `sqlite-vec` is an extension of the same SQLite file `search.py` and `passages.py`
@@ -134,13 +132,95 @@ case the orchestrator knows about.
 
 ### 5.4 What triggers re-embedding, and what it costs on the write path
 
-**A producer, the same shape as `passages.py`'s chunk producer.** Step 2's pattern — a
-producer that picks its own location and reports `ok`/`skipped`/`failed`, never silently — is
-the one this step reuses rather than invents: an `embeddings` producer that reads the chunks
-`app/chunks.py` already made, calls the `embed` role for each one that does not already have
-a current embedding, and writes rows keyed by `chunk_id`. Re-embedding a chunk that has not
-changed is wasted GPU time on every ingest; skipping it needs the same content hash Step 2.1
-already uses to decide whether a chunk changed at all, read once rather than re-derived here.
+**Corrected 18 September 2026 — the mechanism this section originally named does not exist.**
+The first draft said skipping an unchanged chunk "needs the same content hash Step 2.1 already
+uses to decide whether a chunk changed at all, read once rather than re-derived here." There is
+no such hash. `app/ingest.py:358-390`'s `_is_current()` is titled, in its own comment,
+"Deliberately NOT a content hash" — size, mtime and producer version only, because hashing a
+200 MB workbook on every upload to catch a change size and mtime already caught is a cost paid
+every time for a case that is rare and not silent. That reasoning is sound for a whole source
+file. It does not transfer to a 512-token chunk, and conflating the two was the error, not a
+reason to avoid hashing altogether.
+
+**Two different questions were tangled together in the first draft, and they need two
+different answers.**
+
+1. *Should the `embeddings` producer even be asked to look at this document right now?* — a
+   per-document question, already answered by machinery Step 4.3 built:
+   `Producer.depends_on` (`app/ingest.py:149-161`). Declaring `embeddings` with
+   `depends_on=frozenset({"chunks"})` means `_must_run()`'s second clause
+   (`app/ingest.py:289-290`, `elif producer.depends_on & stale: stale.add(...)`) marks it stale
+   exactly when `chunks` reran — the same seam `chunks` already rides on `text`. Nothing new
+   here; this is the mechanism, used the way it is already used.
+2. *Given that the producer is running for this document, which of ITS chunks actually need a
+   new vector?* — a per-chunk question `depends_on` cannot answer, because it operates at
+   producer granularity and `chunks.split()` re-cuts a whole document's text in one pass
+   (`app/chunks.py:242-283`). A single edit shifts `_merge()`'s running size total
+   (`app/chunks.py:201-239`) for everything after it, so most `chunk_id`s downstream of an edit
+   change anyway — but not all of them, and an edit near the end of a long document leaves most
+   of it untouched. This is where a hash earns its keep, and it is nothing like the file-level
+   case `_is_current()` was written to avoid: a chunk is capped at `TARGET_TOKENS` = 512
+   (`app/chunks.py:75`), so hashing one is microseconds, not the cost of hashing a 200 MB
+   workbook on every upload.
+
+**A third question hides inside question 2, and missing it is worse than missing the first
+two: does the vector still mean anything for the model about to compare it to a query?** A
+chunk whose text has not changed at all still needs a new embedding if `[roles.embed]` now
+names a different model — cosine similarity across two models' embedding spaces is not merely
+worse, it is meaningless, and a text hash would never notice, because the text did not change.
+`models.toml` is read once per process (`app/models.py:39-42`, "takes effect on the next
+process start, not mid-request"), so nothing mid-request can catch this either; it has to be
+caught by the producer machinery itself.
+
+**Decided: two mechanisms, matched to the two things that must invalidate an embedding.**
+
+- **Chunk content.** Each stored row carries a short hash of the chunk's own `text` (e.g. the
+  first 16 hex characters of `sha256`) alongside its vector, keyed by `chunk_id`. On a run, a
+  chunk is reused only when the CURRENT `chunks_of(source)` entry at that `chunk_id` hashes to
+  the value already stored for it; a new `chunk_id`, or the same `chunk_id` with a different
+  hash, gets a fresh embedding. Rows whose `chunk_id` no longer appears in the current chunk
+  list are deleted, not left behind — the same "nothing orphaned" rule `forget_missing()`
+  already enforces elsewhere (`app/ingest.py:736-784`, `app/passages.py:189-217`).
+- **Embed configuration.** `EMBEDDINGS.version` (the `Producer.version` int,
+  `app/ingest.py:145,178-179`) is not a hand-maintained constant here — it is derived at import
+  from `model_for("embed")` (a short hash of the sorted config dict), so changing
+  `[roles.embed]` changes the producer's version automatically on the next process start, with
+  no line for a person to remember to touch. `_is_current()` compares `producer_version` by
+  equality, not by order (`app/ingest.py:387`), so a version that moves in either direction on
+  a config change — not only upward — still invalidates correctly; "a producer version… only
+  goes up" (`app/ingest.py:179`) is a convention for hand-maintained versions, not a constraint
+  this equality check enforces. This is what flips `_must_run()` for `embeddings` on EVERY
+  document the next time anything ingests, which is what actually gets `run()` invoked at all —
+  the chunk-hash check above never fires if `depends_on` and `producer_version` both say
+  nothing changed, so this is not decoration on top of the hash; it is the only thing that
+  makes the hash check reachable when the model itself is what moved. As a second guard inside
+  a single run — belt on top of the version having already changed, not a replacement for it —
+  each row also stores the config fingerprint that produced it, and a chunk is reused only when
+  BOTH the content hash and the fingerprint match. That is what stops a version-derivation
+  collision (astronomically unlikely with a real hash, but free to guard against anyway) from
+  silently serving a stale vector.
+
+**What loses:**
+
+- **A hand-maintained `EMBEDDINGS.version` bump**, the same discipline already trusted for the
+  `text` producer's 1→2 bump when Docling replaced PyMuPDF (Step 4.2). Rejected specifically
+  here, not as a general objection to that pattern: an embed-role swap is exactly the kind of
+  change `docs/models.md` already records happening more than once without the number attached
+  to it turning out right the first time (the VRAM projection was wrong twice), and this step's
+  own risk list already worries about the embed role changing something silently (§5, next
+  section). Deriving the version removes one more place that requires a person to remember, for
+  the cost of one small pure function.
+- **A single tenant-wide "last embed config used" marker** instead of a fingerprint per row.
+  Smaller on disk, but it adds a second read-then-branch step to every run (read the marker,
+  decide whether to bypass the hash check entirely, then run the per-chunk loop) where a
+  per-row fingerprint keeps the decision local to one row and one comparison. Storage is cheap
+  here; a second code path that can disagree with the first is not.
+- **Skipping the fingerprint and trusting the derived version alone.** Would work if `run()`
+  could learn from `ingest.py` WHY it was invoked (config changed vs. this document's chunks
+  changed) — it cannot; `Producer.run` takes only `(source, out_dir)` (`app/ingest.py:168`) —
+  so a content-hash-only check would find every existing chunk's text unchanged after a pure
+  config swap and skip recomputing all of them, which is the one failure this section exists to
+  prevent.
 
 **What is not decided:** batch size for embedding calls, and whether embedding runs inline
 during ingest (as fast producers do today) or is deferred to the job queue Step 2.2 built for
@@ -183,20 +263,28 @@ load-bearing — nothing after 5.0 can be built before it, and nothing here shou
 of order just because it looks independent, the same lesson Step 4.0's tenant-bridge
 prerequisite taught the hard way.
 
-- **5.0 — Clear the one blocker that is not code.** Open `LICENSE-APACHE` and `LICENSE-MIT`
-  in the `sqlite-vec` repository and update `docs/licences.md`'s row from `unverified`. The
-  free-VRAM figure this step spends against is already measured (`docs/models.md` §
-  "16384 to 32768", 16 September) — it turned out not to depend on the context-length change
-  that prompted this sub-step in the first draft of this plan.
+- **5.0 — DONE, 18 September 2026.** `LICENSE-APACHE` and `LICENSE-MIT` read in full in the
+  `sqlite-vec` repository, by Amro; `docs/licences.md`'s row updated from `unverified` to
+  `verified` — dual Apache-2.0/MIT confirmed, no additional terms. The free-VRAM figure this
+  step spends against was already measured (`docs/models.md` § "16384 to 32768", 16 September)
+  — it turned out not to depend on the context-length change that prompted this sub-step in the
+  first draft of this plan.
 - **5.1 — Benchmark embedding candidates**, the `scripts/bench_models.py` pattern applied to
   embedding models instead of chat models: VRAM at rest, embedding latency for one chunk and
   for a batch, and whether vLLM v0.28.0 serves embeddings without a second container. Record
   candidates and the losing ones' reasons in `docs/models.md`, the same table shape as the
   chat comparison.
-- **5.2 — `app/vectors.py`: the embeddings producer and the `embeddings` table.** Chunks in,
-  vectors out, keyed by `chunk_id`, skipping chunks whose content hash has not changed. Gate:
-  re-running ingest over an unchanged corpus embeds nothing — the same "nothing failed on the
-  way" property Step 2.4 gated `derived/` on, applied to a cache instead of a directory.
+- **5.2 — `app/vectors.py`: the embeddings producer and the `embeddings` table.** Registered
+  with `depends_on=frozenset({"chunks"})` and a version derived from `[roles.embed]`'s config
+  rather than hand-maintained (§5.4). Each row is keyed by `chunk_id` and carries a hash of the
+  chunk's own text plus the config fingerprint that produced its vector; a chunk is reused only
+  when both still match, everything else is recomputed, and rows for a `chunk_id` no longer in
+  the document are dropped. Three gates, all from §5.4: an unchanged corpus embeds nothing (the
+  producer is never even invoked — the same "nothing failed on the way" property Step 2.4
+  gated `derived/` on, applied to a cache instead of a directory); a `[roles.embed]` swap
+  re-embeds every chunk of every document on the next ingest with nobody bumping anything by
+  hand; an edit near the end of one document re-embeds only the chunks whose text actually
+  changed.
 - **5.3 — The `Vector` retriever**, implementing `retrieve.Retriever` against the table 5.2
   built: embed the query through the same `embed` role, brute-force cosine similarity, ranks
   out. Gate: unit tests on a small fixture corpus where the nearest neighbour is known by
@@ -236,6 +324,14 @@ prerequisite taught the hard way.
   `LLM_MODEL` directly and `models.toml`'s `chat` entry only documents that deployment, per
   Step 4.7 — but worth a test asserting it explicitly, the same shape as the tenancy
   isolation tests that assert what SQLite actually opened rather than trusting config.
+- **`[roles.embed]` changes and old vectors keep being served against the new model's space.**
+  The failure mode §5.4 was rewritten to close: a chunk whose text never changed gives no
+  signal that its embedding is now meaningless. Mitigated by deriving `EMBEDDINGS.version`
+  from the embed config at import (forces every document's embeddings to be reconsidered on
+  the next process start after a swap) and a per-row config fingerprint checked alongside the
+  content hash (stops a stale vector being served even if the derived version ever collided).
+  Worth a test asserting both halves explicitly before 5.2 ships, not just the golden-set MRR
+  in 5.5 — a wrong-model vector can still resemble a real one well enough to rank plausibly.
 
 ## 6. Rollback
 

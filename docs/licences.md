@@ -145,7 +145,7 @@ the AGPL would trigger.
 | faster-whisper | MIT | Yes | unverified |
 | Kokoro-82M | Apache-2.0 | Yes | unverified — **verify before Step 6**, it is the default |
 | Silero VAD | MIT | Yes | unverified |
-| sqlite-vec | Apache-2.0 **and** MIT, dual | Yes | unverified — **verify before Step 5**; see the note below |
+| sqlite-vec | Apache-2.0 **and** MIT, dual | Yes | **verified 18 September 2026** — both LICENSE files read in full by Amro. See the note below |
 | Docling (`docling-slim`, `docling-core`, `docling-parse`) | MIT | Yes | **verified 11 September 2026** — the LICENSE file itself, read by Amro. See the note below |
 | pypdfium2 | Apache-2.0 / BSD-3-Clause | Yes | unverified — **installed as of 4.2**, it is what `docling-parse` reads PDFs with. Already named above as the PyMuPDF escape route |
 | python-docx | MIT | Yes | unverified — installed 4.2, `.docx` only |
@@ -196,12 +196,17 @@ Two things to settle at the same time, because data has questions code does not:
   public filings from EDGAR. That is fine for a test corpus and is worth knowing before
   anything from it is shown to a customer as an example.
 
-**sqlite-vec, 10 September 2026.** Its repository front page states dual Apache-2.0 / MIT.
-That reading came through a fetch-and-summarise tool, which **this file's own rule excludes
-as a primary source** — "not a blog post, a search result, or a summary written by someone
-else, including one written by an assistant". So the row stays `unverified` and the licence
-column now records what to expect rather than what has been established. Clearing it is one
-minute of a person opening `LICENSE-APACHE` and `LICENSE-MIT` in `github.com/asg017/sqlite-vec`.
+**sqlite-vec, VERIFIED 18 September 2026.** `LICENSE-APACHE` and `LICENSE-MIT` were both read
+in full, by a person, in the `asg017/sqlite-vec` repository: standard Apache-2.0 text and
+standard MIT text, both copyright Alex Garcia 2024, no additional terms grafted onto either.
+Dual-licensed exactly as expected, and this reading is a primary source under this file's own
+rule, unlike the 10 September attempt below. Step 5's 5.0 blocker is cleared.
+
+**sqlite-vec, 10 September 2026 — the reading superseded above.** Its repository front page
+states dual Apache-2.0 / MIT. That reading came through a fetch-and-summarise tool, which
+**this file's own rule excludes as a primary source** — "not a blog post, a search result, or
+a summary written by someone else, including one written by an assistant". The row stayed
+`unverified` until the entry above.
 
 Two other things found at the same time, neither a licence question but both worth having
 before Step 5 depends on them: it is **pre-v1 and says to expect breaking changes**, and it

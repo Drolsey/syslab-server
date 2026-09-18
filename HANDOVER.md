@@ -979,6 +979,38 @@ the short version:
    with its own gate, risks, rollback, to the standard of 0-4. **PLANNED, NOT
    STARTED.** Step 6 still has nothing.
 
+   **Update, 18 September: 5.0 done, and 5.4's design had a bug caught before
+   any code was written.** `LICENSE-APACHE` and `LICENSE-MIT` read in full by
+   Amro in the `sqlite-vec` repository — dual Apache-2.0/MIT confirmed, no
+   additional terms — `docs/licences.md`'s row now says `verified` instead of
+   `unverified`.
+
+   Before starting 5.2, a review asked where the "skip an unchanged chunk"
+   mechanism 5.4 described actually lived. It did not exist: the plan's first
+   draft said skipping needed "the same content hash Step 2.1 already uses",
+   and Step 2.1 deliberately has no content hash at all —
+   `app/ingest.py:358-390`'s `_is_current()` is titled in its own comment
+   "Deliberately NOT a content hash", checking size/mtime/producer-version
+   only, because hashing a 200 MB workbook on every upload is a cost paid
+   every time for a change size and mtime already caught. That reasoning does
+   not transfer to a 512-token chunk, and the plan had conflated the two.
+
+   Rewritten in `docs/plans/step-05-embeddings.md` § 5.4 (and the 5.2
+   step-by-step bullet, and a new risk in § 5): the `embeddings` producer
+   uses `Producer.depends_on={"chunks"}` — machinery Step 4.3 already built,
+   nothing new — to decide WHETHER to look at a document at all, and a small
+   per-chunk text hash to decide WHICH of that document's chunks actually
+   need a new vector once it does look. A third failure the first draft
+   missed entirely: a chunk whose text never changed still needs re-embedding
+   if `[roles.embed]` names a different model, since cosine similarity across
+   two models' spaces is meaningless and a text hash would never notice.
+   Closed by deriving `EMBEDDINGS.version` from the embed config at import
+   (a config swap invalidates every document automatically, no version bump
+   for a person to remember) plus a per-row config fingerprint as a second
+   guard. Nothing here is built yet — this was caught in the design, before
+   5.2's implementation, which is the point of writing decisions down before
+   coding them.
+
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
 10 September. `docs/plans/step-04-retrieval-plane.md`, to the standard of 0-3:
