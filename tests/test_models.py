@@ -79,5 +79,12 @@ def test_the_real_models_toml_loads_and_declares_all_five_roles():
     roles = models._load()
     assert set(roles) == {"chat", "embed", "vision", "stt", "tts"}
     assert roles["chat"]["model"]
-    for empty in ("embed", "vision", "stt", "tts"):
+    # embed filled 18 September 2026 (Step 5.1's decision) -- see
+    # docs/plans/step-05-embeddings.md. revision is required alongside model
+    # for embed specifically, not just believed present: app/vectors.py's
+    # freshness mechanism can only invalidate on a config change it can see,
+    # and "model" alone would miss a same-name weights swap.
+    assert roles["embed"]["model"] == "Qwen/Qwen3-Embedding-0.6B"
+    assert roles["embed"]["revision"]
+    for empty in ("vision", "stt", "tts"):
         assert roles[empty] == {}

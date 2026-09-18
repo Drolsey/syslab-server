@@ -44,13 +44,35 @@ WHAT IT TALKS TO
     for Qwen3-Embedding-0.6B, already the one embedding-adjacent entry
     `docs/licences.md` verified on the same day as vLLM itself:
 
-        docker run --rm --gpus all -p 8001:8000 \\
-          -v huggingface-cache:/root/.cache/huggingface \\
-          vllm/vllm-openai:v0.28.0 --model Qwen/Qwen3-Embedding-0.6B --task embed
+        docker run -d --name bench-embed-candidate --gpus all -p 8001:8000 \\
+          -v syslab-server_huggingface-cache:/root/.cache/huggingface \\
+          vllm/vllm-openai:v0.28.0@<digest, see docker-compose.yml> \\
+          --model Qwen/Qwen3-Embedding-0.6B --runner pooling \\
+          --max-model-len 2048 --gpu-memory-utilization 0.3
 
-    Confirm `--task embed` is still the right flag against the running
-    v0.28.0 image rather than trusting this comment -- the project's own
-    rule for reading vLLM flags off a startup log, not off a docstring.
+    BOTH FLAGS ON THE LAST LINE WERE WRONG ONCE, CONFIRMED AGAINST THE
+    RUNNING v0.28.0 IMAGE ON 18 SEPTEMBER 2026, not trusted from memory:
+    (1) an earlier draft guessed `--task embed`; this version has no
+    `--task` flag at all, and a container started with it crashed on an
+    argparse error and self-removed via `--rm` before the logs could be
+    read. `vllm serve --help=all` shows `--runner
+    {auto,draft,generate,pooling}` and `--convert {auto,classify,embed,none}`
+    instead -- `--convert` adapts a TEXT-GENERATION model into a pooling
+    one, which does not apply here since Qwen3-Embedding-0.6B is already
+    natively a pooling model, so `--runner pooling` alone is right.
+    (2) `--gpu-memory-utilization 0.15` alone then failed too: this model
+    inherits a 32768-token max context from its architecture, and vLLM
+    refuses to start unless it can fit a KV cache for at least one
+    full-length request -- 3.5 GiB, more than 0.15's ~4.9 GiB budget left
+    after weights. `--max-model-len 2048` is the actual fix, not just a
+    bigger utilization number: nothing this project embeds is anywhere
+    near 32768 tokens (`TARGET_TOKENS` in `app/chunks.py` is 512), so
+    capping the context vLLM reserves KV cache for is honest sizing, not a
+    workaround.
+
+    Run WITHOUT `--rm` the first time against any new candidate,
+    specifically so a crash leaves `docker logs <name>` behind to read
+    instead of taking the evidence with it.
 
 VRAM IS READ, NOT DIFFED, ON PURPOSE
     Ollama could be told to load and unload a model on command, so

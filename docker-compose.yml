@@ -145,6 +145,76 @@ services:
               count: all
               capabilities: [gpu]
 
+  # Step 5.4, 18 September 2026. A SECOND vLLM container, not a second
+  # capability on the one above: vLLM serves exactly one --runner per
+  # process, confirmed live before this was written rather than assumed --
+  # POST /v1/embeddings against the chat container above returns a plain
+  # HTTP 404. Same image, same box, same pattern this file already uses for
+  # every additive service (postgres, minio, database-agent below): one
+  # more container, not new hardware. Port 8001, matching
+  # EMBED_BASE_URL's default in app/config.py, so a fresh checkout needs no
+  # .env override once this is up.
+  vllm-embed:
+    image: vllm/vllm-openai:v0.28.0@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "8001:8000"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+    command:
+      # Qwen/Qwen3-Embedding-0.6B, chosen over BAAI/bge-base-en-v1.5 in the
+      # Step 5.1 comparison: overall MRR ties (0.654 vs 0.657 on the golden
+      # set), but Qwen wins decisively on paraphrase queries -- the specific
+      # failure mode Step 5 exists to fix -- while BGE's advantage falls on
+      # clause queries instead. docs/models.md has the full comparison.
+      - --model
+      - Qwen/Qwen3-Embedding-0.6B
+      # Fetched live from huggingface.co/api/models/Qwen/Qwen3-Embedding-0.6B
+      # on 18 September 2026, not guessed -- the same discipline the chat
+      # model's own --revision pin above already uses, and more load-bearing
+      # here: models.toml's [roles.embed].revision is hashed into
+      # app/vectors.py's EMBEDDINGS.version, so changing this line and
+      # models.toml together is what makes a weights swap re-embed every
+      # document automatically, the day this needs to move.
+      - --revision
+      - 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+      # This vLLM version has no --task flag (an earlier draft of this
+      # comment guessed --task embed and the container crashed on an
+      # argparse error -- see scripts/bench_embeddings.py's docstring).
+      # --runner {auto,draft,generate,pooling}: Qwen3-Embedding is natively
+      # a pooling model, so pooling is explicit rather than left to auto.
+      - --runner
+      - pooling
+      # 1024, not this model's native 32768. Nothing this system embeds
+      # comes close: app/chunks.py's TARGET_TOKENS + OVERLAP_TOKENS is 576,
+      # and the Step 5.1 benchmark crashed once already at a low
+      # --gpu-memory-utilization specifically because this cap was not yet
+      # set (32768's KV-cache floor alone needs 3.5 GiB). 1024 leaves real
+      # headroom over 576 without reserving cache for a context length
+      # nothing here will ever request.
+      - --max-model-len
+      - "1024"
+      # A STARTING point, not a measured requirement -- read the startup
+      # log after this comes up and record the real numbers in
+      # docs/models.md, the same rule every value in the vllm service above
+      # already follows. 0.10 of the 32,607 MiB card is ~3.3 GiB, comfortably
+      # above the ~2.33 GiB fixed cost the Step 5.1 benchmark measured
+      # (weights + non-torch + CUDA graphs, at a different utilization) with
+      # room for the batch sizes that benchmark swept (up to 64 chunks/call)
+      # plus concurrent ingest- and query-time calls, and leaves the rest of
+      # the ~8.4 GiB free headroom (docs/models.md, "16384 to 32768") for
+      # Step 6, budgeted ~3.5 GiB in the original Section 13 plan.
+      - --gpu-memory-utilization
+      - "0.10"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   # Self-hosted Postgres for the Database Agent app: its own Company/User/
   # AppDocument/AppSecret/AuditEvent tables, and INTAJ's Observations DB --
   # both moving off Medi-Merchant's Cloud SQL instance so that database stays

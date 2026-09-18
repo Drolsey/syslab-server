@@ -331,6 +331,170 @@ input tokens, per `scripts/bench_gateway.py`'s own docstring). That bench
 exists now and has not been run; this measurement answers a different
 question than it will.
 
+## Embedding candidates (Step 5.1), measured 18 September 2026
+
+`scripts/bench_embeddings.py` against the production box, not Ollama and not a
+projection — `docs/plans/step-05-embeddings.md` §5.1's own two questions, both
+answered with a real number.
+
+**Does the running chat container already serve embeddings? No, confirmed
+live.** `POST http://192.168.1.185:8000/v1/embeddings` against the deployed
+`Qwen/Qwen3-14B-AWQ` container returns `HTTP 404 {"detail": "Not Found"}`. A
+vLLM server serves one `--runner` per process — this one was started for
+generation, not pooling — so an embedding role needs its own container. Not
+assumed; this project has already thrown away one number that was assumed
+instead of measured (see the Ollama disclaimer at the top of this file), and
+was not going to do that twice in the same step.
+
+**One candidate measured so far: `Qwen/Qwen3-Embedding-0.6B`** — the one
+embedding-adjacent row `docs/licences.md` verified the same day as vLLM
+itself. `--runner pooling` (this vLLM version has no `--task` flag; see
+`scripts/bench_embeddings.py`'s docstring for the two wrong flags tried
+before this one worked), `--max-model-len 2048` (still 4x this system's real
+per-chunk ceiling — `TARGET_TOKENS` + `OVERLAP_TOKENS` in `app/chunks.py` is
+576 — chosen with headroom rather than cut to the minimum for a first run).
+
+| | |
+|---|---|
+| dimension | 1024 (4 KiB/chunk as float32, 2 KiB as float16) |
+| single chunk (1792 chars, `TARGET_CHARS`) | median 7 ms, p95 8 ms |
+| batch of 8 | 3.8 ms/chunk (1.7x vs. one at a time) |
+| batch of 32 | 3.3 ms/chunk (2.0x) |
+| batch of 64 | 3.2 ms/chunk (2.0x — batching's gain is mostly captured by 32) |
+
+**The VRAM delta is 9.9 GB, and reporting that number alone would repeat this
+file's own recorded mistake.** The startup log, the same shape already read
+twice above for the chat model:
+
+```
+Free memory on device (10.21/31.36 GiB) on startup. Desired GPU memory
+utilization is (0.3, 9.41 GiB). Actual usage is 1.57 GiB for consumed
+memory (weights + non-torch), 0.52 GiB for peak activation, and 0.24 GiB
+for CUDAGraph memory. Current kv cache memory in use is 7.31 GiB.
+```
+
+1.57 + 0.52 + 0.24 = **2.33 GiB is what this model actually costs to have
+loaded and ready** — weights (`Model loading took 1.12 GiB`), overhead and
+CUDA graphs. The other **7.31 GiB is KV cache, and KV cache here is a dial
+this benchmark happened to leave wide open, not a requirement**:
+`--gpu-memory-utilization 0.3` was chosen to clear the earlier crash (a
+0.15 budget left too little room for even one 2048-token request), not
+because a 0.6B embedding model needs 9.9 GiB. 68,432 cached tokens against
+576-token real chunks is concurrency this write path will not use — the
+embeddings producer calls this role in batches of a few dozen chunks
+(§5.1's own batch sweep above), never dozens of documents at once. A
+production deployment should size `--gpu-memory-utilization` or
+`--kv-cache-memory` (the log names this flag directly) to a few GiB of
+cache, not inherit this benchmark's number, and re-measure once 5.6 decides
+real batch sizes.
+
+### Second candidate: `BAAI/bge-base-en-v1.5`, and a retrieval-quality harness, 18 September
+
+The plan's own "small BGE- or GTE-class" alternative — real BERT-family
+encoder (768-dim, 512-token native limit, 109M params against Qwen's 600M),
+MIT-licensed per its own model card (**unverified** in `docs/licences.md`
+per this file's own primary-source rule — not read from source, so it stays
+that way until someone does, same as sqlite-vec was before Step 5.0).
+
+| | Qwen3-Embedding-0.6B | BAAI/bge-base-en-v1.5 |
+|---|---|---|
+| dimension | 1024 | 768 |
+| single chunk (1792 chars) | 7 ms median, 8 ms p95 | 4 ms median, 4 ms p95 |
+| batch of 32 | 3.3 ms/chunk | 1.5 ms/chunk |
+| batch of 64 | 3.2 ms/chunk | 1.5 ms/chunk |
+| real max context | 32,768 (inherited, unused) | 512 (native) |
+| licence | **verified**, see first table | unverified, believed MIT |
+
+**BGE is faster per chunk, consistent with being ~1/5th the parameters — and
+the VRAM comparison needed a second correction in the same session that
+already corrected one.** The first reading (5.09 GiB) was wrong for a new
+reason: it was taken while Qwen's own candidate container was ALSO still
+running, so the delta against the pre-Step-5.1 baseline was Qwen's footprint
+plus BGE's, not BGE's alone — the mistake this file's own Ollama disclaimer
+and the 9.9 GiB entry above both already warn about, arrived at a third way.
+`nvidia-smi --query-compute-apps` (per-process, immune to what else is
+running) isolates it: **BGE alone is 1.06 GiB**, Qwen alone (this run, a
+tighter 0.15 utilization budget rather than the 2.33 GiB run above) was
+3.90 GiB. BGE's own startup log reports `Model loading took 0.21 GiB` and
+`Graph capturing finished... took 1.36 GiB`, which sum to more than the
+1.06 GiB isolated measurement — **this does not fully reconcile, and is
+recorded rather than smoothed over**, the way Qwen's log broke down clean
+and BGE's does not. Both numbers agree on the direction: BGE's real footprint
+is small, roughly a third to a fifth of Qwen's, tracking its parameter count.
+
+**A real architectural difference, not just a smaller number: BGE has no
+autoregressive KV cache to size at all.** Its runtime log reports `GPU KV
+cache usage: 0.0%` throughout — an encoder-only forward pass has no
+multi-step decode to cache. Qwen3-Embedding is a causal-LM backbone
+(`Resolved architecture: Qwen3ForCausalLM`) repurposed for embedding via
+pooling, so it inherits vLLM's KV-cache allocation machinery even though
+single-pass embedding never needs it — which is the entire reason the 9.9
+GiB / 2.33 GiB split above exists for Qwen and has no BGE equivalent to
+draw.
+
+**BGE's 512-token limit is real, and the char-based chunk-size estimate
+underestimated it live, not just in theory.** `app/chunks.py`'s own
+character estimate said 0 of 4,660 golden-corpus chunks exceeded 512
+tokens; BGE's real tokenizer disagreed on the first run and hard-errored a
+whole batch with a 400 (`This model's maximum context length is 512
+tokens... requested... at least 513`) — vLLM does not truncate silently by
+default. Fixed by passing `truncate_prompt_tokens`, vLLM's own field for
+this, not by re-tuning the estimate.
+
+**Retrieval quality: `scripts/bench_retrieval_candidates.py`, the same 42
+golden queries and ground truth `scripts/check_retrieval.py` measures the
+0.768 keyword baseline against, imported metric code so the numbers are
+comparable, not merely similar.** Query-side instruction per each model's
+own card (confirmed against both, not assumed): Qwen gets
+`"Instruct: {task}\nQuery: {text}"`, BGE gets `"Represent this sentence for
+searching relevant passages: "` — documents plain for both, since neither
+card asks for a document-side prefix.
+
+| | queries | MRR | R@1 | R@3 | R@5 | R@10 |
+|---|---|---|---|---|---|---|
+| **Qwen3-Embedding-0.6B**, overall | 42 | 0.654 | 0.516 | 0.580 | 0.588 | 0.621 |
+| — clause | 14 | 0.205 | 0.143 | 0.214 | 0.214 | 0.286 |
+| — exact | 20 | 0.967 | 0.950 | 1.000 | 1.000 | 1.000 |
+| — paraphrase | 8 | 0.661 | 0.084 | 0.169 | 0.210 | 0.263 |
+| **bge-base-en-v1.5**, overall | 42 | 0.657 | 0.537 | 0.566 | 0.614 | 0.665 |
+| — clause | 14 | 0.335 | 0.286 | 0.286 | 0.357 | 0.429 |
+| — exact | 20 | 0.935 | 0.900 | 0.950 | 1.000 | 1.000 |
+| — paraphrase | 8 | 0.524 | 0.070 | 0.096 | 0.096 | 0.244 |
+
+**Overall MRR is a tie (0.654 vs. 0.657, a 0.003 gap on 42 queries — well
+under the ~0.024 one query flipping would move it) and hides two real,
+opposite-direction differences underneath.** BGE is clearly stronger on
+clause queries (0.335 vs. 0.205 MRR); Qwen is clearly stronger on
+paraphrase queries (0.661 vs. 0.524 MRR). Both vector candidates alone
+score below the 0.768 keyword baseline overall — expected and not a
+concern by itself, since RRF fusion (§5.4) is what is supposed to combine a
+retriever that wins on paraphrase with one that wins on exact-string
+matches, not either replacing the other.
+
+### Decision: Qwen3-Embedding-0.6B, 18 September 2026
+
+Per the standard set for this comparison: not on latency alone, and BGE
+would need a material retrieval-quality advantage to displace an
+already-license-verified candidate. It does not have one where it counts
+for this step. **Paraphrase is the specific failure mode Step 5 exists to
+fix** — stated at the top of `docs/plans/step-05-embeddings.md`, "the
+failure mode keyword search cannot fix by construction" — and Qwen beats
+BGE on it by a wide, real margin (0.661 vs. 0.524 MRR), while BGE's own
+advantage falls on clause queries, a category this step was not specifically
+built to move. Combined with Qwen's already-verified licence against BGE's
+still-unverified one, and both candidates' absolute latency being fast
+enough in absolute terms (single-digit milliseconds) that BGE's speed edge
+does not change what this write path can afford, Qwen3-Embedding-0.6B is
+the selected candidate for `[roles.embed]`.
+
+**Recorded as a real limitation, not swept aside because Qwen won overall:
+BGE's clause-query strength (0.335 vs. 0.205 MRR, roughly 60% relative)
+is a genuine gap in Qwen's coverage.** Worth revisiting if clause-type
+queries turn out to matter more in production than the golden set's 14-of-42
+share suggests, and `Qwen3-Reranker-0.6B` — already a licence row in
+`docs/licences.md`, unverified, unused — is a plausible second-stage answer
+if so, rather than re-running this comparison from scratch.
+
 ## Serving stack, pinned
 
 | Component | Version | Pin |

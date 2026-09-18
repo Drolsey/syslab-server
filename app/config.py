@@ -41,6 +41,22 @@ LLM_THINK = _env("LLM_THINK", "false").lower() in {"1", "true", "yes", "on"}
 # How many tool calls the model may make before we stop it, per question.
 MAX_TOOL_STEPS = int(_env("MAX_TOOL_STEPS", "10"))
 
+# --- embeddings, Step 5.1 ---
+# The OpenAI-compatible endpoint app/embed.py talks to -- mirrors LLM_BASE_URL
+# exactly, a separate variable rather than a second field on the same one
+# because vLLM serves one --runner per process (confirmed live against the
+# running chat container, docs/models.md), so chat and embed are always two
+# processes even when they end up on the same box. EMBED_MODEL is the
+# candidate chosen in docs/models.md's "Decision: Qwen3-Embedding-0.6B" --
+# recorded here as the default so a fresh checkout matches the decision
+# without anyone having to know it, but [roles.embed] in models.toml staying
+# empty is what actually gates whether app/vectors.py will use it: this
+# constant existing is not the same claim as a container answering at this
+# URL, and model_for("embed") is what raises when nothing does.
+EMBED_BASE_URL = _env("EMBED_BASE_URL", "http://127.0.0.1:8001/v1")
+EMBED_MODEL = _env("EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+EMBED_TIMEOUT = int(_env("EMBED_TIMEOUT", "60"))
+
 # --- Ollama, dev-only ---
 # Not what the running app talks to (see LLM_BASE_URL above). Kept so
 # scripts/check_services.py and scripts/bench_models.py can still probe a

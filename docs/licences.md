@@ -142,6 +142,7 @@ the AGPL would trigger.
 | vLLM | Apache-2.0 | Yes | **verified**, see first table |
 | Qwen3-Embedding-0.6B | Apache-2.0 | Yes | **verified**, see first table |
 | Qwen3-Reranker-0.6B | Apache-2.0 | Yes | unverified; optional component |
+| BAAI/bge-base-en-v1.5 | MIT | Yes | unverified; Step 5.1 comparison candidate, **not selected** (18 September, `docs/models.md`) — remains unverified and benchmark-only, nothing to clear unless it is reconsidered |
 | faster-whisper | MIT | Yes | unverified |
 | Kokoro-82M | Apache-2.0 | Yes | unverified — **verify before Step 6**, it is the default |
 | Silero VAD | MIT | Yes | unverified |

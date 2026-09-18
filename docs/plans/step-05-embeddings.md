@@ -1,8 +1,18 @@
 # Step 5: Embeddings, and Turning On the Fusion That Provably Does Nothing
 
-Status: **PLANNED. Drafted 16 September 2026 — needs sign-off before 5.1 onward is built.**
-5.0 is DONE (18 September); nothing else has started. Written to the standard of Steps 0-4:
-decisions named with what loses, sub-steps each with its own gate, risks, rollback.
+Status: **PLANNED. Drafted 16 September 2026.** 5.0-5.3 are DONE (18 September): the model is
+chosen, the producer and retriever are built and tested. **5.2's freshness design is SIGNED
+OFF, 18 September** — reviewed against the running code (not re-derived), confirmed by
+re-running `tests/test_vectors.py` on demand: **14 passed, 0 failed**, covering per-chunk
+content changes, embed-config changes, the derived `EMBEDDINGS.version`, stale-row removal,
+and the unchanged-document no-op. 5.4's deployment architecture (§ "3a") was reviewed and
+**approved** the same day; `models.toml` and `docker-compose.yml` are applied, plus the
+`EmbedError`/`EmbedUnavailable` distinction the review's own §3 found and fixed before
+deployment (`tests/test_embed.py`, 9 more tests). Full suite: **677 passed, 1 skipped.**
+Neither the producer nor the retriever is registered into the running app yet — that is 5.4's
+remaining `retrieve.register`/`ingest.register` step, blocked on the embed container actually
+being deployed on the box. Written to the standard of Steps 0-4: decisions named with what
+loses, sub-steps each with its own gate, risks, rollback.
 
 **This step has one job stated in Step 4's own plan**: `retrieve.fuse()` is Reciprocal Rank
 Fusion over a registry that holds exactly one retriever, and fusing a single ranked list is
@@ -56,24 +66,30 @@ default.
 
 ### 5.1 Which embedding model, and where does it run
 
-**Not decided here — benchmarked, the way the chat model was.** `docs/models.md`'s own method
-is the template: `scripts/bench_models.py` measured three chat candidates on VRAM and
-throughput before anything was chosen, and the decision section named what lost and why. This
-step needs the same pass for embedding models before picking one, not a choice made by
-reputation. The candidates worth measuring, in the same spirit as the qwen3 family being
-picked for tool-calling strength rather than raw benchmark score:
+**DECIDED, 18 September 2026: `Qwen/Qwen3-Embedding-0.6B`.** Benchmarked, the way the chat
+model was — `docs/models.md`'s own method is the template: `scripts/bench_models.py` measured
+three chat candidates on VRAM and throughput before anything was chosen, and the decision
+section named what lost and why. Two candidates measured here the same way — Qwen3-Embedding-0.6B
+against `BAAI/bge-base-en-v1.5`, the plan's own "small BGE-class" suggestion — on latency,
+throughput, dimension, real VRAM cost, licence, AND retrieval quality against the golden set
+(§5.5's metric, run early rather than deferred, specifically so the choice is not made on
+latency alone). Full numbers, the comparison table, and the reasoning: `docs/models.md` §
+"Second candidate: BAAI/bge-base-en-v1.5" and § "Decision: Qwen3-Embedding-0.6B".
 
-- A small BGE- or GTE-class sentence-embedding model (hundreds of MB, CPU-viable) — the
-  conservative choice, because `docs/models.md` already spends the GPU's headroom carefully
-  and Section 13's shared budget for embed+stt+tts was ~3.5 GiB **before the 9 September 14B
-  swap freed most of it back up.** Re-measured 16 September against the 32768 context change:
-  free VRAM turned out not to be a function of `--max-model-len` at all — it is set by
-  `--gpu-memory-utilization` and the weights, neither of which that change touched — and is
-  confirmed at ~8.4 GiB, in line with the ~9.4 GiB `docs/models.md` already recorded at
-  16384. See `docs/models.md` § "16384 to 32768" for the numbers.
-- Whatever embedding endpoint vLLM v0.28.0 itself exposes for an embedding-flagged model, if
-  one is available without a second model process — worth fifteen minutes of checking before
-  assuming a second container is needed.
+The one-paragraph version: overall MRR on the golden set is a statistical tie between the two
+(0.654 Qwen, 0.657 BGE, on 42 queries), but splits in opposite directions underneath — BGE
+wins clearly on clause queries, Qwen wins clearly on paraphrase queries, and paraphrase is the
+specific failure mode this whole step exists to fix (§0's opening paragraph: "the failure mode
+keyword search cannot fix by construction"). Combined with Qwen's already-verified licence
+against BGE's still-unverified one, Qwen wins the comparison that actually matters for this
+step's purpose. BGE's clause-query strength is recorded as a real limitation of the choice, not
+hidden — see `docs/models.md` for the number and a candidate mitigation (`Qwen3-Reranker-0.6B`,
+already a licence row, unused).
+
+Whether vLLM v0.28.0 itself exposes an embedding endpoint without a second container was also
+checked directly rather than assumed: **no** — `POST /v1/embeddings` against the running chat
+container returns a live `HTTP 404`. A vLLM server serves one `--runner` per process; the
+embed role needs its own container, `[roles.embed]`'s deployment shape for 5.2 onward.
 
 **What is decided:** embeddings run through the `embed` role in `models.toml`
 (`app/models.py:model_for("embed")`), the same seam Step 4.7 declared and left empty on
@@ -256,6 +272,233 @@ the embedding role costs in VRAM and per-chunk latency.
 
 ---
 
+## 3a. Deployment architecture for `[roles.embed]` (5.4)
+
+**PROPOSED, 18 September 2026 — needs sign-off before `docker-compose.yml` or `models.toml`
+changes. Nothing in this section has been applied.** Ten questions, in the order they were
+asked, each with a recommendation, what it costs to be wrong, and what loses.
+
+### 1. Where the service runs
+
+**A second vLLM container, on the same box, on its own port.** No second GPU exists anywhere
+in this project, and the box already carries this pattern for everything else additive —
+Postgres, MinIO and the database-agent app all joined `docker-compose.yml` as new services on
+the same box rather than new hardware. Port 8001, matching what `EMBED_BASE_URL`'s default
+(`app/config.py`) and the Step 5.1 benchmark both already used.
+
+**What loses:** CPU-only serving. Named as "CPU-viable" in §5.1's original candidate list, but
+never benchmarked that way — every number in `docs/models.md`'s comparison is a GPU number,
+and recommending CPU now would be estimating on the write path, the exact thing this project's
+whole `docs/models.md` history argues against doing without measuring first.
+
+### 2. How its endpoint is configured
+
+**Already built, not a 5.4 decision:** `EMBED_BASE_URL` / `EMBED_MODEL` / `EMBED_TIMEOUT` in
+`app/config.py`, added alongside the freshness work, mirroring `LLM_BASE_URL` exactly. The one
+genuinely useful fact this surfaces: **because the app runs on the box itself (systemd, not a
+container — `docker-compose.yml`'s own top comment), the production default
+(`http://127.0.0.1:8001/v1`) is already correct for a container on port 8001, the same way
+`LLM_BASE_URL`'s `127.0.0.1:8000` default already is.** Deploying to port 8001 needs no `.env`
+change at all. `.env.example` is missing the documenting entry for these three variables —
+harmless to add now (it documents code already merged, not a running service), proposed below
+alongside the other file changes.
+
+### 3. How the application detects service availability vs. failure
+
+**Three layers, and only one of them has a real gap.**
+
+- **The retriever, at query time — already correct, no change needed.** `Vector.search()`
+  turns `embed.EmbedError` into `retrieve.RetrieverError`, and `retrieve.fuse()`'s caller
+  already tolerates one retriever failing (`check_retrieval.py` reads `fused["failed"]`
+  without treating it as fatal). An embed outage at query time degrades to keyword-only, not a
+  crash — this was true the moment `Vector` was written and needs nothing from 5.4.
+- **The producer, at ingest time — a real gap, found by this review rather than assumed away.**
+  `_run_embeddings` only raises `ingest.ProducerUnavailable` (the "environment fault, not a
+  data fault" signal every other producer's missing-library case already uses) when
+  `model_for("embed")` itself raises `RoleUnavailable` — i.e., the CONFIG is missing. If the
+  config is filled but the CONTAINER is down or unreachable, `embed.embed()` raises
+  `EmbedError`, which is not specially handled and becomes an ordinary per-document `FAILED` —
+  the wrong shape for "the whole embedding service is down," which is exactly the
+  missing-parser-library case `app/producers.py`'s `_reader()` already exists to distinguish
+  from a per-document fault. An outage today would record one `FAILED` row per document
+  ingested during it, retried on every attempt, rather than one clean "unavailable" report.
+  **Concrete fix, in `app/embed.py`:** `EmbedError` already wraps both `URLError`/`TimeoutError`
+  (server unreachable — an environment fault) and `HTTPError` (server reached, this request
+  refused — a real per-call fault) identically. Distinguishing them lets `_run_embeddings`
+  translate only the first kind into `ProducerUnavailable`, the same distinction `_reader()`
+  already draws. This is the "concrete interface problem" 5.4 was asked to look for — proposed
+  here, not yet applied, since it is a real code change and the instruction was to present
+  before applying.
+- **Startup/diagnostic — not built, and not required by 5.4.** `app/llm.py`'s `model_window()`
+  pattern (ask `/v1/models`, cache only a successful answer) could be mirrored for an operator
+  health check, or folded into `scripts/check_services.py`. Left for whoever writes the runbook
+  entry for bringing the embed container up, the same way `docs/runbook.md`'s "after any
+  model change" check exists for the chat container today rather than being built into the app.
+
+### 4. Development vs. production configuration
+
+**Production needs no `.env` change** (see §2). **A dev laptop has two honest options, and
+`.env.example` should say both rather than pick one:** point `EMBED_BASE_URL` at the shared
+box's LAN address (`http://192.168.1.185:8001/v1`, the same pattern `scripts/bench_gateway.py`
+already uses to reach the chat role from off-box), or leave it unset and accept that the
+embeddings producer reports `ProducerUnavailable` locally — exactly how a laptop without a
+local Ollama install already cannot exercise every chat-adjacent script today. Neither is
+wrong; a laptop clone should not be forced to run a GPU container to run the test suite, and
+`tests/test_vectors.py` already proves the code works with nothing live.
+
+### 5. Shared or dedicated service
+
+**Two different questions hid under one word, and they have different answers.** Shared
+*across tenants*: yes, trivially — one embedding instance serves every tenant, the same
+tenant-blind shape the inference plane's chat gateway already has (`GATEWAY_TOKENS` carry no
+tenant). Shared *with the chat container, one process doing both jobs*: **not possible** —
+confirmed live in 5.1, not assumed: `POST /v1/embeddings` against the running chat container
+returns `HTTP 404`, because vLLM serves exactly one `--runner` per process. Dedicated container
+is not a preference here, it is the only shape vLLM offers.
+
+### 6. Model/version configuration and reproducibility
+
+**Mirror the chat model's own discipline exactly — image pinned by digest, model pinned by
+revision — because Step 3's docker-compose.yml comments already record why a moving tag or a
+moving repo ref is a handover document that cannot describe itself.**
+
+- **Image:** `vllm/vllm-openai:v0.28.0@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14`
+  — the SAME image already pinned for chat and already proven against this exact model family
+  during the Step 5.1 comparison. No new image to source or verify.
+- **Revision:** `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3` — fetched live from
+  `huggingface.co/api/models/Qwen/Qwen3-Embedding-0.6B` on 18 September 2026 (`lastModified`
+  2026-04-20), not guessed. The commit the chat model's own `--revision` pins to a specific
+  date the same way; this is that same discipline applied to the second model.
+- **A gap this review found, not one the existing design already closed:** `[roles.embed]`'s
+  schema, if it copies `[roles.chat]`'s shape (`model`, `provider`, `context_tokens`), does
+  **not** capture `revision` or the image digest. `_config_fingerprint()` (`app/vectors.py`)
+  hashes whatever dict `model_for("embed")` returns — it is already correct and needs no code
+  change — but it can only invalidate on a change it can see. A "same model name, quietly
+  bumped revision" swap (exactly the kind of change §8/§9 below need to catch) would not
+  change the fingerprint if `revision` is not a field in it, and embeddings are far more
+  sensitive to exact-weights identity than chat is: a revision bump that is a harmless
+  wording fix for a chat model can shift an embedding model's vector space in a way nothing
+  reports as an error. **Recommendation:** `[roles.embed]` carries `model`, `provider` AND
+  `revision` at minimum from the day it is first filled in — a schema decision, not an
+  implementation one, and the freshness mechanism already handles whatever the schema gives it.
+
+### 7. Resource / VRAM implications
+
+**Real fixed cost, measured in 5.1: ~2.33 GiB** (weights + non-torch overhead + CUDA graph
+memory, the clean breakdown from the isolated 0.3-utilization run, `docs/models.md`). **Free
+headroom on the box today: ~8.4 GiB** (`docs/models.md` § "16384 to 32768", 16 September,
+re-confirmed 18 September). Two sizing choices, both lessons the 5.1 benchmark already paid
+for once:
+
+- **`--max-model-len` sized to real usage, not the model's native ceiling.** Qwen3-Embedding's
+  native context is 32,768 tokens; nothing this system embeds is anywhere near that
+  (`TARGET_TOKENS` + `OVERLAP_TOKENS` in `app/chunks.py` is 576). The 5.1 benchmark crashed
+  once at a low utilization budget specifically because it had not yet capped this — proposed:
+  **1024** (576 with real headroom, matching the same "generous rather than cut to the
+  minimum" reasoning the first working benchmark run used).
+- **`--gpu-memory-utilization`, sized for the batch sizes actually measured, not left wide
+  open.** 5.1's own benchmark showed the 9.9 GiB first reading was mostly an arbitrary KV-cache
+  budget, not a requirement. Batches up to 64 chunks (the sweep 5.1 measured) need nowhere near
+  8.4 GiB of cache. **Proposed starting point: 0.10** (~3.3 GiB of the 32,607 MiB card) —
+  comfortably above the ~2.33 GiB fixed cost with room for concurrent ingest-time and
+  query-time calls, and leaves headroom for Step 6 (speech), which Section 13's original
+  budget sized at ~3.5 GiB. **Re-measure against the real startup log once deployed** — every
+  number on this line is a proposal, not yet a measurement of the actual container, the same
+  distinction `docker-compose.yml`'s own comments draw for every chat-model value on that file.
+
+### 8 & 9. Upgrading the service without silently invalidating embeddings, and how a config
+change reaches the freshness mechanism
+
+**These are one answer, already built in 5.2, not a new 5.4 decision** — restated here because
+the question was asked directly. `EMBEDDINGS.version` (`app/vectors.py`) derives from
+`model_for("embed")`'s current config at process start; changing `[roles.embed]` in
+`models.toml` and restarting the app (the same "takes effect on the next process start, not
+mid-request" rule `app/models.py`'s own docstring already states) is the entire upgrade
+procedure — no manual version bump, no script, no migration. Its correctness depends entirely
+on §6's finding: the config must contain what actually identifies the deployed weights
+(`revision`, not just `model`), or a change that should invalidate everything will not.
+
+### 10. Logging / audit requirements for model and configuration changes
+
+**`CHANGELOG.md` already states the rule this question is asking for**, word for word: "A
+model change is a changelog entry... Swapping the served model, its quantisation or its
+context length changes what the system does, even when no line of code moves." Proposed as the
+standing requirement for `[roles.embed]`, not a one-off for this deployment: every change to
+it — first deployment, a later revision bump, a quantisation change — gets **all four** of
+what the chat model's own history already demonstrates doing: a `CHANGELOG.md` entry under
+Changed; a `docs/models.md` update carrying the real startup-log numbers, not a projection; a
+`docker-compose.yml` comment on the changed line explaining why, in the same density the chat
+service's own flags already carry; and a `HANDOVER.md` entry the day it happens. This is not
+new process — it is the existing one, named explicitly so "embed" is not quietly held to a
+lower bar than "chat" has been since Step 1.
+
+### The exact changes proposed, not yet applied
+
+**`.env.example`**, additive only, documents code already merged:
+
+```
+# --- embeddings (Step 5.1/5.2) ---
+# The OpenAI-compatible endpoint app/embed.py talks to. Mirrors LLM_BASE_URL:
+# a separate variable because vLLM serves one --runner per process, so chat
+# and embed are always two containers even on the same box (confirmed live,
+# docs/models.md -- the chat container answers /v1/embeddings with a 404).
+# Production default (127.0.0.1:8001) needs no override if the embed
+# container is deployed on port 8001, the same way LLM_BASE_URL's default
+# already matches the chat container's port with nothing set here.
+EMBED_BASE_URL=http://127.0.0.1:8001/v1
+# A dev laptop without a local embed container may point this at the shared
+# box instead: http://192.168.1.185:8001/v1 -- the same pattern
+# scripts/bench_gateway.py already uses to reach the chat role off-box.
+EMBED_MODEL=Qwen/Qwen3-Embedding-0.6B
+EMBED_TIMEOUT=60
+```
+
+**`docker-compose.yml`**, a new service, not yet added:
+
+```yaml
+  vllm-embed:
+    image: vllm/vllm-openai:v0.28.0@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "8001:8000"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+    command:
+      - --model
+      - Qwen/Qwen3-Embedding-0.6B
+      - --revision
+      - 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+      - --runner
+      - pooling
+      - --max-model-len
+      - "1024"
+      - --gpu-memory-utilization
+      - "0.10"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+**`models.toml`**, filled per §6's schema finding:
+
+```toml
+[roles.embed]
+model = "Qwen/Qwen3-Embedding-0.6B"
+provider = "vllm"
+revision = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
+```
+
+**Not proposed for change:** `app/vectors.py`, `app/embed.py`, `app/retrieve.py`. The one
+concrete interface gap found (§3, `EmbedError` not distinguishing an unreachable server from a
+refused request) is named but not fixed here, per the instruction to present before applying.
+
+---
+
 ## 4. Step by step
 
 Numbered like Step 4's sub-steps: each is small enough to gate on its own, and the order is
@@ -269,32 +512,72 @@ prerequisite taught the hard way.
   step spends against was already measured (`docs/models.md` § "16384 to 32768", 16 September)
   — it turned out not to depend on the context-length change that prompted this sub-step in the
   first draft of this plan.
-- **5.1 — Benchmark embedding candidates**, the `scripts/bench_models.py` pattern applied to
-  embedding models instead of chat models: VRAM at rest, embedding latency for one chunk and
-  for a batch, and whether vLLM v0.28.0 serves embeddings without a second container. Record
-  candidates and the losing ones' reasons in `docs/models.md`, the same table shape as the
-  chat comparison.
-- **5.2 — `app/vectors.py`: the embeddings producer and the `embeddings` table.** Registered
-  with `depends_on=frozenset({"chunks"})` and a version derived from `[roles.embed]`'s config
-  rather than hand-maintained (§5.4). Each row is keyed by `chunk_id` and carries a hash of the
-  chunk's own text plus the config fingerprint that produced its vector; a chunk is reused only
-  when both still match, everything else is recomputed, and rows for a `chunk_id` no longer in
-  the document are dropped. Three gates, all from §5.4: an unchanged corpus embeds nothing (the
-  producer is never even invoked — the same "nothing failed on the way" property Step 2.4
-  gated `derived/` on, applied to a cache instead of a directory); a `[roles.embed]` swap
-  re-embeds every chunk of every document on the next ingest with nobody bumping anything by
-  hand; an edit near the end of one document re-embeds only the chunks whose text actually
-  changed.
-- **5.3 — The `Vector` retriever**, implementing `retrieve.Retriever` against the table 5.2
-  built: embed the query through the same `embed` role, brute-force cosine similarity, ranks
-  out. Gate: unit tests on a small fixture corpus where the nearest neighbour is known by
-  construction, the same discipline as Step 4's lesson about a test whose fixture never
-  builds the case it names — a similarity test needs two chunks close enough to tell `>` from
-  `>=`, not two chunks that are trivially different.
-- **5.4 — Register it, and watch the "provably does nothing" property survive contact with a
-  real second retriever.** `retrieve.register(Vector())`, then re-run the fusion's existing
+- **5.1 — DONE, 18 September 2026.** `scripts/bench_embeddings.py` (latency/VRAM/dimension,
+  not `bench_models.py` reused — it only speaks Ollama's API, which this box does not run) and
+  `scripts/bench_retrieval_candidates.py` (a throwaway golden-set MRR harness, so the choice
+  is not made on latency alone — imports `check_retrieval.py`'s own metric functions rather
+  than re-deriving them, so the numbers are directly comparable to the 0.768 keyword baseline).
+  Two candidates compared — `Qwen/Qwen3-Embedding-0.6B` and `BAAI/bge-base-en-v1.5` — on
+  latency, VRAM, dimension, licence, and golden-set recall/MRR. **Decided: Qwen3-Embedding-0.6B**
+  (overall MRR ties BGE, but wins decisively on paraphrase queries — the specific failure mode
+  this step exists to fix — while BGE wins on clause queries, recorded as a real limitation
+  rather than hidden). Full reasoning and numbers: `docs/models.md` §§ "Embedding candidates",
+  "Second candidate: BAAI/bge-base-en-v1.5", "Decision: Qwen3-Embedding-0.6B". The running chat
+  container does not serve embeddings either (confirmed live, `HTTP 404`) — `[roles.embed]`
+  needs its own container for 5.2.
+- **5.2 — DONE and SIGNED OFF, 18 September 2026. `app/vectors.py`: the embeddings producer
+  and the `embeddings` table.** Sign-off confirmed by re-running `tests/test_vectors.py` on
+  request against the running code, not by re-deriving the design: **14 passed, 0 failed**,
+  covering every freshness scenario below by name. `depends_on=frozenset({"chunks"})` and a version derived from
+  `[roles.embed]`'s config rather than hand-maintained (§5.4). Each row is keyed by `chunk_id`
+  and carries a hash of the chunk's own text plus the config fingerprint that produced its
+  vector; a chunk is reused only when both still match, everything else is recomputed, and
+  rows for a `chunk_id` no longer in the document are dropped. Storage is a `BLOB` column and
+  Python cosine similarity, not sqlite-vec — §5.2's own named fallback, used from the start
+  because sqlite-vec is not an installed dependency and adding one is a decision for a person,
+  not something to fold into an implementation turn; swapping it in later is a change inside
+  `Vector.search()`, not a redesign. All three gates from §5.4 hold, tested in
+  `tests/test_vectors.py`: an unchanged corpus embeds nothing (the producer is never even
+  invoked); an edit near the end of one document re-embeds only the chunks whose text actually
+  changed (and the test that checks this caught its own bug first — comparing chunk_id
+  membership is not the same claim as comparing text, which is the exact gap the hash exists
+  to close); a `[roles.embed]` config change re-embeds every chunk of every document with
+  nobody bumping a version by hand.
+
+  **A real design bug, caught by the existing suite rather than reasoned out in advance:**
+  `EMBEDDINGS` was first written self-registering at import, mirroring `app/producers.py`'s
+  `TEXT`/`CHUNKS`. Unlike those two, `embeddings` is optional and role-gated, and
+  `ingest.status()`'s `ready` is "every HANDLING producer holding a current row" — so
+  self-registering made every document in the WHOLE SYSTEM permanently not-ready the moment
+  `app/vectors.py` was imported anywhere, `[roles.embed]` being empty. Broke `ready` assertions
+  in `test_chunks.py`, `test_intake.py`, `test_plane_documents.py` and `test_tenant_isolation.py`
+  the moment `tests/test_vectors.py` imported the module in the same pytest session — thirteen
+  failures across four files nothing about this step should have touched. Fixed: `EMBEDDINGS`
+  is constructed but not registered by `app/vectors.py` itself; registration is the caller's
+  decision (`ingest.register(vectors.EMBEDDINGS)`), the same way 5.4 below was already going to
+  be a deliberate separate step for the retriever. Full suite: 666 passed, 1 skipped.
+
+- **5.3 — DONE, 18 September 2026. The `Vector` retriever**, implementing `retrieve.Retriever`
+  against the table 5.2 built: embed the query through the same `embed` role, brute-force
+  cosine similarity, ranks out — no score leaked, the same discipline `app/passages.py`'s
+  `Keyword` already holds to. NOT self-registered at import, matching the same reasoning 5.2's
+  fix above landed on: `retrieve.register(VECTOR)` is 5.4's job, not a module import's side
+  effect. Gated with hand-picked vectors where the nearest neighbour is known by construction
+  (two candidates close to the query AND to each other, not trivially different — the exact
+  discipline this sub-step's own text already named) rather than the hash-derived fake vectors
+  the producer tests use, since those give no control over which one should rank first.
+- **5.4 — PROPOSED, 18 September 2026; not applied.** Register it, and watch the "provably
+  does nothing" property survive contact with a real second retriever: `retrieve.register(
+  vectors.VECTOR)` and `ingest.register(vectors.EMBEDDINGS)` (5.2's fix made this the
+  producer's registration too, not automatic at import), then re-run the fusion's existing
   single-retriever test — it must still pass, because it is asserting a property of `fuse()`
-  itself, not of how many retrievers happen to be registered when it runs.
+  itself, not of how many retrievers happen to be registered when it runs. Blocked on a real
+  embedding container existing first — full deployment architecture (where it runs, endpoint
+  config, availability detection, dev/prod, shared-vs-dedicated, model pinning, VRAM sizing,
+  upgrade safety, audit requirements) reviewed and proposed in § "3a. Deployment architecture
+  for `[roles.embed]`" above, including the exact `docker-compose.yml`, `models.toml` and
+  `.env.example` changes. **Awaiting sign-off before `docker-compose.yml` or `models.toml` are
+  touched** — `.env.example` alone was updated, since it only documents code already merged.
 - **5.5 — Run `check_retrieval.py` against the golden set with both retrievers live**, and
   record the result in `docs/models.md` and this plan, honestly, per section 3.5's three
   outcomes. This is the step's actual gate; 5.0 through 5.4 are what make it possible to run.

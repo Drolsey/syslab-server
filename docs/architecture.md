@@ -77,10 +77,15 @@ parse.py        -> ingest           suffix -> backend table, Docling behind it
 producers.py    -> chunks, ingest, parse       text and chunks: what gets derived
 search.py       -> config, ingest, producers   FTS5 over whole DOCUMENTS
 passages.py     -> config, ingest, producers, retrieve, search    FTS5 over PASSAGES
+embed.py        -> config            one POST to the embedding server, app/llm.py's shape
+vectors.py      -> embed, ingest, models, producers, retrieve, search   embeddings + Vector, Step 5.2/5.3
 intake.py       -> ingest, jobs, passages, search    what happens to a new file, in one place
 agent.py        -> config, db, jobs, llm, search, tools
 main.py         -> everything       FastAPI, the auth dependency, the three planes
 ```
+
+`vectors.py` is built and tested (`tests/test_vectors.py`) but nothing above imports it yet —
+see "No vector search" under Today's limitations, and the registration rule below.
 
 `context.py` imports nothing because `config` imports it and `tenancy` imports `config`, so
 it has to sit at the bottom. Three edges are function-local imports rather than module-level
@@ -100,7 +105,27 @@ consumers each running the pipeline for themselves is that same drift, arriving 
 is how one customer's request quietly reads another customer's files. The same idea shows up
 everywhere: an unset value is an error, never a fallback.
 
-Storage follows from it:
+**A second rule, learned the hard way at Step 5.2: a producer self-registers at import only
+if it is foundational. An optional, role-gated producer registers when a caller decides to
+turn it on, never as a side effect of importing the module.** `app/producers.py`'s `TEXT` and
+`CHUNKS` self-register (`ingest.register(...)` at module level) because every document needs
+them and "unavailable" for either is a genuine environment fault that should hold a document
+back from `ready`. `app/vectors.py`'s `EMBEDDINGS` was first written the same way, and it was
+wrong: `ingest.status()`'s `ready` means "every producer that HANDLES this file type has a
+current row," so self-registering made every document in the whole system permanently
+not-ready the moment `[roles.embed]` was empty — which is `models.toml`'s state today, and is
+expected to stay that way for a real stretch. The bug surfaced as thirteen failing tests
+across four files that have nothing to do with Step 5, the moment a Step 5 test file imported
+the module in the same process. The fix, and the rule to keep: `EMBEDDINGS` (and
+`retrieve.py`'s `Vector` retriever, by the same reasoning) is constructed but not registered
+by its own module. Registration — `ingest.register(...)`, `retrieve.register(...)` — is the
+explicit decision of whatever code turns the capability on for a deployment, so importing an
+optional module for any reason (a test, a script, a future producer that merely reads
+`vectors.py` for its schema) can never silently change what `ready` means for every document
+that has nothing to do with it. See `docs/plans/step-05-embeddings.md`'s 5.2 and
+`HANDOVER.md`'s 18 September entry for the full incident.
+
+Storage follows from the first rule:
 
 ```
 data/<tenant>/                 customer documents          DATA_ROOT
@@ -143,13 +168,18 @@ These are real and they shape the plan. None is a bug.
 
 - **No streaming.** `llm.py` hardcodes `"stream": False`. `/api/chat` blocks for the whole
   tool loop and returns one JSON body.
-- **No vector search.** `search.py` and `passages.py` are FTS5 keyword matching only. This
-  was a deliberate choice, not an oversight: the `Retriever` seam in `retrieve.py` is the
-  place a vector retriever registers, and Step 5 is where it does. **A paraphrase of words
-  the document does not use will not be found today** — measured, not assumed:
-  `tests/fixtures/corpus/baseline.json` puts paraphrase queries at Recall@1 of 0.056.
-  The fusion that will combine the two exists and, with one retriever registered, **provably
-  does nothing** — `scripts/check_retrieval.py` asserts it returns the one list unchanged.
+- **No vector search running today, though the code exists.** `search.py` and `passages.py`
+  are still the only registered retrievers — FTS5 keyword matching only. `app/vectors.py`'s
+  `Vector` retriever and `EMBEDDINGS` producer are built and tested (Step 5.2/5.3, 18
+  September) but deliberately not registered into the running app: `[roles.embed]` is empty
+  in `models.toml`, and standing up a real embedding container is a production infrastructure
+  decision still pending (Step 5.4). **A paraphrase of words the document does not use will
+  not be found today** — measured, not assumed: `tests/fixtures/corpus/baseline.json` puts
+  paraphrase queries at Recall@1 of 0.056. The fusion that will combine the two exists and,
+  with one retriever registered, **provably does nothing** — `scripts/check_retrieval.py`
+  asserts it returns the one list unchanged; the day `Vector` is registered, that assertion is
+  expected to start failing, which is how 5.4 will know the second retriever is actually
+  reachable.
 - **The two indexes do not cover the same formats.** `search.SEARCHABLE` is three suffixes;
   the chunk index covers everything that produces chunks, which is all ten formats in
   `parse.py`'s table. So a `.docx` has passages and is not in the document index. Named in

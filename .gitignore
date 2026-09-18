@@ -16,6 +16,7 @@ derived/
 
 # benchmark output
 bench_results*.json
+scripts/.golden_chunk_cache.json
 
 # tenants, tokens and credentials: per-install, never committed
 control/*

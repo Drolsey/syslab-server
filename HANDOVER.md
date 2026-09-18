@@ -1011,6 +1011,137 @@ the short version:
    5.2's implementation, which is the point of writing decisions down before
    coding them.
 
+   **Update, 18 September, later the same day: 5.1 done, the embedding model is
+   chosen.** `Qwen/Qwen3-Embedding-0.6B` against `BAAI/bge-base-en-v1.5`, on
+   latency, VRAM, dimension, licence, and — not deferred to §5.5, run now
+   specifically so latency alone would not decide it — golden-set MRR/recall
+   through a new throwaway harness, `scripts/bench_retrieval_candidates.py`,
+   importing `check_retrieval.py`'s own metric functions so the numbers are
+   comparable to the 0.768 keyword baseline rather than merely similar-looking.
+
+   Overall MRR is a tie (0.654 Qwen, 0.657 BGE) and hides two real,
+   opposite-direction differences: BGE wins clearly on clause queries, Qwen
+   wins clearly on paraphrase queries — and paraphrase is the specific
+   failure mode this whole step exists to fix. **Decided: Qwen3-Embedding-0.6B**,
+   with BGE's clause-query strength recorded as a real limitation rather than
+   hidden by the overall tie. Full numbers and reasoning: `docs/models.md`.
+
+   Three mistakes happened and were caught before they reached the record,
+   worth keeping as a class: guessed `--task embed` doesn't exist in this
+   vLLM version (it's `--runner pooling`) and the wrong-flag container
+   crashed and self-removed via `--rm` before its logs could be read — fixed
+   by dropping `--rm` on every candidate since. A VRAM reading taken while
+   running a benchmark ON THIS LAPTOP read the laptop's own GPU, not the
+   box's — a mistake so obvious in hindsight it is worth naming so the next
+   session doesn't make it running from a different machine than expected.
+   And a VRAM reading taken WHILE A SECOND CANDIDATE WAS ALSO RUNNING
+   attributed both candidates' memory to one of them; fixed with
+   `nvidia-smi --query-compute-apps`, per-process and immune to what else
+   shares the card. None of the three changed the eventual decision, but a
+   VRAM number this project has now gotten wrong three different ways in one
+   day is worth an explicit note for whoever benchmarks the next role.
+
+   **Update, 18 September, still later the same day: 5.2 and 5.3 built and
+   tested — the embeddings producer, its table, and the Vector retriever.**
+   `app/embed.py` (a thin `/v1/embeddings` client, mirroring `app/llm.py`)
+   and `app/vectors.py`, against the freshness design from earlier today:
+   `depends_on={"chunks"}` decides whether to look at a document at all, a
+   per-chunk content hash decides which of its chunks actually need a new
+   vector, and `EMBEDDINGS.version` derived from `[roles.embed]`'s config
+   (not hand-maintained) is what makes a model swap invalidate everything
+   automatically. `tests/test_vectors.py`, 12 new tests, all passing, full
+   suite 666 passed / 1 skipped.
+
+   Storage is a `BLOB` column and Python cosine similarity, not sqlite-vec —
+   the plan's own named fallback, used from the start rather than the
+   provisional choice, because sqlite-vec is not an installed dependency and
+   adding one is a decision for a person to make deliberately, not something
+   to fold into an implementation turn. Swapping it in later is a change
+   inside one function, not a redesign.
+
+   **A real design bug, and the suite caught it rather than review catching
+   it first.** `EMBEDDINGS` was first written to self-register at import,
+   the same way `app/producers.py`'s `TEXT` and `CHUNKS` do. Those two are
+   foundational and "unavailable" for either is a genuine fault that should
+   hold a document back from ready; `embeddings` is optional and expected to
+   stay unfilled for a real stretch (`[roles.embed]` is empty in this
+   checkout right now), and self-registering made EVERY document in the
+   whole system permanently not-ready the moment `app/vectors.py` was
+   imported anywhere — thirteen test failures across four unrelated files
+   the instant `tests/test_vectors.py` imported it in the same pytest
+   session. Fixed: registration is now the caller's explicit decision, not
+   an import side effect, matching the separation the plan already had for
+   the retriever (`retrieve.register(VECTOR)` is 5.4, deliberately not part
+   of building it in 5.3).
+
+   Neither the producer nor the retriever is wired into the running app.
+   `[roles.embed]` also stays empty in `models.toml` — filling it would
+   document a deployment that does not exist yet, and standing one up is a
+   `docker-compose.yml` change on the shared box, a production
+   infrastructure decision this session did not make unprompted. 5.4
+   onward waits on that.
+
+   **Update, 18 September, still later: 5.4's deployment architecture
+   reviewed and proposed, not applied.** Ten questions asked directly —
+   where the service runs, endpoint config, availability detection,
+   dev/prod, shared-vs-dedicated, model pinning, VRAM sizing, upgrade
+   safety, and audit requirements — each answered in
+   `docs/plans/step-05-embeddings.md` § "3a", with the exact
+   `docker-compose.yml` service block, `models.toml` entry and
+   `.env.example` addition drafted for review. Findings worth keeping:
+
+   - vLLM's own `EmbedError` does not distinguish "the server is
+     unreachable" from "the server rejected this request" — a real
+     container outage would currently record one `FAILED` row per document
+     ingested during it, rather than the single clean `ProducerUnavailable`
+     report a missing parser library already gets. Named, not fixed — the
+     instruction was to present interface problems before applying them.
+   - `[roles.embed]`'s schema needs a `revision` field, not just `model` and
+     `provider`, or the self-deriving producer version built in 5.2 cannot
+     see a same-name weights swap and would silently keep serving old
+     embeddings against new weights. The mechanism already built handles
+     whatever the config contains; the config was the gap.
+   - The model's real HuggingFace revision was fetched live (`97b0c614be4d
+     77ee51c0cef4e5f07c00f9eb65b3`, 18 September 2026) rather than left
+     unpinned, matching the chat model's own `--revision` discipline.
+
+   `.env.example` was updated (documents code already merged, not a
+   production change). `docker-compose.yml` and `models.toml` were not —
+   both await sign-off.
+
+   **Update, 18 September, final: the 5.4 architecture approved, applied,
+   and 5.2 signed off.** `EmbedError`/`EmbedUnavailable` split implemented
+   in `app/embed.py` before wiring anything permanent (an unreachable
+   server now becomes one `ProducerUnavailable` report, not one `FAILED`
+   row per document ingested during the outage — `tests/test_embed.py`, 9
+   tests) and `app/vectors.py`'s producer updated to use it
+   (`tests/test_vectors.py`, 2 more). `models.toml`'s `[roles.embed]` filled
+   (`model`, `provider`, `revision` — the `revision` field was §6 of the
+   deployment review's own finding, not optional: without it a same-name
+   weights swap is invisible to the freshness mechanism). `docker-compose.yml`
+   gained `vllm-embed`, the same image as chat, port 8001, `--runner
+   pooling --max-model-len 1024 --gpu-memory-utilization 0.10` — the last
+   two explicitly a starting point, not a measured requirement, pending the
+   real startup log once deployed. Full suite: **677 passed, 1 skipped.**
+
+   **5.2's freshness design signed off the same day**, on request, by
+   re-running `tests/test_vectors.py` against the actual running code
+   rather than re-deriving the design from scratch: **14 passed, 0
+   failed** — per-chunk content-hash reuse, embed-config-change
+   invalidation, the derived `EMBEDDINGS.version`, stale-row cleanup on a
+   shrinking document, and the unchanged-document no-op all verified live,
+   not asserted. Nothing about the design changed from the version written
+   up in § "5.4 What triggers re-embedding" the same day it was first
+   caught wrong.
+
+   Not yet done: `docker-compose.yml`/`models.toml` are staged locally,
+   not yet on the box, and neither `retrieve.register(vectors.VECTOR)` nor
+   `ingest.register(vectors.EMBEDDINGS)` has been called anywhere the
+   running app would see it. The next real milestone is deploying
+   `vllm-embed`, reading its startup log for the real numbers `docs/models.md`
+   is still owed, and the end-to-end smoke test: document → chunk →
+   embedding → stored vector → `Vector.search()`.
+
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
 10 September. `docs/plans/step-04-retrieval-plane.md`, to the standard of 0-3:

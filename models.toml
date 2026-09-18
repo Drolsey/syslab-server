@@ -11,7 +11,19 @@ model = "Qwen/Qwen3-14B-AWQ"
 provider = "vllm"
 context_tokens = 32768
 
+# Step 5.4, 18 September 2026. app/vectors.py's EMBEDDINGS producer version
+# is DERIVED from this whole table (a hash of it, sorted -- app/vectors.py's
+# _embed_producer_version()), so any field changing here re-embeds every
+# document automatically on the next process start. `revision` is here
+# specifically because `model` alone is not enough for embeddings the way it
+# is for chat: a same-name weights swap must invalidate stored vectors, and
+# nothing else in this table would catch it -- see
+# docs/plans/step-05-embeddings.md's deployment architecture review, § 6.
 [roles.embed]
+model = "Qwen/Qwen3-Embedding-0.6B"
+provider = "vllm"
+revision = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
+
 [roles.vision]
 [roles.stt]
 [roles.tts]
