@@ -425,6 +425,8 @@ def main() -> int:
     if vector_summary is not None:
         table("Vector: chunk-level cosine similarity via the Vector retriever, app/vectors.py",
               vector_summary)
+        table(f"Fused: RRF over {', '.join(run['registered_retrievers'])}, app/retrieve.py",
+              fused_summary)
     elif run["vector_available"]:
         print("\n  Vector: [roles.embed] is filled and the server answered, but no "
               "vector results were produced -- investigate.")
