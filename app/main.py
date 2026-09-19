@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,8 +24,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from app import (
-    agent, config, context, gateway, ingest, intake, jobs, plane, search, tenancy,
-    tools,
+    agent, config, context, gateway, ingest, intake, jobs, models, plane, retrieve,
+    search, tenancy, tools, vectors,
 )
 from app.config import (
     APP_HOST,
@@ -74,6 +76,58 @@ app.include_router(plane.router)
 # itself at boot from one someone started by hand afterwards.
 STARTED_AT = time.time()
 CODE_FINGERPRINT = code_fingerprint()
+
+# Step 5.4: the embeddings producer and Vector retriever are additive and
+# role-gated -- unlike app/producers.py's TEXT/CHUNKS and app/passages.py's
+# Keyword, which self-register at import because they are foundational.
+# app/vectors.py deliberately does NOT self-register EMBEDDINGS/VECTOR (see
+# its own docstring: importing it once made every document in the system
+# report not-ready the moment [roles.embed] was empty, caught by the existing
+# suite). Registration is therefore this entrypoint's explicit decision, made
+# once at process start, exactly like STARTED_AT/CODE_FINGERPRINT above --
+# not a side effect of merely importing app.vectors, which every test in
+# tests/test_vectors.py still does without turning Step 5 on for the rest of
+# the suite.
+#
+# CHECKING [roles.embed] ALONE IS NOT ENOUGH, though it looks like it should
+# be. models.toml is one file shared by every checkout -- production, a dev
+# laptop, CI -- so once a real deployment fills in [roles.embed] (Step 5.4,
+# 18 September), every OTHER checkout inherits "the role is filled" too, with
+# no server actually listening. Since EMBEDDINGS.handles equals CHUNKS.handles,
+# registering it makes ingest.status()'s `ready` (every handling producer
+# holding a current row, app/ingest.py) depend on embeddings succeeding for
+# every chunked document -- so on a machine with no embed server this
+# reproduces the exact "every document reports not-ready" bug d417bd3 already
+# fixed once, just through config presence instead of an empty role. Caught
+# live: tests/test_intake.py failed the moment registration was gated on
+# model_for() alone, on this machine, with the real production models.toml.
+#
+# A live probe is the one thing models.toml's declaration cannot tell you
+# (see app/config.py's own note: EMBED_BASE_URL "existing is not the same
+# claim as a container answering at this URL") and the one thing that tells
+# a production deployment and an unrelated checkout apart. Failing the probe
+# skips registration -- falling back to keyword-only, Step 5's own documented
+# rollback ("nothing in Steps 0-4 reads anything this step writes") -- rather
+# than a new failure mode. Short timeout so a slow-to-start or momentarily
+# restarting embed container does not hold up app startup; if it is not
+# ready in time, the next process restart (already how a models.toml edit
+# takes effect) is what picks Step 5 back up.
+def _embed_reachable() -> bool:
+    try:
+        urllib.request.urlopen(f"{config.EMBED_BASE_URL}/models", timeout=3)
+        return True
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+try:
+    models.model_for("embed")
+except models.RoleUnavailable:
+    pass
+else:
+    if _embed_reachable():
+        ingest.register(vectors.EMBEDDINGS)
+        retrieve.register(vectors.VECTOR)
 
 
 # --------------------------------------------------------------------------
