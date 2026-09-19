@@ -279,6 +279,19 @@ def measure(root: Path, golden: dict, manifest: dict) -> dict:
                 fused, fused_ids, fused_by, fused_documents = None, [], [], []
                 ferror = f"{type(exc).__name__}: {exc}"
 
+            # The 4.5 property, asserted on fuse() ITSELF: one list in, that
+            # list back out, in that order. Done on the keyword hits directly
+            # rather than through retrieve.search(), because search() fuses
+            # whatever is registered -- and once a second retriever is
+            # registered it can no longer be asked to return one list
+            # unchanged. The property belongs to fuse(), so that is what is
+            # called.
+            try:
+                solo = retrieve.fuse({"keyword": hits}, limit=PASSAGE_DEPTH)
+                single_list_ok = [f.chunk_id for f in solo] == [h.chunk_id for h in hits]
+            except Exception:  # noqa: BLE001
+                single_list_ok = False
+
             fused_results.append({
                 "id": query["id"],
                 "kind": query["kind"],
@@ -288,6 +301,7 @@ def measure(root: Path, golden: dict, manifest: dict) -> dict:
                 "failed": fused["failed"] if fused else {},
                 "found_by": fused_by,
                 "same_order_as_the_retriever": fused_ids == [h.chunk_id for h in hits],
+                "single_list_same_order": single_list_ok,
                 "error": ferror,
                 "recall": {str(k): recall_at_k(fused_documents, relevant, k) for k in KS},
                 "rr": reciprocal_rank(fused_documents, relevant),
@@ -473,70 +487,119 @@ def main() -> int:
     # ----------------------------------------------------------------------
     # Step 4.5's gate, and it is a gate that asserts NOTHING HAPPENED.
     # ----------------------------------------------------------------------
-    print("\nFusion: RRF over one ranked list, app/retrieve.py")
+    registered = run["registered_retrievers"]
+    multi = len(registered) > 1
+    print(f"\nFusion: RRF over {', '.join(registered) or 'no retrievers'}, app/retrieve.py")
     print(LINE)
     fusion_ok = True
 
-    reordered = [r for r in run["fused_queries"] if not r["same_order_as_the_retriever"]]
+    n_queries = len(run["fused_queries"])
     ferrored = [r for r in run["fused_queries"] if r["error"]]
-    print(f"  Registered retrievers: {', '.join(run['registered_retrievers']) or 'none'}")
-    print("  Fusion of a single ranked list is that list in that order, and it is")
-    print(f"  asserted on the chunk_ids position by position -- {len(run['fused_queries'])} "
-          f"queries at a depth of")
-    print(f"  {PASSAGE_DEPTH}, so roughly {len(run['fused_queries']) * PASSAGE_DEPTH:,} "
-          f"positions that have to agree exactly. Equal MRR")
-    print("  is a far weaker claim: a fusion that swapped two passages of the same")
-    print("  contract would score identically and be just as broken.")
-    print()
+    print(f"  Registered retrievers: {', '.join(registered) or 'none'}")
+
+    # -- Property 1 (Step 4.5): fusing ONE list returns it unchanged. -------
+    # A property of fuse() itself, so it is checked on fuse() directly and
+    # holds however many retrievers happen to be registered.
+    solo_bad = [r for r in run["fused_queries"] if not r["single_list_same_order"]]
+    print("  Fusing a single ranked list must give that list back in that order,")
+    print(f"  asserted on chunk_ids position by position: {n_queries} queries at a")
+    print(f"  depth of {PASSAGE_DEPTH}, roughly {n_queries * PASSAGE_DEPTH:,} positions.")
+    if solo_bad:
+        fusion_ok = False
+        print(f"  FAIL  fuse() REORDERED a single list on {len(solo_bad)} of {n_queries} "
+              f"queries: {', '.join(r['id'] for r in solo_bad[:6])}")
+        print("        An RRF that moves a single list is broken.")
+    else:
+        print(f"  PASS  fuse() returned a single list unchanged, all {n_queries} queries")
 
     if ferrored:
         fusion_ok = False
-        print(f"  FAIL  {len(ferrored)} of {len(run['fused_queries'])} queries raised "
-              f"inside the fusion:")
+        print(f"  FAIL  {len(ferrored)} of {n_queries} queries raised inside the fusion:")
         for row in ferrored[:3]:
             print(f"          {row['id']}: {row['error']}")
-    elif reordered:
-        fusion_ok = False
-        print(f"  FAIL  the fusion REORDERED {len(reordered)} of "
-              f"{len(run['fused_queries'])} queries: "
-              f"{', '.join(r['id'] for r in reordered[:6])}")
-        print("        An RRF that moves a single list is broken, and this is the only")
-        print("        moment it is cheap to notice -- once a second retriever is")
-        print("        registered there is nothing left to compare it against.")
-    else:
-        print(f"  PASS  all {len(run['fused_queries'])} queries came back in exactly the "
-              f"order the retriever gave")
-
-    # The metrics have to agree too, and they are checked separately from the
-    # order because they are a different claim: the order being identical is
-    # about the fusion, and the metrics being identical is about the measurement
-    # having actually gone through the fusion rather than around it.
-    metric_drift = [
-        metric for metric in ["mrr"] + [f"recall@{k}" for k in KS]
-        if abs(fused_summary["overall"][metric] - passage_summary["overall"][metric]) > 1e-12
-    ]
-    if metric_drift:
-        fusion_ok = False
-        print(f"  FAIL  the fused metrics differ from the retriever's: "
-              f"{', '.join(metric_drift)}")
-    else:
-        print(f"  PASS  every metric is identical to the retriever's, MRR "
-              f"{fused_summary['overall']['mrr']:.3f}")
 
     credited = sorted({r for row in run["fused_queries"] for r in row["found_by"]})
-    if credited == run["registered_retrievers"]:
+    if credited == registered:
         print(f"  PASS  found_by credits exactly the retrievers that ran: "
               f"{', '.join(credited)}")
     else:
         fusion_ok = False
         print(f"  FAIL  found_by says {credited or 'nothing'} and the retrievers that "
-              f"ran were {run['registered_retrievers']}")
+              f"ran were {registered}")
 
-    print("\n  This section is expected to stay a PASS and stop being interesting.")
-    print("  It becomes interesting again in Step 5: the day a second retriever is")
-    print("  registered, the ORDER assertion above must start FAILING, because a")
-    print("  fusion of two lists that still returns the first one unchanged means")
-    print("  the second one is not reaching it.")
+    reordered = [r for r in run["fused_queries"] if not r["same_order_as_the_retriever"]]
+    if multi:
+        # -- Property 2 (Step 5): a second retriever must be REACHING the
+        # fusion. If the fused order still equals the keyword order on every
+        # query, the vector list is being ignored.
+        if reordered:
+            print(f"  PASS  the second retriever reaches the fusion: the fused order "
+                  f"differs from keyword's on {len(reordered)} of {n_queries} queries")
+        else:
+            fusion_ok = False
+            print("  FAIL  the fused order equals the keyword order on every query, so "
+                  "the vector list is not reaching the fusion")
+
+        # -- Step 5's gate, as written in docs/plans/step-05-embeddings.md
+        # section 3.5: the fused row beats the passages-only row, and
+        # specifically on paraphrase, which is what this step is for.
+        fo, po = fused_summary["overall"], passage_summary["overall"]
+        fp, pp = fused_summary.get("paraphrase"), passage_summary.get("paraphrase")
+        print()
+        print("  Step 5 gate: fused vs passages-only (the Step 4.4 row)")
+        if fo["mrr"] > po["mrr"]:
+            print(f"  PASS  overall MRR improved: {po['mrr']:.3f} -> {fo['mrr']:.3f} "
+                  f"({fo['mrr'] - po['mrr']:+.3f})")
+        else:
+            fusion_ok = False
+            print(f"  FAIL  overall MRR did not improve: {po['mrr']:.3f} -> {fo['mrr']:.3f}")
+        if fp and pp:
+            if fp["mrr"] > pp["mrr"]:
+                print(f"  PASS  paraphrase MRR improved: {pp['mrr']:.3f} -> {fp['mrr']:.3f} "
+                      f"({fp['mrr'] - pp['mrr']:+.3f}, on {fp['queries']} queries)")
+            else:
+                fusion_ok = False
+                print(f"  FAIL  paraphrase MRR did not improve: "
+                      f"{pp['mrr']:.3f} -> {fp['mrr']:.3f}")
+
+        # Not gated, because the plan does not gate on them -- but a win that
+        # is bought with a loss elsewhere has to be printed next to the win.
+        print("  Where fused is WORSE than passages-only (reported, not gated):")
+        worse = []
+        for label in [k for k in fused_summary if k in passage_summary]:
+            for metric in ["mrr"] + [f"recall@{k}" for k in KS]:
+                delta = fused_summary[label][metric] - passage_summary[label][metric]
+                if delta < -5e-4:
+                    worse.append((label, metric, passage_summary[label][metric],
+                                  fused_summary[label][metric], delta))
+        if worse:
+            for label, metric, before, after, delta in worse:
+                print(f"    {label:11s}{metric:11s}{before:>7.3f} -> {after:>6.3f}   {delta:+.3f}")
+        else:
+            print("    none")
+    else:
+        # -- One retriever registered: the original 4.5 assertions. ---------
+        if reordered:
+            fusion_ok = False
+            print(f"  FAIL  the fusion REORDERED {len(reordered)} of {n_queries} queries "
+                  f"with one retriever: {', '.join(r['id'] for r in reordered[:6])}")
+        else:
+            print(f"  PASS  all {n_queries} queries came back in exactly the order the "
+                  f"retriever gave")
+
+        metric_drift = [
+            metric for metric in ["mrr"] + [f"recall@{k}" for k in KS]
+            if abs(fused_summary["overall"][metric] - passage_summary["overall"][metric]) > 1e-12
+        ]
+        if metric_drift:
+            fusion_ok = False
+            print(f"  FAIL  the fused metrics differ from the retriever's: "
+                  f"{', '.join(metric_drift)}")
+        else:
+            print(f"  PASS  every metric is identical to the retriever's, MRR "
+                  f"{fused_summary['overall']['mrr']:.3f}")
+        print("\n  Only one retriever ran, so Step 5 (a second retriever in the fusion)")
+        print("  was NOT measured here. Bring up the embed server to measure it.")
 
     print(f"\nThe aggregate questions, which retrieval cannot answer")
     print(LINE)
@@ -633,7 +696,11 @@ def main() -> int:
                 if abs(fused_summary["overall"][metric] - recorded[metric]) > 5e-4
             ]
             print()
-            if moved:
+            if moved and multi:
+                print(f"  INFO  the fused numbers differ from the committed 4.4 passage "
+                      f"row ({', '.join(moved)}), as they should with a second "
+                      f"retriever. The Step 5 gate above is what judges that.")
+            elif moved:
                 fusion_ok = False
                 print(f"  FAIL  the fused numbers moved against the committed 4.4 "
                       f"passage row: {', '.join(moved)}.")

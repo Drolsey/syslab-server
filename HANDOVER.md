@@ -1215,6 +1215,32 @@ the short version:
    for the reason the design predicted, with the two defects live testing
    found fixed and re-verified rather than deferred.
 
+   **Correction, 19 September (same day, on re-running the gate by hand): the
+   verdict above overstated it.** The numbers reproduce exactly, but three
+   things were not stated plainly:
+   - `scripts/check_retrieval.py` printed **FAIL** and returned exit code 1
+     with the vector retriever registered. Its Step 4.5 assertions ("fusing
+     one list changes nothing", "fused numbers equal the 4.4 passage row")
+     cannot hold once a second retriever is in, and the script had no branch
+     for that case. This entry called the FAIL "expected" while the script
+     still reported it as a failed gate. The plan (section 3.5) also says the
+     single-retriever assertion must "still pass unmodified", which it did
+     not as run.
+   - The gain is modest. Overall MRR 0.768 -> 0.779 (+0.011); the real win is
+     paraphrase, 0.430 -> 0.616, on **8 queries**.
+   - Fused is **worse** than passages-only on recall@10 (0.871 -> 0.807),
+     recall@1 (0.653 -> 0.611), clause recall@10 (1.000 -> 0.857), and on
+     exact (0.960 -> 0.938) and clause (0.686 -> 0.646) MRR. The recall@1 and
+     recall@10 drops were not recorded anywhere above.
+
+   Fixed in `scripts/check_retrieval.py`: the single-list property is now
+   asserted on `retrieve.fuse()` directly (holds however many retrievers are
+   registered); with two retrievers it instead asserts the second reaches the
+   fusion and applies the plan's actual gate (overall and paraphrase MRR
+   improve over passages-only), and prints every metric where fused is worse,
+   unscored. Read the verdict as: **Step 5 gate met on MRR, with a recall@10
+   regression that has not been investigated.**
+
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
 10 September. `docs/plans/step-04-retrieval-plane.md`, to the standard of 0-3:
