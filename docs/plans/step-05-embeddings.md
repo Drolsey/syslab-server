@@ -1,18 +1,24 @@
 # Step 5: Embeddings, and Turning On the Fusion That Provably Does Nothing
 
-Status: **PLANNED. Drafted 16 September 2026.** 5.0-5.3 are DONE (18 September): the model is
-chosen, the producer and retriever are built and tested. **5.2's freshness design is SIGNED
-OFF, 18 September** — reviewed against the running code (not re-derived), confirmed by
-re-running `tests/test_vectors.py` on demand: **14 passed, 0 failed**, covering per-chunk
-content changes, embed-config changes, the derived `EMBEDDINGS.version`, stale-row removal,
-and the unchanged-document no-op. 5.4's deployment architecture (§ "3a") was reviewed and
-**approved** the same day; `models.toml` and `docker-compose.yml` are applied, plus the
-`EmbedError`/`EmbedUnavailable` distinction the review's own §3 found and fixed before
-deployment (`tests/test_embed.py`, 9 more tests). Full suite: **677 passed, 1 skipped.**
-Neither the producer nor the retriever is registered into the running app yet — that is 5.4's
-remaining `retrieve.register`/`ingest.register` step, blocked on the embed container actually
-being deployed on the box. Written to the standard of Steps 0-4: decisions named with what
-loses, sub-steps each with its own gate, risks, rollback.
+Status: **DEPLOYED AND VERIFIED, 19 September 2026.** Drafted 16 September; 5.0-5.3 done 18
+September (model chosen, producer and retriever built and tested, freshness design signed off
+against the running code: `tests/test_vectors.py`, 14 passed). 5.4's deployment architecture
+reviewed and approved the same day, `models.toml`/`docker-compose.yml` applied.
+
+**19 September: `vllm-embed` deployed to the box, registration wired into `app/main.py`, real
+ingestion run, and the retrieval benchmark measured live** — see `HANDOVER.md`'s 19 September
+entry for the full record and `docs/models.md`'s "Embedding service, deployed and measured"
+section for every number. Headline: fused RRF beats the Step 4 keyword baseline, **overall MRR
+0.768 -> 0.779**, driven by paraphrase (**0.430 -> 0.616**), with small regressions on exact and
+clause that keyword already handled well. Two real defects surfaced by live testing and fixed
+before this status was written, not swept into a follow-up: gating registration on
+`models.model_for("embed")` alone reproduced the exact "every document not-ready" bug this
+section's own incident already fixed once, because `models.toml` is shared by every checkout —
+fixed with a live reachability probe alongside the role check; and `EMBEDDINGS` had no sweep for
+a source file that leaves entirely (unlike `passages.py`'s own `forget_missing()`), leaving
+orphaned vector rows behind — fixed with `vectors.forget_missing()`, the direct counterpart.
+Full suite: **677 passed, 1 skipped**, unchanged by both fixes. Written to the standard of
+Steps 0-4: decisions named with what loses, sub-steps each with its own gate, risks, rollback.
 
 **This step has one job stated in Step 4's own plan**: `retrieve.fuse()` is Reciprocal Rank
 Fusion over a registry that holds exactly one retriever, and fusing a single ranked list is

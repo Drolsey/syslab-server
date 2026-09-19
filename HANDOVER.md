@@ -1134,13 +1134,86 @@ the short version:
    up in § "5.4 What triggers re-embedding" the same day it was first
    caught wrong.
 
-   Not yet done: `docker-compose.yml`/`models.toml` are staged locally,
-   not yet on the box, and neither `retrieve.register(vectors.VECTOR)` nor
-   `ingest.register(vectors.EMBEDDINGS)` has been called anywhere the
-   running app would see it. The next real milestone is deploying
-   `vllm-embed`, reading its startup log for the real numbers `docs/models.md`
-   is still owed, and the end-to-end smoke test: document → chunk →
-   embedding → stored vector → `Vector.search()`.
+   **19 September, deployed end to end.** Live-state inspection first
+   (Section 3-4 discipline, not skipped): the box's repo matched `origin/master`
+   with no drift, but two things did NOT match what the repo assumed. Two
+   leftover benchmark containers from the 5.1 candidate comparison
+   (`bench-embed-candidate`, `bench-embed-candidate-bge`, never torn down,
+   19+ hours old) were squatting on port 8001 and ~5 GiB of VRAM — removed,
+   touching nothing else running (chat `vllm`, `database-agent`, `postgres`,
+   `minio`, `cloudflared` all left alone). And the box's venv was completely
+   missing `docling-slim`/`docling-core`/`docling-parse`/`pypdfium2` — present
+   as of the 12 September ingestion, gone by the 19th, environment drift
+   unrelated to Step 5 but a hard blocker for it (nothing can be ingested
+   without text extraction) — restored with `pip install -r requirements.txt`
+   at the exact pinned versions already committed.
+
+   `vllm-embed` came up clean on the first attempt: no OOM, no restart loop,
+   real (not projected) numbers — weights 1.12 GiB, KV cache 1.04 GiB /
+   9,728 tokens, 9.50x concurrency, ~37s to `Application startup complete`.
+   Direct smoke test: dimension 1024, deterministic, warm latency ~4ms,
+   batch-of-32 28ms, sensible 400/404 on malformed input. Full numbers in
+   `docs/models.md`'s new "Embedding service, deployed and measured" section.
+
+   Registration (`ingest.register(vectors.EMBEDDINGS)`,
+   `retrieve.register(vectors.VECTOR)`) landed in `app/main.py`, gated on
+   BOTH `[roles.embed]` being filled AND a live reachability probe against
+   `EMBED_BASE_URL` — the probe was not the original plan, it is what live
+   testing forced. Gating on the role alone reproduced the exact "every
+   document reports not-ready" bug this file's own 18 September entry
+   already fixed once, because `models.toml` is one file shared by every
+   checkout: filling `[roles.embed]` for this real deployment made every
+   OTHER checkout — this laptop included — inherit "the role is filled" with
+   no server actually listening, and since `EMBEDDINGS.handles` equals
+   `CHUNKS.handles`, that made `ready` depend on embeddings succeeding
+   everywhere. Caught by `tests/test_intake.py` failing and
+   `tests/test_tenant_isolation.py` hanging (each unmocked embed call
+   stalling for the full `EMBED_TIMEOUT`) the moment registration shipped
+   gated on the role alone. Fixed with the probe; full suite re-confirmed at
+   677 passed, 1 skipped both before and after.
+
+   Real ingestion of the `default` tenant's 11 real files (not synthetic
+   fixtures) produced 19 chunks, 19 vectors, one embed-config fingerprint,
+   dimension 1024 throughout, zero failures. Freshness verified live with a
+   disposable test document, not just asserted from the unit suite: editing
+   only a trailing paragraph reused the untouched leading chunks (identical
+   content_hash AND indexed_at) and re-embedded only the changed tail;
+   shrinking the document dropped exactly the removed chunk_ids with no
+   orphans. Deleting the file entirely surfaced a second real bug — `chunks`
+   correctly emptied (via `passages.py`'s own `forget_missing()`) but
+   `embeddings` kept three orphaned rows forever, because nothing had ever
+   called the `vectors.remove()` that already existed for this. Fixed with
+   `vectors.forget_missing()`, the direct counterpart to `passages.py`'s,
+   called from `Vector.search()`'s own read path the same way. Verified live
+   after the fix: the three orphaned rows swept clean on the next search.
+   `testtenant`'s index file was untouched throughout (mtime unchanged),
+   confirming this all stayed inside the `default` tenant.
+
+   The retrieval benchmark (`scripts/check_retrieval.py`, extended to
+   register and measure the vector retriever alongside keyword — the
+   comparison Step 5 exists to answer, not a new metric) against the real
+   golden set: fused RRF **beats the Step 4 baseline, overall MRR 0.768 ->
+   0.779**, almost entirely from paraphrase (**0.430 -> 0.616**, +43%
+   relative — the failure mode this step exists to fix), against small
+   regressions on exact (0.960 -> 0.938) and clause (0.686 -> 0.646) that
+   keyword already handled well. The script's own single-retriever
+   invariant correctly started reporting FAIL once vector joined keyword —
+   its own comments already named this as the expected proof the second
+   retriever is reaching the fusion, not a regression, and nothing about
+   that check was weakened or removed to make it pass.
+
+   **Step 5.6 (inline vs jobs): inline, as already configured
+   (`EMBEDDINGS.slow=False`), and nothing measured here argues against it.**
+   19 chunks across 11 real documents embedded in well under a second
+   end to end (batch-of-32 latency measured at 28ms directly against the
+   server); there is no per-request cost here large enough to justify the
+   job lane's complexity. Revisit only if a real corpus at production scale
+   shows otherwise — this was not measured at that scale.
+
+   Gate verdict: **PASS.** Not because the code tests pass — because the
+   actual retrieval-quality gate moved in the right direction, on real data,
+   for the reason the design predicted, with the two defects live testing
+   found fixed and re-verified rather than deferred.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 

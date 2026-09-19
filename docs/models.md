@@ -554,6 +554,56 @@ Until then the alias table is `MODEL_ALIASES` in `app/config.py` and the served
 model is the `--model` flag in `docker-compose.yml`. Reasoning in
 `docs/plans/step-03-model-gateway.md` §3.4.
 
+## Embedding service, deployed and measured (Step 5.4, 19 September 2026)
+
+`Qwen/Qwen3-Embedding-0.6B`, pinned to revision `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`,
+served by the `vllm-embed` service in `docker-compose.yml` (same image/digest as chat, port
+8001, `--runner pooling --max-model-len 1024 --gpu-memory-utilization 0.10`). The commit that
+added this compose service called those last two values "a starting point, not a measured
+requirement" — this section is that measurement, taken from the real startup log rather than
+projected:
+
+- Weights: 1.12 GiB, loaded in 0.28s. Fixed cost (weights + non-torch + CUDA graph) ≈ 1.81 GiB;
+  peak activation 0.52 GiB during profiling.
+- KV cache: 1.04 GiB → 9,728 tokens at `max_model_len=1024`, **9.50x concurrency**.
+- Total requested budget 3.14 GiB (10% of the 31.36 GiB the container sees); actual usage stayed
+  within it. No CUDA OOM, no restart loop, single clean start (~37s container-start to
+  `Application startup complete`, of which 12.7s was `torch.compile`).
+- Direct smoke test (`POST /v1/embeddings`): dimension **1024**, deterministic (identical input
+  twice produced byte-identical vectors), warm sequential latency ~4ms, batch-of-32 latency
+  28ms. One anomaly worth keeping: the very first request after the deploy-to-smoke-test gap
+  took 16.9s — almost certainly GPU clock/power-state ramp-up after idle, not a code issue,
+  since every subsequent request (including the batch) was sub-30ms.
+- Malformed requests return sensible errors: HTTP 400 on a missing `input` field, HTTP 404 with
+  a named-model message on an unknown model.
+
+**Deployment required clearing two things the live box did not match the repository's assumed
+state:** two leftover benchmark containers (`bench-embed-candidate`, `bench-embed-candidate-bge`,
+Step 5.1's comparison, never torn down) were squatting on port 8001 and ~5 GiB of VRAM; and the
+box's venv was completely missing `docling-slim`/`docling-core`/`docling-parse`/`pypdfium2`
+(present as of the 12 September ingestion, absent by 19 September — environment drift, not a
+Step 5 change), which blocked all document parsing regardless of embeddings. Both are now
+resolved: the stale containers removed, `pip install -r requirements.txt` restored the pinned
+docling versions.
+
+**Retrieval effect, measured against the real golden set** (`scripts/check_retrieval.py`, real
+ingestion of the `default` tenant's files plus a full golden-set run — not a projection):
+
+| Metric | Keyword (passages) | Vector | Fused (RRF) |
+|---|---:|---:|---:|
+| Overall MRR | 0.768 | 0.402 | **0.779** |
+| Exact MRR | 0.960 | 0.517 | 0.938 |
+| Clause MRR | 0.686 | 0.230 | 0.646 |
+| Paraphrase MRR | 0.430 | 0.419 | **0.616** |
+
+Fusion beats the Step 4 baseline overall (+0.011 absolute, +1.4% relative), driven almost
+entirely by paraphrase (+0.186 absolute, +43% relative) — the specific failure mode this step
+exists to fix. It costs small regressions on exact and clause, categories keyword already
+handled well, worth watching but not disqualifying: the net is positive and the design goal was
+met. See `HANDOVER.md`'s 19 September entry for the full deployment record, including two real
+bugs `main.py`'s registration surfaced live (a reachability-probe gap and an orphaned-vector
+sweep) and the freshness/tenant-isolation verification.
+
 ## Licence
 
 Qwen3 family: Apache 2.0, verified per `docs/licences.md`.

@@ -250,6 +250,27 @@ app.main` from an SSH session that is still alive alongside the systemd copy.
 **Port 8000 is already in use.** vLLM owns 8000. If the app is trying to claim
 it, `APP_PORT` is wrong in `.env` — it must not be 8000 on this machine.
 
+**Port 8001 is already in use, or `vllm-embed` won't bind it.** `docker ps -a`
+(not just `docker compose ps`) — a leftover benchmark container from a
+candidate comparison (`scripts/bench_retrieval_candidates.py`, Step 5.1) can
+squat on this port for days if nobody tears it down afterward, and it is not
+managed by compose so `docker compose ps` will not show it. `docker stop`/`rm`
+the stray container by name, confirmed harmless to production (chat `vllm`,
+`database-agent`, `postgres`, `minio`, `cloudflared` are separate containers)
+before bringing `vllm-embed` up.
+
+**Ingestion fails every file at once with a `docling` import error.**
+`docling.datamodel.document is not installed in the interpreter running
+this`. This is `app/parse.py`'s own upfront check (deliberately not a lazy
+per-file failure — see that file's docstring), and it fires for every file in
+one folder-ingest job even though only some formats need docling's heavier
+backends, because the check runs once before dispatching to any format.
+Confirm with `.venv/bin/pip show docling-slim docling-core docling-parse
+pypdfium2` — if pip reports "Package(s) not found", the venv has drifted from
+`requirements.txt` (seen once: present after a 12 September ingestion, gone a
+week later with no code change to explain it). Fix: `.venv/bin/pip install -r
+requirements.txt`, which reinstalls the exact pinned versions, nothing newer.
+
 **The tunnel is up but the hostname 502s.** cloudflared reached Cloudflare and
 cannot reach the app. Either the app is down (`systemctl status`) or the public
 hostname points somewhere the container cannot resolve — it must be

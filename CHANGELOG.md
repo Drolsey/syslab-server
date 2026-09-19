@@ -18,6 +18,18 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 ## [Unreleased]
 
 ### Added
+- **Step 5 embeddings and vector retrieval, deployed and verified 19 September 2026.**
+  `vllm-embed` (`Qwen/Qwen3-Embedding-0.6B`, pinned revision, port 8001) is live on the box;
+  `app/main.py` registers `vectors.EMBEDDINGS`/`vectors.VECTOR` at startup, gated on
+  `[roles.embed]` being filled **and** a live reachability probe against `EMBED_BASE_URL` — the
+  probe was added after gating on the role alone reproduced, through a different door, the exact
+  "every document reports not-ready" bug already fixed once at Step 5.2 (`models.toml` is one
+  file shared by every checkout, so a real deployment filling the role makes every other checkout
+  inherit it with no server listening). Also fixes a real orphaned-vector bug: `EMBEDDINGS` had
+  no sweep for a source file that leaves entirely (`app/vectors.py`'s `forget_missing()`, the
+  counterpart to `passages.py`'s own). Measured against the real golden set: fused RRF beats the
+  Step 4 keyword baseline, overall MRR 0.768 → 0.779, driven by paraphrase (0.430 → 0.616). Full
+  record in `HANDOVER.md`'s 19 September entry; numbers in `docs/models.md`.
 - **`scripts/bench_gateway.py`.** Fires concurrent requests shaped like real traffic
   (700–23,283 input tokens, per the project's own transcripts) at the gateway and measures
   what actually happens, rather than trusting vLLM's startup-log concurrency bound, which

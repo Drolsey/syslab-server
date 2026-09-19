@@ -48,7 +48,7 @@ it, in a second language, worse.
 | Rendering: charts, tables, reports | The website | Contract-bound to its own UI |
 | Users, roles, sign-in | The website | It is where people log in |
 | Running models | **Here** | The GPU is here |
-| Embeddings and retrieval | **Here** | PLANNED. Retrieval needs the documents, which are here |
+| Embeddings and retrieval | **Here** | Keyword retrieval since Step 4; vector retrieval DEPLOYED and VERIFIED 19 September (Step 5.4) |
 | Speech to text, text to speech | **Here** | PLANNED. Same GPU, same budget |
 | Which customer owns a byte | **Here** | The isolation gates that prove it are here |
 
@@ -84,8 +84,9 @@ agent.py        -> config, db, jobs, llm, search, tools
 main.py         -> everything       FastAPI, the auth dependency, the three planes
 ```
 
-`vectors.py` is built and tested (`tests/test_vectors.py`) but nothing above imports it yet —
-see "No vector search" under Today's limitations, and the registration rule below.
+`vectors.py` is built and tested (`tests/test_vectors.py`); `main.py` is the only module that
+imports it for registration, conditionally (see the registration rule below and "Vector search"
+under Today's limitations, both updated 19 September when this actually went live).
 
 `context.py` imports nothing because `config` imports it and `tenancy` imports `config`, so
 it has to sit at the bottom. Three edges are function-local imports rather than module-level
@@ -113,8 +114,7 @@ them and "unavailable" for either is a genuine environment fault that should hol
 back from `ready`. `app/vectors.py`'s `EMBEDDINGS` was first written the same way, and it was
 wrong: `ingest.status()`'s `ready` means "every producer that HANDLES this file type has a
 current row," so self-registering made every document in the whole system permanently
-not-ready the moment `[roles.embed]` was empty — which is `models.toml`'s state today, and is
-expected to stay that way for a real stretch. The bug surfaced as thirteen failing tests
+not-ready the moment `[roles.embed]` was empty. The bug surfaced as thirteen failing tests
 across four files that have nothing to do with Step 5, the moment a Step 5 test file imported
 the module in the same process. The fix, and the rule to keep: `EMBEDDINGS` (and
 `retrieve.py`'s `Vector` retriever, by the same reasoning) is constructed but not registered
@@ -124,6 +124,19 @@ optional module for any reason (a test, a script, a future producer that merely 
 `vectors.py` for its schema) can never silently change what `ready` means for every document
 that has nothing to do with it. See `docs/plans/step-05-embeddings.md`'s 5.2 and
 `HANDOVER.md`'s 18 September entry for the full incident.
+
+**A second, related bug found deploying `main.py`'s registration on 19 September: checking
+`[roles.embed]` alone was not enough, for a reason the incident above did not anticipate.**
+`models.toml` is one file shared by every checkout — a real deployment filling in `[roles.embed]`
+makes every OTHER checkout (a dev laptop, CI) inherit "the role is filled" too, with no server
+actually listening there. Since `EMBEDDINGS.handles` equals `CHUNKS.handles`, registering it on
+config presence alone reproduced the exact same "every document not-ready" failure, just through
+a different door — caught live when `tests/test_intake.py` failed and `tests/test_tenant_isolation.py`
+hung (each unmocked embed call stalling for the full `EMBED_TIMEOUT`) the moment `main.py` gated
+registration on `models.model_for("embed")` alone. The fix: `main.py` also probes
+`GET {EMBED_BASE_URL}/models` (3s timeout) and only registers if that answers. A declared config
+and a server actually answering are two different claims, and only a live probe can tell a real
+deployment apart from an unrelated checkout that happens to share the same committed `models.toml`.
 
 Storage follows from the first rule:
 
@@ -168,18 +181,19 @@ These are real and they shape the plan. None is a bug.
 
 - **No streaming.** `llm.py` hardcodes `"stream": False`. `/api/chat` blocks for the whole
   tool loop and returns one JSON body.
-- **No vector search running today, though the code exists.** `search.py` and `passages.py`
-  are still the only registered retrievers — FTS5 keyword matching only. `app/vectors.py`'s
-  `Vector` retriever and `EMBEDDINGS` producer are built and tested (Step 5.2/5.3, 18
-  September) but deliberately not registered into the running app: `[roles.embed]` is empty
-  in `models.toml`, and standing up a real embedding container is a production infrastructure
-  decision still pending (Step 5.4). **A paraphrase of words the document does not use will
-  not be found today** — measured, not assumed: `tests/fixtures/corpus/baseline.json` puts
-  paraphrase queries at Recall@1 of 0.056. The fusion that will combine the two exists and,
-  with one retriever registered, **provably does nothing** — `scripts/check_retrieval.py`
-  asserts it returns the one list unchanged; the day `Vector` is registered, that assertion is
-  expected to start failing, which is how 5.4 will know the second retriever is actually
-  reachable.
+- **Vector search is deployed and registered as of 19 September (Step 5.4).** `vllm-embed`
+  (`Qwen/Qwen3-Embedding-0.6B`, pinned revision, port 8001 on the same box as chat) is live;
+  `app/main.py` registers `vectors.EMBEDDINGS`/`vectors.VECTOR` at startup once both
+  `[roles.embed]` is filled and the server answers a live reachability probe. Measured live
+  against the golden set (`scripts/check_retrieval.py`, real ingestion, not asserted): fused
+  RRF beats the keyword-only baseline, **overall MRR 0.768 -> 0.779**, driven almost entirely
+  by paraphrase (**0.430 -> 0.616**, the failure mode this step exists to fix) against small
+  regressions on exact (0.960 -> 0.938) and clause (0.686 -> 0.646) queries that keyword
+  already handled well. `scripts/check_retrieval.py`'s single-retriever invariant now correctly
+  reports FAIL on the reorder/metric-drift checks — expected and documented in the script's own
+  comments as the proof the second retriever is actually reaching the fusion, not a regression.
+  Full numbers, VRAM, and latency in `docs/models.md`'s "Embedding service, deployed and
+  measured" section and `HANDOVER.md`'s 19 September entry.
 - **The two indexes do not cover the same formats.** `search.SEARCHABLE` is three suffixes;
   the chunk index covers everything that produces chunks, which is all ten formats in
   `parse.py`'s table. So a `.docx` has passages and is not in the document index. Named in
