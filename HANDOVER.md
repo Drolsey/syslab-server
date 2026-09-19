@@ -1241,6 +1241,31 @@ the short version:
    unscored. Read the verdict as: **Step 5 gate met on MRR, with a recall@10
    regression that has not been investigated.**
 
+   **Investigated, 19 September: the recall drop is RRF arithmetic, not a
+   bug.** Both retrievers' full ranked lists were dumped and re-fused offline
+   (the fused table reproduced exactly first, as a check on the method).
+   - Keyword and vector mostly disagree: only 23% of vector's top-10 passages
+     appear anywhere in keyword's top 50. A document found by only one
+     retriever is pushed down by however many other-retriever-only documents
+     interleave above it, and vector is weak on exact and clause queries
+     (rank-1 rate 0.20 on exact vs keyword's 0.95).
+   - 10 of 42 queries are worse than keyword. The recall@10 loss is mostly
+     `clause-01` (keyword rank 7, fused 13) and `clause-03` (keyword rank 10,
+     fused 19): vector never found the relevant document, so fusion only
+     displaced it. That is the whole of clause recall@10 1.000 -> 0.857. The
+     rank-1 losses are `exact-04` (1 -> 4), `clause-07` (1 -> 2), `clause-13`
+     and `clause-14` (2 -> 3). `para-01` and `para-08` also lose recall@10.
+   - Tuning on the same 42 queries: vector weight 0.5 gives MRR 0.793,
+     recall@10 0.842; RRF k=20 gives MRR 0.796, paraphrase 0.672, recall@10
+     unchanged at 0.807. Nothing recovers keyword's recall@1 (0.653) or
+     recall@10 (0.871) while keeping the paraphrase gain. **Not adopted:**
+     the differences are 0.01-0.02 and come from one to three queries each,
+     and choosing settings on the set that judges them overfits.
+   - Decision: settings left at weights 1:1, k=60. Before tuning, extend
+     `tests/fixtures/corpus/golden.json` (paraphrase is only 8 queries) and
+     keep a held-out part the tuning never sees. `retrieve.search()` already
+     accepts per-retriever weights, so a change would be small.
+
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
 10 September. `docs/plans/step-04-retrieval-plane.md`, to the standard of 0-3:
