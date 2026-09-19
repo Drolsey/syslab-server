@@ -130,8 +130,42 @@ def documents_of(hits, resolve) -> tuple[list[str], list[str]]:
     return ordered, unresolved
 
 
+def _embed_reachable() -> bool:
+    """Same probe as app/main.py's own startup registration gate -- see that
+    file's comment for why config presence alone is not enough. Duplicated
+    rather than imported because importing app.main here would run the
+    whole FastAPI app's route setup for one boolean; this is six lines."""
+    import urllib.error
+    import urllib.request
+
+    from app import config as app_config
+
+    try:
+        urllib.request.urlopen(f"{app_config.EMBED_BASE_URL}/models", timeout=3)
+        return True
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
 def measure(root: Path, golden: dict, manifest: dict) -> dict:
-    from app import passages, retrieve, search, tools  # noqa: F401  (tools for side effects)
+    from app import ingest, models, passages, retrieve, search, tools, vectors  # noqa: F401  (tools for side effects)
+
+    # Step 5's own comparison: keyword vs keyword+vector+RRF. Registered here,
+    # exactly the way app/main.py registers it for a real deployment (role
+    # declared AND a server actually answering) rather than unconditionally --
+    # a checkout with no embed role filled, or no reachable server, measures
+    # keyword-only exactly as it always has, with an explicit note rather than
+    # a silent gap.
+    vector_available = False
+    try:
+        models.model_for("embed")
+    except models.RoleUnavailable:
+        pass
+    else:
+        if _embed_reachable():
+            ingest.register(vectors.EMBEDDINGS)
+            retrieve.register(vectors.VECTOR)
+            vector_available = True
 
     corpus_files = sorted((CORPUS / "contracts").glob("*.pdf"))
     target = config.DATA_ROOT / TENANT
@@ -143,8 +177,10 @@ def measure(root: Path, golden: dict, manifest: dict) -> dict:
         indexed = search.rebuild()
         chunked = passages.rebuild()
         keyword = retrieve.registered()["keyword"]
+        vector = retrieve.registered().get("vector")
         results = []
         passage_results = []
+        vector_results = []
         fused_results = []
         for query in golden["queries"]:
             relevant = set(query["relevant"])
@@ -196,6 +232,32 @@ def measure(root: Path, golden: dict, manifest: dict) -> dict:
                 "recall": {str(k): recall_at_k(by_document, relevant, k) for k in KS},
                 "rr": reciprocal_rank(by_document, relevant),
             })
+
+            # The vector retriever alone, same shape as the keyword pass
+            # above -- only computed when Step 5 is actually available, so a
+            # checkout without it simply has an empty vector_results (main()
+            # skips the table rather than printing zeroes that would read as
+            # "vector search returned nothing" instead of "not measured".
+            if vector is not None:
+                try:
+                    vhits = vector.search(query["query"], PASSAGE_DEPTH)
+                    vby_document, vunresolved = documents_of(vhits, passages.passage)
+                    verror = None
+                except Exception as exc:  # noqa: BLE001
+                    vhits, vby_document, vunresolved = [], [], []
+                    verror = f"{type(exc).__name__}: {exc}"
+
+                vector_results.append({
+                    "id": query["id"],
+                    "kind": query["kind"],
+                    "relevant": sorted(relevant),
+                    "returned": vby_document[:max(KS)],
+                    "passages_returned": len(vhits),
+                    "unresolved_chunk_ids": vunresolved,
+                    "error": verror,
+                    "recall": {str(k): recall_at_k(vby_document, relevant, k) for k in KS},
+                    "rr": reciprocal_rank(vby_document, relevant),
+                })
 
             # The same query AGAIN, through the fusion this time -- Step 4.5.
             #
@@ -258,6 +320,7 @@ def measure(root: Path, golden: dict, manifest: dict) -> dict:
         "passages_indexed": chunked.get("passages", 0),
         "corpus_documents": len(corpus_files),
         "registered_retrievers": sorted(retrieve.registered()),
+        "vector_available": vector_available,
         # Carried out of here rather than read in main(): app is imported
         # inside this function, after the throwaway root has been set, and
         # reaching for app.retrieve from main() is how a gate ends up importing
@@ -266,6 +329,7 @@ def measure(root: Path, golden: dict, manifest: dict) -> dict:
         "rrf_k": retrieve.RRF_K,
         "queries": results,
         "passage_queries": passage_results,
+        "vector_queries": vector_results,
         "fused_queries": fused_results,
         "aggregates": aggregate_report,
     }
@@ -353,10 +417,20 @@ def main() -> int:
     summary = summarise(run["queries"])
     passage_summary = summarise(run["passage_queries"])
     fused_summary = summarise(run["fused_queries"])
+    vector_summary = summarise(run["vector_queries"]) if run["vector_queries"] else None
 
     table("Documents: whole-document FTS5 keyword search, app/search.py", summary)
     table("Passages: chunk-level FTS5 via the keyword retriever, app/passages.py",
           passage_summary)
+    if vector_summary is not None:
+        table("Vector: chunk-level cosine similarity via the Vector retriever, app/vectors.py",
+              vector_summary)
+    elif run["vector_available"]:
+        print("\n  Vector: [roles.embed] is filled and the server answered, but no "
+              "vector results were produced -- investigate.")
+    else:
+        print("\n  Vector: not measured -- [roles.embed] is empty or the embed server "
+              "did not answer the reachability probe.")
     print(f"  {run['passages_indexed']} passages over {run['corpus_documents']} "
           f"documents; each query asked for {PASSAGE_DEPTH} passages and they were")
     print("  folded into a document ranking by first appearance. See PASSAGE_DEPTH")
@@ -492,6 +566,15 @@ def main() -> int:
             "passage_depth": PASSAGE_DEPTH,
             "summary": passage_summary,
             "queries": run["passage_queries"],
+        },
+        # Step 5's own row, alongside (never replacing) 4.4's. Present only
+        # when Step 5 was actually measurable this run -- see vector_available.
+        "vector": {
+            "measured": "chunk-level cosine similarity via the Vector retriever (app/vectors.py), Step 5",
+            "available": run["vector_available"],
+            "passage_depth": PASSAGE_DEPTH,
+            "summary": vector_summary,
+            "queries": run["vector_queries"],
         },
         # Added at 4.5, and it is deliberately a duplicate of the block above.
         # A row that is supposed to be identical is only useful if it is
