@@ -341,6 +341,14 @@ def test_the_derived_version_moves_when_the_config_does(monkeypatch):
 # --------------------------------------------------------------------------
 
 def _insert_vector(connection, chunk_id: str, source: str, vector: list[float]) -> None:
+    # vectors.forget_missing() (Vector.search()'s own read-path sweep, added
+    # after Phase F of the Step 5 deployment found real orphaned rows) drops
+    # any embeddings row whose source is not a real file in the tenant's data
+    # folder -- correct against real ingestion, but these tests insert a
+    # vector directly, bypassing the producer entirely, so nothing has ever
+    # written this name to disk. A placeholder file is enough: forget_missing()
+    # only checks existence, never content.
+    (config.ensure_data_dir() / source).touch(exist_ok=True)
     connection.execute(
         """
         INSERT INTO embeddings (chunk_id, source, vector, dimension, content_hash, embed_config, indexed_at)

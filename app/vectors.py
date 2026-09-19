@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Sequence
 
 from app import embed, ingest, models, producers, retrieve, search
+from app.config import ensure_data_dir
 
 # scripts/bench_embeddings.py measured batching's throughput gain mostly
 # captured by 32 chunks per call (docs/models.md, Step 5.1's candidate
@@ -317,6 +318,43 @@ def remove(source_name: str, connection: sqlite3.Connection | None = None) -> No
             connection.close()
 
 
+def forget_missing(connection: sqlite3.Connection | None = None) -> list[str]:
+    """Drop vectors belonging to source files that are no longer on disk.
+
+    The counterpart to app/passages.py's own forget_missing(), for a gap that
+    module does not have: EMBEDDINGS writes nothing to derived/ (this file's
+    own docstring) and only ever revisits a document when its CHUNKS are
+    re-produced (`depends_on={"chunks"}`), so a document that leaves
+    ENTIRELY -- not just some of its chunks -- is never run through again,
+    and `remove()` above, though it already existed, was never called for
+    that case. Caught live, not reasoned out in advance: deleting a real
+    ingested file left three rows behind in `embeddings` with `chunks`
+    already clean via passages.py's own sweep (Phase F of the Step 5
+    deployment). Same read-path placement as passages.forget_missing() --
+    called from Vector.search() below -- and the same failure handling: a
+    tidy-up is never worth failing a search over.
+    """
+    own = connection is None
+    connection = connection or connect()
+    try:
+        folder = ensure_data_dir()
+        gone = sorted({
+            row["source"]
+            for row in connection.execute("SELECT DISTINCT source FROM embeddings")
+            if not (folder / row["source"]).is_file()
+        })
+        for name in gone:
+            connection.execute("DELETE FROM embeddings WHERE source = ?", (name,))
+        if gone:
+            connection.commit()
+        return gone
+    except sqlite3.Error:  # a tidy-up is never worth failing a search over
+        return []
+    finally:
+        if own:
+            connection.close()
+
+
 # --------------------------------------------------------------------------
 # the Vector retriever. 5.3 builds it; 5.4 is `retrieve.register(VECTOR)`,
 # deliberately a separate sub-step and NOT done here -- unlike
@@ -365,6 +403,7 @@ class Vector:
 
         connection = connect()
         try:
+            forget_missing(connection)
             if sources is None:
                 rows = connection.execute("SELECT chunk_id, vector FROM embeddings").fetchall()
             elif not sources:
