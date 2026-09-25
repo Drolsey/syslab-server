@@ -377,19 +377,19 @@ def coverage(query: str, sources: Sequence[str] | None = None) -> dict:
     COUNTS ONLY -- no rows, no bm25, no ORDER BY. It is two COUNT(*) queries
     against an index that has already done the matching.
 
-    WHAT `matched` WILL MEAN WHEN THERE ARE TWO RETRIEVERS IS NOT SETTLED, and
-    pretending otherwise here would be the dishonest part. This is the KEYWORD
-    index's count: how many passages the FTS5 expression matched. That is
-    well-defined today because keyword is the only retriever. A vector
-    retriever matches EVERYTHING at some distance, so "matched" stops having an
-    obvious meaning the day Step 5 lands, and it is named in
-    docs/plans/step-04-retrieval-plane.md as a thing to re-decide rather than
-    left to be discovered. `searched` is unaffected: it is how many passages
-    were in scope, which is true regardless of who does the searching.
+    `matched` IS THE KEYWORD INDEX'S COUNT AND ONLY THAT, settled when Step 5
+    shipped: how many passages the FTS5 expression matched. A vector retriever
+    matches everything at some distance, so it has no count to add. The
+    passages only it found are counted from `found_by` in app/plane.py and
+    described there, rather than folded into a number that would stop meaning
+    anything. `searched` is how many passages were in scope, whoever searched.
+
+    A QUERY WITH NO SEARCHABLE WORDS COUNTS ZERO RATHER THAN RAISING. The
+    keyword retriever still refuses it (that is what it should do), but the
+    vector retriever may have answered it. If this raised, the whole response
+    would be a 400 even though passages had been found.
     """
     terms = search.terms(query)
-    if not terms:
-        raise PassageError("Nothing searchable in that query. Give me some words to look for.")
 
     scope, scoped = _scope(sources)
     connection = connect()
@@ -397,6 +397,8 @@ def coverage(query: str, sources: Sequence[str] | None = None) -> dict:
         searched = connection.execute(
             f"SELECT count(*) AS n FROM chunks WHERE {scope}", scoped
         ).fetchone()["n"]
+        if not terms:
+            return {"searched": searched, "matched": 0, "matched_on": None}
         for joiner, precision in ((" AND ", "all terms"), (" OR ", "any term")):
             try:
                 matched = connection.execute(

@@ -83,6 +83,31 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   is a `database-agent`-side cleanup this change makes possible but does not itself do.
 
 ### Fixed
+- **Retrieval bugs Step 5 left behind, found comparing the pipeline against a
+  production-RAG reference.**
+  - **`what_this_means` told the model "nothing matched" beside passages the search by
+    meaning had found.** It only ever read the keyword count, so a reworded question with no
+    shared words came back with passages *and* "Nothing in this customer's indexed passages
+    matched those words" — and database-agent's prompt tells the model to say the documents
+    do not cover it when nothing relevant comes back. `app/plane.py`'s `what_this_means()`
+    now counts the passages found by meaning alone separately from the keyword census, and
+    warns that a search by meaning always returns *something*.
+  - **A query with no keyword-searchable words was a 400 even when the search by meaning
+    answered it.** `passages.coverage()` raised after fusion had already succeeded; it now
+    counts `matched: 0`. Keyword-only, the same query is still a 400.
+  - **An Arabic question found nothing.** The query side kept only `A-Z0-9_`, so Arabic had
+    no searchable words at all and "Kündigungsfrist" became "ndigungsfrist" — the index
+    (FTS5 `unicode61`) had always tokenised both correctly. `app/search.py` now keeps letters,
+    digits and combining marks in any script (plain `\w` would have cut words at the Arabic
+    vowel signs).
+  - **Queries were embedded without the instruction the model was chosen with.**
+    Qwen3-Embedding expects `Instruct: …\nQuery: ` on the query side only;
+    `scripts/bench_retrieval_candidates.py` used it and production did not. Now
+    `[roles.embed] query_prefix` in `models.toml`, excluded from the embedding version hash
+    so **nothing is re-embedded**. Measured on the golden set against the box's embedder,
+    25 September: fused MRR 0.778 → **0.800**, paraphrase MRR 0.609 → **0.694**, vector-alone
+    MRR 0.402 → 0.664 (exact 0.517 → 0.967). Not all up: vector-alone R@10 0.672 → 0.621
+    (clause 0.500 → 0.286); fused R@10 still rises, 0.807 → 0.817.
 - **A check in `scripts/check_gateway_isolation.py` matched nothing and printed PASS.**
   Adding the `app.passages` rows put a **literal backspace character** into the source where
   the regex was meant to say a word boundary — an escape eaten between an editor and the

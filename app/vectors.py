@@ -126,8 +126,15 @@ def _config_fingerprint(config: dict) -> str:
     vector, so a config change is detectable even when a chunk's text did
     not change at all -- the second of §5.4's two guards, kept alongside
     EMBEDDINGS.version rather than instead of it, because the version is
-    what gets run() invoked again in the first place."""
-    return json.dumps(config, sort_keys=True)
+    what gets run() invoked again in the first place.
+
+    `query_prefix` is LEFT OUT because it never touches a stored vector. It
+    only shapes the query at search time (see Vector.search), so changing it
+    must not re-embed every document."""
+    return json.dumps(
+        {key: value for key, value in config.items() if key != "query_prefix"},
+        sort_keys=True,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -396,8 +403,19 @@ class Vector:
         except models.RoleUnavailable as exc:
             raise retrieve.RetrieverError(str(exc)) from exc
 
+        # The query side only. Retrieval embedding models are trained with an
+        # instruction on the query and none on the passage -- Qwen3-Embedding
+        # wants "Instruct: ...\nQuery: ", BGE its own sentence -- and
+        # [roles.embed] carries the one the deployed model expects. Until
+        # September 2026 this sent the bare query, although
+        # scripts/bench_retrieval_candidates.py had chosen the model WITH the
+        # prefix. So every number measured after that described the model
+        # running in a mode it was never chosen in. Absent means no prefix,
+        # which is right for a model that asks for none.
         try:
-            [query_vector] = embed.embed([query], model=config["model"])
+            [query_vector] = embed.embed(
+                [config.get("query_prefix", "") + query], model=config["model"]
+            )
         except embed.EmbedError as exc:
             raise retrieve.RetrieverError(f"could not embed the query: {exc}") from exc
 

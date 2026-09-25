@@ -398,6 +398,26 @@ def test_sources_none_means_everything_and_empty_list_means_nothing(tenant_stora
     assert vectors.VECTOR.search("q", limit=10, sources=[]) == []
 
 
+def test_the_query_prefix_goes_on_the_query_only_and_re_embeds_nothing(tenant_storage, monkeypatch):
+    """Retrieval embedding models want an instruction on the query and none on
+    the passage. Until September 2026 the query went bare, although the model
+    had been chosen with the prefix, so this pins all three halves: the query
+    gets it, a chunk does not, and adding it moves no stored vector."""
+    prefix = "Instruct: find the clause\nQuery: "
+    with_prefix = {**fake_config(), "query_prefix": prefix}
+    calls = install_fake_embed(monkeypatch)
+    install_role(monkeypatch, with_prefix)
+
+    ingest.ingest(a_document(tenant_storage))
+    embedded_chunks = [text for batch in calls for text in batch]
+    calls.clear()
+    vectors.VECTOR.search("late delivery", limit=3)
+
+    assert embedded_chunks and not any(t.startswith(prefix) for t in embedded_chunks)
+    assert calls == [[prefix + "late delivery"]]
+    assert vectors._config_fingerprint(with_prefix) == vectors._config_fingerprint(fake_config())
+
+
 def test_vector_is_not_registered_by_importing_this_module(tenant_storage):
     """5.3 builds it; 5.4 is retrieve.register(VECTOR), and NOT here --
     unlike app/passages.py's Keyword, which self-registers on import. If

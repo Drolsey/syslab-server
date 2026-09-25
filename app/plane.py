@@ -221,7 +221,9 @@ def fit_budget(candidates: list[dict], budget_tokens: int) -> tuple[list[dict], 
     return kept, spent, False
 
 
-def what_this_means(coverage: dict, truncated: bool) -> str:
+def what_this_means(
+    coverage: dict, truncated: bool, by_meaning_only: int = 0, meaning_ran: bool = False
+) -> str:
     """A retrieval result reads like an answer. This says that it is not.
 
     Carried over in spirit from `search_files`, which already says out loud
@@ -232,36 +234,64 @@ def what_this_means(coverage: dict, truncated: bool) -> str:
     Written from the coverage block rather than from a template with the
     numbers pasted in, so a sentence cannot claim a census the counts
     contradict.
+
+    TWO KINDS OF PASSAGE SINCE STEP 5, and they are described separately.
+    `matched` counts passages that CONTAIN the words (the keyword index), so
+    the census sentence covers only the returned passages keyword found.
+    `by_meaning_only` counts returned passages that only the search by meaning
+    found. There is no census of those, because vector search ranks every
+    passage in scope and always returns its closest ones, relevant or not.
+
+    Until September 2026 this read only `matched`. So a reworded question that
+    no passage contains, answered by vector search, came back with "Nothing ...
+    matched those words" next to the passages. The website's prompt tells the
+    model to say the documents do not cover it when nothing relevant comes
+    back, so that sentence invited the model to give up on exactly the
+    questions Step 5 was built to answer.
     """
     matched, returned = coverage["matched"], coverage["returned"]
-    if not matched:
+    if not returned and truncated:
+        return (
+            "Passages were found and NONE were returned, because the first one alone "
+            "is larger than budget_tokens. Raise the budget rather than reading this "
+            "as an empty result."
+        )
+    if not returned:
+        if meaning_ran:
+            return (
+                "Nothing came back: no passage contains those words, and the search by "
+                "meaning had no passage in scope to rank."
+            )
         return (
             "Nothing in this customer's indexed passages matched those words. That is "
             "not evidence the material does not discuss it: a paraphrase of words the "
             "document does not use will not be found by keyword search."
         )
-    if not returned:
-        return (
-            f"{matched} passages matched and NONE were returned, because the first one "
-            f"alone is larger than budget_tokens. Raise the budget rather than reading "
-            f"this as an empty result."
+
+    by_words = returned - by_meaning_only
+    parts = ["These passages CONTAIN or RESEMBLE what was asked about."]
+    if matched:
+        parts.append(
+            f"This is a sample, not a census: {by_words} of {matched} passages "
+            f"containing those words were returned."
+            if by_words < matched
+            else f"All {matched} passages containing those words were returned."
         )
-    census = (
-        f"This is a sample, not a census: {returned} of {matched} matching passages "
-        f"were returned."
-        if returned < matched
-        else f"All {matched} matching passages were returned."
+    if by_meaning_only:
+        parts.append(
+            (f"{by_meaning_only} more were" if matched else
+             f"No passage contains those words; all {by_meaning_only} were")
+            + " found by meaning alone. A search by meaning always returns its closest "
+            "passages, even when none is relevant: read them before relying on them, and "
+            "if none answers the question, say the documents do not appear to cover it."
+        )
+    if truncated:
+        parts.append("The token budget, not the supply of passages, is what stopped it.")
+    parts.append(
+        "Do not answer a question about ALL of something from this: count and total "
+        "questions need the extracted fact tables and SQL, not passages."
     )
-    budget = (
-        " The token budget, not the supply of passages, is what stopped it."
-        if truncated
-        else ""
-    )
-    return (
-        "These passages CONTAIN or RESEMBLE the words asked about. "
-        f"{census}{budget} Do not answer a question about ALL of something from this: "
-        "count and total questions need the extracted fact tables and SQL, not passages."
-    )
+    return " ".join(parts)
 
 
 @router.post("/retrieve", dependencies=[Depends(require_tenant)])
@@ -347,7 +377,16 @@ def retrieve_passages(body: RetrieveRequest = Body(...)) -> dict:
         "coverage": coverage,
         "tokens_returned": spent,
         "truncated": truncated,
-        "what_this_means": what_this_means(coverage, truncated),
+        "what_this_means": what_this_means(
+            coverage,
+            truncated,
+            by_meaning_only=sum(
+                passages.KEYWORD.name not in row["found_by"] for row in served
+            ),
+            meaning_ran=any(
+                name != passages.KEYWORD.name for name in found["retrievers"]
+            ),
+        ),
     }
 
 

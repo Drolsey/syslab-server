@@ -31,7 +31,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app import config, context, passages, plane, producers, search, tenancy, tools
+from app import config, context, passages, plane, producers, retrieve, search, tenancy, tools
 
 TOKEN = "a-service-token-for-the-website-long-enough"
 
@@ -254,6 +254,111 @@ def test_nothing_matching_is_a_200_that_says_why_rather_than_an_error(linked, cl
     assert body["truncated"] is False
     # The honest caveat: keyword search failing is not evidence of absence.
     assert "paraphrase" in body["what_this_means"]
+
+
+# --------------------------------------------------------------------------
+# with a search by meaning in the fusion (Step 5)
+# --------------------------------------------------------------------------
+
+class ByMeaning:
+    """Stands in for app/vectors.py's Vector: returns the passages it was
+    given, in order, for ANY query -- the way a real vector search always
+    returns its closest passages whether or not one is relevant."""
+
+    name = "vector"
+
+    def __init__(self, chunk_ids):
+        self.chunk_ids = chunk_ids
+
+    def search(self, query, limit, sources=None):
+        return [retrieve.Hit(chunk_id=c, rank=n)
+                for n, c in enumerate(self.chunk_ids[:limit], start=1)]
+
+
+@pytest.fixture()
+def by_meaning(linked):
+    """ByMeaning over two staffing-note passages, removed again afterwards
+    (tests/test_vectors.py asserts nothing leaves "vector" registered)."""
+    with context.use_tenant(linked["id"]):
+        found = passages.search_passages("Farah Nasser", 2)["results"]
+    retrieve.register(ByMeaning([row["chunk_id"] for row in found]))
+    yield
+    retrieve.unregister("vector")
+
+
+def test_passages_found_only_by_meaning_are_not_reported_as_nothing_found(by_meaning, client):
+    """The Step 5 regression. A reworded question no passage contains, answered
+    by the search by meaning, used to come back saying "Nothing ... matched
+    those words" beside the passages -- and the website's prompt tells the
+    model to say the documents do not cover it when nothing relevant comes
+    back."""
+    body = ask(client, query="zygomorphic bryophyte", k=8).json()
+
+    assert [p["found_by"] for p in body["passages"]] == [["vector"], ["vector"]]
+    assert body["coverage"]["matched"] == 0
+    said = body["what_this_means"]
+    assert "Nothing" not in said
+    assert "all 2 were found by meaning alone" in said
+    assert "say the documents do not appear to cover it" in said
+
+
+def test_the_census_counts_only_what_the_words_found(by_meaning, client):
+    """`matched` is the keyword count, so the census sentence must count only the
+    returned passages keyword found -- the ones found by meaning are extra, and
+    said to be."""
+    body = ask(client, query="calibration Haddad", k=8, budget_tokens=16384).json()
+
+    by_words = sum("keyword" in p["found_by"] for p in body["passages"])
+    by_meaning_only = len(body["passages"]) - by_words
+    assert by_words and by_meaning_only, "the fixture must mix the two kinds"
+    matched = body["coverage"]["matched"]
+    census = (f"All {matched} passages containing those words" if by_words == matched
+              else f"{by_words} of {matched} passages containing those words")
+    assert census in body["what_this_means"]
+    assert f"{by_meaning_only} more were found by meaning alone" in body["what_this_means"]
+
+
+def test_a_query_keyword_cannot_read_is_answered_when_meaning_can(by_meaning, client):
+    """passages.coverage() used to raise on a query with no searchable words,
+    turning the whole response into a 400 after the search by meaning had
+    already found passages. Keyword-only, the same query is still a 400 --
+    see test_a_query_with_nothing_searchable_in_it_is_400."""
+    answer = ask(client, query="!!! ...", k=8)
+
+    assert answer.status_code == 200
+    body = answer.json()
+    assert body["passages"]
+    assert "keyword" in body["retrievers_unavailable"]
+    assert body["coverage"]["matched"] == 0
+
+
+def test_nothing_from_either_search_does_not_blame_keyword_search(linked, client):
+    """With a search by meaning running, "a paraphrase will not be found by
+    keyword search" is no longer the reason nothing came back."""
+    retrieve.register(ByMeaning([]))
+    try:
+        body = ask(client, query="zygomorphic bryophyte", k=8).json()
+    finally:
+        retrieve.unregister("vector")
+
+    assert body["passages"] == []
+    assert "paraphrase" not in body["what_this_means"]
+    assert "no passage in scope to rank" in body["what_this_means"]
+
+
+def test_an_arabic_question_finds_an_arabic_passage(linked, client):
+    """The query side used to keep only A-Z, so an Arabic question had no
+    searchable words and came back 400, although FTS5 had always indexed
+    Arabic text correctly."""
+    with context.use_tenant(linked["id"]):
+        (config.ensure_data_dir() / "aqd.txt").write_text(
+            "مدة العقد سنة واحدة تبدأ من تاريخ التوقيع.", encoding="utf-8")
+        passages.rebuild()
+
+    answer = ask(client, query="ما مدة العقد", k=8)
+
+    assert answer.status_code == 200
+    assert [p["source"] for p in answer.json()["passages"]] == ["aqd.txt"]
 
 
 # --------------------------------------------------------------------------

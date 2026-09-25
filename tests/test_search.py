@@ -75,6 +75,17 @@ def test_a_query_with_fts_syntax_in_it_does_not_blow_up(documents):
         search.search(awkward)
 
 
+def test_words_in_any_script_reach_the_index_whole():
+    """The query side used to keep only A-Z, so an Arabic question had no
+    searchable words at all and "Kündigungsfrist" became "ndigungsfrist".
+    Vowel signs are the trap: Python's `\\w` excludes combining marks and would
+    cut "مُدَّة" into single letters."""
+    assert search.terms("مدة العقد") == ['"مدة"', '"العقد"']
+    assert search.terms("مُدَّة") == ['"مُدَّة"']
+    assert search.terms("Kündigungsfrist café") == ['"Kündigungsfrist"', '"café"']
+    assert search.terms("Rania's co-operation") == ['"Rania\'s"', '"co-operation"']
+
+
 def test_an_empty_query_is_refused(documents):
     with pytest.raises(search.SearchError):
         search.search("   ")

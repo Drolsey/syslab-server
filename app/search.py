@@ -25,9 +25,9 @@ moment something exists only in this file it stops being a cache.
 
 from __future__ import annotations
 
-import re
 import sqlite3
 import time
+import unicodedata
 from pathlib import Path
 
 from app import ingest, producers
@@ -259,7 +259,33 @@ def stale(connection: sqlite3.Connection | None = None) -> list[str]:
 # reading
 # --------------------------------------------------------------------------
 
-WORD = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_'-]*")
+def _words(text: str) -> list[str]:
+    """Runs of letters, digits, underscores and combining marks, in any script.
+
+    NOT `[A-Za-z0-9_]`, which it was until September 2026: that dropped every
+    Arabic word, so an Arabic question reached neither index, and it cut
+    "Kündigungsfrist" to "ndigungsfrist". NOT plain `\\w` either -- Python's
+    `\\w` leaves out combining marks, so it breaks "مُدَّة" into single
+    letters at every vowel sign, and the length filter below then drops them.
+
+    Every word goes to FTS5 in double quotes, and FTS5 splits a quoted string
+    with the same unicode61 tokenizer that built the index. So all this needs
+    to do is keep a word in one piece. It does not decide what a token is.
+    An apostrophe or hyphen stays inside a word ("don't", "co-operate"), as
+    before, but never starts one.
+    """
+    words: list[str] = []
+    current = ""
+    for ch in text:
+        if (ch.isalnum() or ch == "_" or unicodedata.category(ch).startswith("M")
+                or (current and ch in "'-")):
+            current += ch
+        elif current:
+            words.append(current)
+            current = ""
+    if current:
+        words.append(current)
+    return words
 
 
 def terms(query: str) -> list[str]:
@@ -277,7 +303,7 @@ def terms(query: str) -> list[str]:
     """
     stop = {"the", "a", "an", "of", "for", "in", "on", "to", "and", "is", "was",
             "what", "which", "who", "find", "me", "my", "any", "all", "with"}
-    words = [w for w in WORD.findall(query or "") if len(w) > 1]
+    words = [w for w in _words(query or "") if len(w) > 1]
     kept = [w for w in words if w.lower() not in stop] or words
     return [f'"{w}"' for w in kept[:12]]
 
