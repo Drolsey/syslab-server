@@ -1,0 +1,327 @@
+# vllm (Step 1) and cloudflared (Step 3.5). The syslab-server app itself still
+# runs from a virtualenv on the host rather than a container here; voice is
+# Step 6. Section 5 of the architecture plan has the full picture.
+#
+#   docker compose up -d
+#   docker compose logs -f vllm
+#   docker compose down            # stops it; add -v only if you mean to drop the cache too
+#
+# cloudflared only starts when the "public" profile is active. Set that in
+# .env, next to the token it needs:
+#
+#   COMPOSE_PROFILES=public
+#
+# in .env rather than as a --profile flag on purpose. A flag has to be
+# remembered on every invocation, including the one after a reboot at 2am, and
+# a rule enforced by remembering is not enforced. Putting it in .env makes the
+# machine that is meant to be public the machine that brings up the tunnel,
+# and leaves a laptop that clones this repo unable to publish anything by
+# accident.
+
+services:
+  vllm:
+    # Pinned by digest, not by tag. A tag can be re-pushed, so ":latest" (and
+    # even ":v0.28.0") means "whatever that name pointed at the last time
+    # somebody ran docker compose up" -- which is not a thing a handover
+    # document can describe. The digest is the multi-arch index digest
+    # published for v0.28.0; the tag is kept alongside it so the version is
+    # readable here rather than only in docs/models.md.
+    image: vllm/vllm-openai:v0.28.0@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "8000:8000"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+    command:
+      # 14B, down from Qwen3-32B-AWQ on 2026-09-09. Not a cost cut: the 32B's
+      # weights left 5.16 GiB of KV cache, which is 21,135 tokens, which is why
+      # the window below had to stay at 8192 -- and an 8192 window could not
+      # hold one maximum-size tool result (4,506 tokens) on top of the 4,213
+      # tokens the system prompt and tool schemas occupy before anything is
+      # asked. Measured on this box's own tokenizer; HANDOVER.md has the table.
+      # A smaller model was the only option that bought back BOTH the window
+      # and the concurrency instead of trading one for the other.
+      #
+      # Same family, so the tokenizer and therefore that 4,213-token floor are
+      # unchanged; 40 layers instead of 64, so KV costs 160 KiB per token
+      # instead of 256; 9.29 GiB of weights instead of 18.00.
+      - --model
+      - Qwen/Qwen3-14B-AWQ
+      # A model repo is a moving target the same way an image tag is -- see the
+      # digest pin on the image above, and the lesson it came from. This is the
+      # commit that repo pointed at on 2026-09-09.
+      - --revision
+      - 31c69efc29464b6bb0aee1398b5a7b50a99340c3
+      # 16384, raised from 8192 now that the weights leave room for it. Chosen
+      # over 32768 because concurrency and context still spend the same cache,
+      # and this is the point where BOTH beat what the 32B gave: ~12,171 tokens
+      # of conversation after the 4,213 floor (was 3,979, and one tool result
+      # did not fit in it) at a projected ~5.5x concurrency, against 8192 and
+      # 2.58x measured on 2026-09-08. 32768 would buy more context than
+      # anything here asks for and hand back the concurrency to get it.
+      #
+      # Projected, but not the way 0.85 was projected and missed. That estimate
+      # assumed vLLM's overhead was fixed while the budget grew, and it is not.
+      # Here the budget does not move: the 8.71 GiB the smaller weights hand
+      # back becomes cache against the SAME measured overhead in
+      # docs/models.md (weights-and-non-torch 20.04, activation 1.46, CUDA
+      # graphs 0.81). Still read the startup log and record the real numbers --
+      # "GPU KV cache size" and "Maximum concurrency" -- the way 2026-09-08
+      # did. If it disagrees, 8192 still works and this comes down.
+      #
+      # 2026-09-14, 16384 -> 32768: "anything here asks for" was wrong, not
+      # projected-and-missed wrong but assumption wrong. The database-agent app
+      # -- a real consumer, not a projection -- hit both edges of 16384 in one
+      # conversation: max_tokens=32000 rejected outright against
+      # max_model_len=16384, and separately a schema-plus-history prompt
+      # measured at 16,334 input tokens, 50 short of the entire budget with
+      # nothing left for an answer. 32768 is still native to this model --
+      # Qwen3-14B is trained to 32,768 tokens, so this spends headroom the
+      # model already has rather than extending past it (that would be YaRN,
+      # a different and lossier lever, not needed here).
+      #
+      # Costs concurrency the same way 16384 bought it off 32768 the first
+      # time: the ~76,700-token cache measured 2026-09-09 divides into ~4.68x
+      # at 16384 or a projected ~2.34x at 32768. Projected, not measured --
+      # read the startup log and record "GPU KV cache size" and "Maximum
+      # concurrency" the way every number above this line was, before trusting
+      # this one.
+      - --max-model-len
+      - "32768"
+      # 0.70. This was 0.85 for one day and is back down, and the sequence is
+      # the point rather than a wobble -- read it as one decision made twice
+      # with different weights on the card.
+      #
+      # 2026-09-08, 0.70 -> 0.85: at 0.70 vLLM reported 3.0 GiB of KV cache,
+      # 12,272 tokens, and a maximum concurrency of 1.50x at 8192 tokens per
+      # request. One conversation at a time on a machine bought for
+      # concurrency, which is the whole reason the plan chose vLLM over Ollama.
+      # The 32B's weights were 18.62 GiB of the 21.95 GiB that 0.70 allowed, so
+      # the only place concurrency could come from was the budget. It bought
+      # 2.58x, and it cost the headroom: docs/models.md measured 3.4 GiB left
+      # against the ~3.5 GiB Section 13 budgets for embeddings and speech, and
+      # concluded speech would have to go on the CPU.
+      #
+      # 2026-09-09, 0.85 -> 0.70: the 14B above weighs 9.29 GiB instead of
+      # 18.00, so concurrency no longer has to be bought out of the budget at
+      # all. At 0.70 the projection is ~11.7 GiB of cache, ~76,700 tokens and
+      # ~4.68x at the 16384 window -- against 2.58x at 8192 today. Every axis
+      # improves at once, so the 4.7 GiB that 0.85 was spending has no case
+      # left: it goes back to Step 5 and Step 6, which now fit with ~8.6 GiB
+      # rather than not fitting at all.
+      #
+      # It also re-widens a margin. One boot has already failed with "Available
+      # KV cache memory: 0.45 GiB" -- a compose recreate racing the previous
+      # container's VRAM release -- and the higher this number goes the
+      # narrower that race gets. restart:unless-stopped is what makes it heal;
+      # docs/runbook.md names the symptom.
+      #
+      # Do not move this again without re-reading the startup log. Both figures
+      # above came from one, and the 0.85 estimate that did not was wrong.
+      - --gpu-memory-utilization
+      - "0.70"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - hermes
+      # 2026-09-15: Qwen3 thinks by default, and without this flag its
+      # <think>...</think> reasoning was inlined straight into `content` with
+      # no separate field -- confirmed live, and it's what made a
+      # database-agent bug transcript look like the model narrating its own
+      # recovery mid-answer. database-agent already has a stopgap for this
+      # (`ThinkFilter` in lib/agent/index.ts, commit bb18516) that strips the
+      # tags out of the stream app-side; this is the real fix, so reasoning
+      # comes back as its own field instead of text to pattern-match out.
+      # "qwen3" is the name this vLLM v0.28.0 image registers for it --
+      # confirmed against vllm.reasoning._REASONING_PARSERS_TO_REGISTER inside
+      # the running container, not guessed from the model name.
+      - --reasoning-parser
+      - qwen3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Step 5.4, 18 September 2026. A SECOND vLLM container, not a second
+  # capability on the one above: vLLM serves exactly one --runner per
+  # process, confirmed live before this was written rather than assumed --
+  # POST /v1/embeddings against the chat container above returns a plain
+  # HTTP 404. Same image, same box, same pattern this file already uses for
+  # every additive service (postgres, minio, database-agent below): one
+  # more container, not new hardware. Port 8001, matching
+  # EMBED_BASE_URL's default in app/config.py, so a fresh checkout needs no
+  # .env override once this is up.
+  vllm-embed:
+    image: vllm/vllm-openai:v0.28.0@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "8001:8000"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+    command:
+      # Qwen/Qwen3-Embedding-0.6B, chosen over BAAI/bge-base-en-v1.5 in the
+      # Step 5.1 comparison: overall MRR ties (0.654 vs 0.657 on the golden
+      # set), but Qwen wins decisively on paraphrase queries -- the specific
+      # failure mode Step 5 exists to fix -- while BGE's advantage falls on
+      # clause queries instead. docs/models.md has the full comparison.
+      - --model
+      - Qwen/Qwen3-Embedding-0.6B
+      # Fetched live from huggingface.co/api/models/Qwen/Qwen3-Embedding-0.6B
+      # on 18 September 2026, not guessed -- the same discipline the chat
+      # model's own --revision pin above already uses, and more load-bearing
+      # here: models.toml's [roles.embed].revision is hashed into
+      # app/vectors.py's EMBEDDINGS.version, so changing this line and
+      # models.toml together is what makes a weights swap re-embed every
+      # document automatically, the day this needs to move.
+      - --revision
+      - 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+      # This vLLM version has no --task flag (an earlier draft of this
+      # comment guessed --task embed and the container crashed on an
+      # argparse error -- see scripts/bench_embeddings.py's docstring).
+      # --runner {auto,draft,generate,pooling}: Qwen3-Embedding is natively
+      # a pooling model, so pooling is explicit rather than left to auto.
+      - --runner
+      - pooling
+      # 1024, not this model's native 32768. Nothing this system embeds
+      # comes close: app/chunks.py's TARGET_TOKENS + OVERLAP_TOKENS is 576,
+      # and the Step 5.1 benchmark crashed once already at a low
+      # --gpu-memory-utilization specifically because this cap was not yet
+      # set (32768's KV-cache floor alone needs 3.5 GiB). 1024 leaves real
+      # headroom over 576 without reserving cache for a context length
+      # nothing here will ever request.
+      - --max-model-len
+      - "1024"
+      # A STARTING point, not a measured requirement -- read the startup
+      # log after this comes up and record the real numbers in
+      # docs/models.md, the same rule every value in the vllm service above
+      # already follows. 0.10 of the 32,607 MiB card is ~3.3 GiB, comfortably
+      # above the ~2.33 GiB fixed cost the Step 5.1 benchmark measured
+      # (weights + non-torch + CUDA graphs, at a different utilization) with
+      # room for the batch sizes that benchmark swept (up to 64 chunks/call)
+      # plus concurrent ingest- and query-time calls, and leaves the rest of
+      # the ~8.4 GiB free headroom (docs/models.md, "16384 to 32768") for
+      # Step 6, budgeted ~3.5 GiB in the original Section 13 plan.
+      - --gpu-memory-utilization
+      - "0.10"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Self-hosted Postgres for the Database Agent app: its own Company/User/
+  # AppDocument/AppSecret/AuditEvent tables, and INTAJ's Observations DB --
+  # both moving off Medi-Merchant's Cloud SQL instance so that database stays
+  # scoped to Medi-Merchant's own data. cloudflared reaches it over this
+  # compose network by service name ("postgres:5432"), so that path needs no
+  # host port, no firewall rule, and no host.docker.internal mapping.
+  #
+  # Ports/firewall for *direct* external clients (ones that can't go through
+  # the tunnel, e.g. AppSheet, which connects from Google's own IP ranges)
+  # are managed dynamically by syslab-ops's Networking panel - see
+  # /api/db/network in ops/app.py. Off by default: the "ports:" mapping
+  # below only exists while that's toggled on, and DOCKER-USER only ever
+  # allows the IPs on its allowlist. The pgcerts volume is always mounted
+  # (harmless when unused) so the panel can point ssl_cert_file/ssl_key_file
+  # at it the first time it's needed, without a separate compose change.
+  postgres:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    restart: unless-stopped
+    ports:
+      - "5432:5432"  # syslab-ops: Networking panel expose toggle
+    environment:
+      POSTGRES_USER: syslab_admin
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - /home/syslab/.pgcerts:/pgcerts:ro
+
+
+  # The Database Agent app itself (Next.js). Reaches its own database over
+  # this compose network by service name ("postgres:5432" -- see PGHOST in
+  # database-agent/.env), so like postgres it needs no host port, no
+  # firewall rule, and no host.docker.internal mapping. Reaches
+  # Medi-Merchant's Cloud SQL database directly over the public internet
+  # (MEDIMERCHANT_PGHOST), same as any other client of that instance.
+  # cloudflared reaches it the same way it reaches every other local
+  # service: by service name over this network.
+  database-agent:
+    build: /home/syslab/database-agent
+    restart: unless-stopped
+    env_file:
+      - /home/syslab/database-agent/.env
+    depends_on:
+      - postgres
+
+  # Object storage for the Database Agent app's attachments and generated
+  # report files -- currently in-memory there (BLOB_DRIVER unset), so every
+  # upload is lost on restart. S3-compatible, so the app's existing S3 blob
+  # driver (lib/providers/aws.ts) talks to it with zero code changes, the
+  # same way it would talk to real AWS S3 or Cloudflare R2. No ports
+  # published: cloudflared reaches it over this compose network by service
+  # name (storage.systemslab.app --> http://minio:9000), the same pattern as
+  # postgres. Console (port 9001) is not exposed -- nothing here needs the
+  # web UI, only the S3 API.
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    volumes:
+      - minio-data:/data
+
+  # Step 3.5: the network path. Outbound only -- this dials Cloudflare and
+  # keeps the connection open, so the box needs no port forwarded, no static
+  # address and no inbound firewall rule at all. That is the whole reason
+  # Section 7 chose a tunnel over a VPN: the website's change is a secret
+  # value, not a container change.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.8.3@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339
+    profiles: ["public"]
+    restart: unless-stopped
+    # The token identifies a tunnel created in the Cloudflare dashboard, which
+    # is also where its ingress rule lives.
+    #
+    # NOT "${CLOUDFLARE_TUNNEL_TOKEN:?...}", which is the obvious way to write
+    # this and is wrong. Compose interpolates the whole file before it filters
+    # by profile, so the strict form makes `docker compose up -d vllm` fail on
+    # every machine without a tunnel token -- a dev box, and this box before
+    # the tunnel exists. Verified, not assumed: it fails at `compose config`.
+    # An unset token therefore reaches cloudflared empty and the container
+    # restarts in a loop, which docs/runbook.md names as the symptom.
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    # The app is on the host, not in this network, because it still runs from a
+    # virtualenv. The dashboard's ingress rule therefore points at
+    # http://host.docker.internal:8080 -- see docs/runbook.md. When the app is
+    # containerised this becomes http://syslab-server:8080 and this line goes.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  minio-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/syslab/.miniodata
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/syslab/.pgdata
+  huggingface-cache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/syslab/.cache/huggingface

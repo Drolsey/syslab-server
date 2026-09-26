@@ -667,12 +667,13 @@ def query_to_excel(sql: str, filename: str, sheet: str | None = None,
     finally:
         book.close()
 
-    # The export is a file in the data folder like any other, so it belongs in
-    # the search index. Never fatal: the spreadsheet is already written.
+    # The export is a file in the data folder like any other, so it goes
+    # through the same intake as an upload. Never fatal: the spreadsheet is
+    # already written.
     try:
-        from app import search
+        from app import intake
 
-        search.index_file(path)
+        intake.arrived(path)
     except Exception:  # noqa: BLE001
         pass
 

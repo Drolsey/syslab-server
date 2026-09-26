@@ -11,8 +11,12 @@ venv/
 # derived search index: rebuildable from the files in data/
 index/
 
+# derived artifacts and the ingestion manifest: rebuildable from data/ too
+derived/
+
 # benchmark output
 bench_results*.json
+scripts/.golden_chunk_cache.json
 
 # tenants, tokens and credentials: per-install, never committed
 control/*

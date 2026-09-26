@@ -17,7 +17,7 @@ import re
 
 import pytest
 
-from app import agent, config, context, search, tools
+from app import agent, config, context, ingest, producers, search, tools
 from tests.conftest import OTHER_TENANT, TEST_TENANT
 
 
@@ -153,6 +153,81 @@ def test_deleting_one_tenants_index_leaves_the_other_alone(two_tenants):
 
 
 # --------------------------------------------------------------------------
+# derived artifacts, Step 2.5
+# --------------------------------------------------------------------------
+#
+# The index has held one tenant's words since Step 1. Since Step 2 there is a
+# second thing on disk made out of a customer's documents -- the extracted
+# text itself, in full -- and every answer the index needed, this needs too.
+
+def test_each_tenant_has_its_own_derived_folder_and_manifest(two_tenants):
+    mine = config.manifest_path()
+    with context.use_tenant(OTHER_TENANT):
+        theirs = config.manifest_path()
+    assert mine != theirs
+    assert mine.parent.name == TEST_TENANT and theirs.parent.name == OTHER_TENANT
+
+
+def test_the_same_filename_holds_each_tenants_own_text(two_tenants):
+    """A folder each, never one folder with an owner column.
+
+    The failure modes are not comparable: a forgotten WHERE hands back another
+    customer's document text silently, while a wrong path finds nothing.
+    """
+    search.rebuild()
+    mine = producers.text_of("shared_name.pdf")
+    with context.use_tenant(OTHER_TENANT):
+        search.rebuild()
+        theirs = producers.text_of("shared_name.pdf")
+
+    assert mine and theirs
+    assert "Aardvark" in mine and "Bandicoot" not in mine
+    assert "Bandicoot" in theirs and "Aardvark" not in theirs
+
+
+def test_a_document_only_one_tenant_has_is_unknown_to_the_other(two_tenants):
+    """Not found rather than forbidden.
+
+    "That document exists but is not yours" confirms a filename someone
+    guessed, which is the precedent the job lane already set.
+    """
+    with context.use_tenant(OTHER_TENANT):
+        search.rebuild()
+        assert ingest.status("b_only.pdf")["ready"] is True
+
+    with pytest.raises(ingest.IngestError):
+        ingest.status("b_only.pdf")
+
+
+def test_sweeping_as_one_tenant_never_reaches_the_others_artifacts(two_tenants):
+    with context.use_tenant(OTHER_TENANT):
+        search.rebuild()
+    search.rebuild()
+
+    swept = ingest.forget_missing()
+
+    assert swept["gone"] == []
+    with context.use_tenant(OTHER_TENANT):
+        assert producers.text_of("b_only.pdf") is not None
+
+
+def test_deleting_one_tenants_derived_folder_leaves_the_other_alone(two_tenants):
+    """The disposability rule is per tenant, like the index file it copies."""
+    import shutil
+
+    search.rebuild()
+    with context.use_tenant(OTHER_TENANT):
+        search.rebuild()
+        assert ingest.status("b_only.pdf")["ready"] is True
+
+    shutil.rmtree(config.derived_dir())
+
+    assert ingest.status("shared_name.pdf")["ready"] is False
+    with context.use_tenant(OTHER_TENANT):
+        assert ingest.status("b_only.pdf")["ready"] is True
+
+
+# --------------------------------------------------------------------------
 # no owner means no work
 # --------------------------------------------------------------------------
 
@@ -264,6 +339,40 @@ def _finish(lane, job_id, seconds=3.0):
     raise AssertionError(f"job {job_id} never finished")
 
 
+def _drain(lane, seconds=5.0):
+    """Wait for every job to finish before this test's redirects come down.
+
+    A Lane's workers are daemon threads with no stop(), so a job submitted and
+    not waited for keeps running after the test body returns. If it is still
+    going when tenant_storage's monkeypatch unwinds, the handler writes into
+    this install's REAL data and index folders -- and the conftest guard then
+    blames whichever test happened to be running at that moment, which is a
+    different one.
+
+    Found exactly that way: test_another_tenant_cannot_cancel_the_job submits
+    a "write" job and never waits for it, because what it asserts is about the
+    cancel refusal. write_pdf indexes what it writes, so index/testtenant.sqlite3
+    appeared in the repository and the failure was reported against the next
+    test in the file. The guard was right; it just could not see across a
+    thread boundary.
+    """
+    import time
+
+    from app import jobs as jobs_module
+
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        with lane._lock:
+            unfinished = [j for j in lane._jobs.values() if j.status not in jobs_module.FINISHED]
+        if not unfinished:
+            return
+        time.sleep(0.02)
+    raise AssertionError(
+        f"jobs still running after {seconds}s: {[j.id for j in unfinished]}. "
+        "They would have written into the real folders after teardown."
+    )
+
+
 @pytest.fixture()
 def writing_lane(tenant_storage):
     """A lane whose handler writes a file, so where it lands is visible."""
@@ -273,7 +382,8 @@ def writing_lane(tenant_storage):
     made.handler("write", lambda report, name="x.pdf", body="hello":
                  tools.write_pdf(name, title="from a job", body=body))
     made.handler("whoami", lambda report: {"tenant": context.current_tenant()})
-    return made
+    yield made
+    _drain(made)
 
 
 def test_a_job_runs_as_the_tenant_that_submitted_it(writing_lane):

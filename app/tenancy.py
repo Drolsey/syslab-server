@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -42,6 +43,19 @@ class TenancyError(Exception):
 # The version of the schema this code understands. Opening a control plane
 # written by a NEWER version is refused rather than guessed at: a half-migrated
 # tenant table is a worse outcome than a clear error.
+#
+# STILL 1 AFTER STEP 4.0 ADDED tenant_alias, deliberately. What this number
+# guards is "an older build must not open a control plane it cannot safely
+# read", and an additive table that no older build references is not that: the
+# whole SCHEMA runs on every connect as CREATE TABLE IF NOT EXISTS, so any
+# control plane converges to the current shape on the next open, in either
+# direction. Bumping it would instead convert a code rollback into a control
+# plane that refuses to open -- and this is the one directory in the project
+# that cannot be rebuilt from anything.
+#
+# Bump it for a change an older build would MISREAD: a column whose meaning
+# changes, a table it writes to under different rules, anything dropped. Not
+# for a table it has never heard of.
 SCHEMA_VERSION = 1
 
 SCHEMA = """
@@ -87,12 +101,43 @@ CREATE TABLE IF NOT EXISTS tenant_database (
     sslmode      TEXT NOT NULL DEFAULT 'require',
     updated_at   TEXT NOT NULL
 );
+
+-- Step 4.0, the tenant bridge. Another system's id for a customer, mapped to
+-- ours. external_id is FOREIGN TEXT and is never anything else: it is a lookup
+-- key, bound as a parameter, and it must never reach validate_tenant_id or a
+-- path. The local id on the right is generated here by new_id().
+--
+-- The primary key is (external_system, external_id) rather than external_id
+-- alone, so two systems may each have a customer numbered 42 without one of
+-- them resolving to the other's tenant.
+CREATE TABLE IF NOT EXISTS tenant_alias (
+    external_system TEXT NOT NULL,
+    external_id     TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
+    label           TEXT,
+    created_at      TEXT NOT NULL,
+    PRIMARY KEY (external_system, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS tenant_alias_by_tenant ON tenant_alias (tenant_id);
 """
 
 # Generated ids avoid i, l, o, 0 and 1. Nothing reads an id aloud, but you will
 # type one into `py scripts\tenant.py show <id>` and those six characters are
 # where a typo comes from.
 _ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+# The FIRST character comes from the letters only, and that is not cosmetic.
+# context.VALID_TENANT_ID is ^[a-z][a-z0-9_-]{0,31}$ -- an id must start with a
+# letter, so that it can never look like a number, a flag or a dotfile -- and
+# eight of the 31 characters above are digits. Picking the first from the whole
+# alphabet produced an id the rest of the application REFUSES about a quarter
+# of the time: stored happily by create_tenant, and then rejected by
+# context.set_tenant on the tenant's first request, for ever.
+#
+# It went unnoticed because every tenant that exists was created with an
+# explicit id. Found in Step 4.0 by resolve_alias, which validates on the way
+# out and started returning None for a tenant that was plainly there.
+_ID_FIRST = "".join(c for c in _ID_ALPHABET if c.isalpha())
 _ID_LENGTH = 12
 
 TOKEN_BYTES = 32  # secrets.token_urlsafe(32) gives 43 characters
@@ -214,7 +259,9 @@ def new_id(connection: sqlite3.Connection | None = None) -> str:
     conn, owned = _with(connection)
     try:
         for _ in range(50):
-            candidate = "".join(secrets.choice(_ID_ALPHABET) for _ in range(_ID_LENGTH))
+            candidate = secrets.choice(_ID_FIRST) + "".join(
+                secrets.choice(_ID_ALPHABET) for _ in range(_ID_LENGTH - 1)
+            )
             exists = conn.execute(
                 "SELECT 1 FROM tenants WHERE id = ?", (candidate,)
             ).fetchone()
@@ -236,15 +283,21 @@ def create_tenant(name: str, tenant_id: str | None = None,
     try:
         if tenant_id is None:
             tenant_id = new_id(conn)
-        else:
-            # One rule for what an id may be, and it lives in context.py so that
-            # the control plane and anything that turns an id into a path cannot
-            # drift apart. Refused, never clamped: silently changing an id the
-            # caller chose means they hold one string and the store holds another.
-            try:
-                tenant_id = validate_tenant_id(tenant_id)
-            except BadTenantError as exc:
-                raise TenancyError(str(exc)) from exc
+        # One rule for what an id may be, and it lives in context.py so that the
+        # control plane and anything that turns an id into a path cannot drift
+        # apart. Refused, never clamped: silently changing an id the caller
+        # chose means they hold one string and the store holds another.
+        #
+        # APPLIED TO A GENERATED ID TOO, and that is the fix for a real bug: the
+        # check used to be in the `else` branch, so new_id's output was the one
+        # id in the system nothing checked -- and new_id was producing ids
+        # starting with a digit, which this refuses, about a quarter of the
+        # time. A generator is not more trustworthy than a caller; it is just
+        # closer to home.
+        try:
+            tenant_id = validate_tenant_id(tenant_id)
+        except BadTenantError as exc:
+            raise TenancyError(str(exc)) from exc
         if conn.execute("SELECT 1 FROM tenants WHERE id = ?", (tenant_id,)).fetchone():
             raise TenancyError(f"A tenant with id {tenant_id!r} already exists.")
 
@@ -332,20 +385,26 @@ def delete_tenant(tenant_id: str, connection: sqlite3.Connection | None = None) 
             )
 
         counts = {}
-        for table in ("tokens", "users", "tenant_database"):
+        # Every table keyed by tenant_id, and the list has to stay complete: an
+        # orphaned tenant_alias row would leave a foreign id resolving to a
+        # tenant that no longer exists, which is the one failure here that
+        # looks like a working system. Two gates have already been caught
+        # checking an incomplete list of exactly this kind.
+        for table in ("tokens", "users", "tenant_database", "tenant_alias"):
             cursor = conn.execute(f"DELETE FROM {table} WHERE tenant_id = ?", (tenant_id,))
             counts[table] = cursor.rowcount
         conn.execute("DELETE FROM tenants WHERE id = ?", (tenant_id,))
         conn.commit()
 
-        left = conn.execute(
-            "SELECT count(*) AS n FROM tokens WHERE tenant_id = ?", (tenant_id,)
-        ).fetchone()["n"]
-        if left:
-            raise TenancyError(
-                f"{left} token(s) for {tenant_id!r} survived the delete. Refusing to "
-                "report success."
-            )
+        for table in ("tokens", "tenant_alias"):
+            left = conn.execute(
+                f"SELECT count(*) AS n FROM {table} WHERE tenant_id = ?", (tenant_id,)
+            ).fetchone()["n"]
+            if left:
+                raise TenancyError(
+                    f"{left} {table} row(s) for {tenant_id!r} survived the delete. "
+                    "Refusing to report success."
+                )
         return {"tenant": tenant_id, "name": tenant["name"], **counts}
     finally:
         if owned:
@@ -445,6 +504,239 @@ def revoke_token(fingerprint: str, connection: sqlite3.Connection | None = None)
         )
         conn.commit()
         return {"fingerprint": row["token_sha256"][:12], "already_revoked": False}
+    finally:
+        if owned:
+            conn.close()
+
+
+# --------------------------------------------------------------------------
+# the tenant bridge (Step 4.0)
+# --------------------------------------------------------------------------
+#
+# A foreign id must never become a filesystem path. The website's tenant is a
+# row id from its own schema, chosen by a system that has never heard of
+# context.VALID_TENANT_ID, and context.validate_tenant_id turns what it is
+# given into a directory name. So the two id spaces are joined by an explicit
+# table and by nothing else: no regex over their id, no hash of it, no
+# "sanitise it and hope".
+#
+# The rule expressed in code: NOTHING BELOW EVER PASSES external_id TO
+# validate_tenant_id. It is a bound SQL parameter on the way in, and what comes
+# back out is a local id this module generated itself. The one call to
+# validate_tenant_id is on the way OUT, against our own id, as defence against
+# a hand-edited control plane.
+
+# An external system name is ours, not theirs: an operator types it when
+# linking, and it decides which namespace an id is looked up in. Same shape as
+# a tenant id because it is the same kind of thing -- a short, lower-case,
+# typed-by-a-person label -- though this one never becomes a path.
+VALID_EXTERNAL_SYSTEM = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+# Their id may be whatever their schema chose: a bigint, a UUID, a slug. What
+# it may not be is unbounded, because it becomes a key in our store and an
+# argument to every lookup. 128 characters is comfortably more than any primary
+# key a sane schema produces, and far less than a payload.
+MAX_EXTERNAL_ID = 128
+
+
+def validate_external_system(value: object) -> str:
+    """Check a system name. Ours to choose, so it is refused rather than coerced."""
+    if not isinstance(value, str):
+        raise TenancyError(
+            f"An external system name must be a string, not {type(value).__name__}."
+        )
+    candidate = value.strip()
+    if not candidate:
+        raise TenancyError("An external system name cannot be empty.")
+    if not VALID_EXTERNAL_SYSTEM.match(candidate):
+        raise TenancyError(
+            f"{candidate!r} is not a usable external system name. It names which "
+            "id space a foreign id is looked up in, so it must start with a "
+            "lower-case letter and hold only letters, digits, hyphen and "
+            "underscore, up to 32 characters. Example: 'website'."
+        )
+    return candidate
+
+
+def clean_external_id(value: object) -> str | None:
+    """Their id, as a lookup key, or None if it could not possibly be one.
+
+    None rather than an exception, and that is the important half of the
+    signature. Every caller of this is answering a request from outside, and
+    "no such link" and "that could not be a link" have to produce the same
+    answer -- a 404 -- or the difference between them tells a stranger which of
+    their guesses had the right shape.
+
+    Nothing is coerced. An id is not lower-cased, stripped of leading zeroes or
+    otherwise improved: the value that was linked is the value that resolves,
+    because a bridge that adjusts ids is a bridge that stops matching the day
+    the other system changes its mind about case.
+    """
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate or len(candidate) > MAX_EXTERNAL_ID:
+        return None
+    # Control characters cannot be part of any real primary key, and they are
+    # what a header injection looks like on the way in.
+    if any(ch < " " or ch == "\x7f" for ch in candidate):
+        return None
+    return candidate
+
+
+def link_alias(external_system: str, external_id: str, tenant_id: str,
+               label: str | None = None,
+               connection: sqlite3.Connection | None = None) -> dict:
+    """Point another system's id at one of our tenants.
+
+    Refuses to overwrite an existing link. Re-pointing an id at a different
+    tenant is unlink-then-link, on purpose: it is the one operation here that
+    can hand one customer's documents to another, and it should take two
+    deliberate acts rather than one that looks like an update.
+    """
+    system = validate_external_system(external_system)
+    foreign = clean_external_id(external_id)
+    if foreign is None:
+        raise TenancyError(
+            "That external id cannot be linked: it must be a non-empty string of "
+            f"at most {MAX_EXTERNAL_ID} characters, with no control characters."
+        )
+
+    conn, owned = _with(connection)
+    try:
+        tenant = get_tenant(tenant_id, connection=conn)
+        if tenant is None:
+            raise TenancyError(f"No tenant with id {tenant_id!r}.")
+
+        existing = conn.execute(
+            "SELECT * FROM tenant_alias WHERE external_system = ? AND external_id = ?",
+            (system, foreign),
+        ).fetchone()
+        if existing is not None:
+            if existing["tenant_id"] == tenant_id:
+                raise TenancyError(
+                    f"{system}:{foreign} is already linked to {tenant_id!r}."
+                )
+            raise TenancyError(
+                f"{system}:{foreign} is already linked to tenant "
+                f"{existing['tenant_id']!r}. Unlink it first: re-pointing a live "
+                "alias is how one customer's documents start arriving in another "
+                "customer's answers, so it takes two steps."
+            )
+
+        conn.execute(
+            "INSERT INTO tenant_alias (external_system, external_id, tenant_id, "
+            "label, created_at) VALUES (?,?,?,?,?)",
+            (system, foreign, tenant_id, (label or "").strip() or None, _now()),
+        )
+        conn.commit()
+        return {
+            "external_system": system,
+            "external_id": foreign,
+            "tenant_id": tenant_id,
+            "label": (label or "").strip() or None,
+        }
+    finally:
+        if owned:
+            conn.close()
+
+
+def resolve_alias(external_system: str, external_id: object,
+                  connection: sqlite3.Connection | None = None) -> dict | None:
+    """Which of our tenants is this foreign id? None means none.
+
+    FAIL-CLOSED AND UNIFORM, the same as resolve_token above it. An unknown
+    system, an unknown id, a malformed id, a link to a tenant that has since
+    been disabled, and a link to a tenant that no longer exists all return
+    None. The caller turns that into a 404 -- never a 403, because "that tenant
+    exists but is not yours" confirms an id someone guessed, and over enough
+    guesses it counts another customer's tenants.
+
+    Returns the tenant, not just its id, so a caller that needs to know whether
+    it is active does not have to ask twice.
+    """
+    try:
+        system = validate_external_system(external_system)
+    except TenancyError:
+        return None
+    foreign = clean_external_id(external_id)
+    if foreign is None:
+        return None
+
+    conn, owned = _with(connection)
+    try:
+        row = conn.execute(
+            "SELECT tenant_id FROM tenant_alias WHERE external_system = ? "
+            "AND external_id = ?",
+            (system, foreign),
+        ).fetchone()
+        if row is None:
+            return None
+
+        tenant = get_tenant(row["tenant_id"], connection=conn)
+        if tenant is None or not tenant["active"]:
+            return None
+
+        # The id came out of our own store, so this should never raise. It is
+        # here because the alternative to checking is trusting a database file
+        # about a value that becomes a directory name, and the check costs one
+        # regex.
+        try:
+            validate_tenant_id(tenant["id"])
+        except BadTenantError:
+            return None
+        return tenant
+    finally:
+        if owned:
+            conn.close()
+
+
+def unlink_alias(external_system: str, external_id: str,
+                 connection: sqlite3.Connection | None = None) -> bool:
+    """Remove a link. True if there was one. Nothing of the tenant is touched."""
+    system = validate_external_system(external_system)
+    foreign = clean_external_id(external_id)
+    if foreign is None:
+        return False
+
+    conn, owned = _with(connection)
+    try:
+        cursor = conn.execute(
+            "DELETE FROM tenant_alias WHERE external_system = ? AND external_id = ?",
+            (system, foreign),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        if owned:
+            conn.close()
+
+
+def list_aliases(tenant_id: str | None = None,
+                 connection: sqlite3.Connection | None = None) -> list[dict]:
+    """Every link, or every link for one tenant. Metadata only; nothing secret."""
+    conn, owned = _with(connection)
+    try:
+        if tenant_id is None:
+            rows = conn.execute(
+                "SELECT * FROM tenant_alias ORDER BY external_system, external_id"
+            )
+        else:
+            rows = conn.execute(
+                "SELECT * FROM tenant_alias WHERE tenant_id = ? "
+                "ORDER BY external_system, external_id",
+                (tenant_id,),
+            )
+        return [
+            {
+                "external_system": row["external_system"],
+                "external_id": row["external_id"],
+                "tenant_id": row["tenant_id"],
+                "label": row["label"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
     finally:
         if owned:
             conn.close()

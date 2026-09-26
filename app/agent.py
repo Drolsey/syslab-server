@@ -180,7 +180,12 @@ TOOL_SCHEMAS: list[dict] = [
                 "count and the column names and nothing else, which is all you need to "
                 "tell the user the file is ready. Never try to reach a table with "
                 "read_excel, read_pdf, list_files or search_files: those see only the "
-                "data folder and a table is not in the data folder."
+                "data folder and a table is not in the data folder. Conversely, if what "
+                "the user wants turned into a spreadsheet is already a file in the data "
+                "folder -- a PDF, an existing .xlsx, anything list_files or search_files "
+                "would find -- that is NOT this tool: there is no database table involved, "
+                "so read the file with read_pdf or read_excel and write the result with "
+                "write_excel instead."
             ),
             "parameters": {
                 "type": "object",
@@ -760,6 +765,34 @@ def ask(
     budget = limit + 1
     while budget > 0:
         budget -= 1
+
+        # Before every model call, not once per turn: a single turn can outgrow
+        # the window on its own, because each tool result appends to the same
+        # list the next call sends.
+        dropped = llm.trim_to_window(messages, TOOL_SCHEMAS)
+        if dropped:
+            # Recorded as a step because that is the one channel the operator
+            # UI already renders (app/main.py). It is not a tool call and does
+            # not pretend to be one, but it IS something this run did, and the
+            # alternative is forgetting part of a conversation with no trace.
+            steps.append(
+                {
+                    "tool": "trim_history",
+                    "arguments": {"dropped_messages": dropped},
+                    "ok": True,
+                    "error": None,
+                    "result": {
+                        "note": (
+                            f"The conversation no longer fits the model's context "
+                            f"window, so the {dropped} oldest message(s) were dropped "
+                            "to make room for this answer. Earlier turns are gone "
+                            "from the model's view; the answer below was built "
+                            "without them."
+                        ),
+                    },
+                }
+            )
+
         response = llm.chat(messages, tools=TOOL_SCHEMAS)
         message = response.get("message") or {}
         calls = _tool_calls_of(message)

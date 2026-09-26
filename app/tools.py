@@ -55,17 +55,22 @@ def _table_hint(filename: str) -> str | None:
 
 
 def _index_quietly(path: Path) -> None:
-    """Add a file we have just written to the search index.
+    """Run the ingestion pipeline over a file we have just written.
 
     Uploads were indexed; files the assistant wrote itself were not, so it
     could create a spreadsheet and then be unable to find it with search_files
-    a minute later. Imported here and wrapped, on purpose: indexing is a
+    a minute later. Imported here and wrapped, on purpose: this is a
     convenience and must never be able to fail a write that already succeeded.
+
+    Since Step 2.2 it is `intake.arrived`, which is the one place that decides
+    what happens to a new file -- fast producers now, the index, and anything
+    slow to the job lane. The name is kept because indexing is still what the
+    callers care about, and `intake.arrived` does not raise.
     """
     try:
-        from app import search
+        from app import intake
 
-        search.index_file(path)
+        intake.arrived(path)
     except Exception:  # noqa: BLE001
         pass
 

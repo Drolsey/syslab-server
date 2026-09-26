@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import config, search, tools
+from app import config, parse, producers, search, tools
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +73,17 @@ def test_a_query_with_fts_syntax_in_it_does_not_blow_up(documents):
     """The model writes these strings, and English contains quotes and brackets."""
     for awkward in ['the "invoice" (calibration)', "Rania's report -- urgent", "NEAR OR AND"]:
         search.search(awkward)
+
+
+def test_words_in_any_script_reach_the_index_whole():
+    """The query side used to keep only A-Z, so an Arabic question had no
+    searchable words at all and "Kündigungsfrist" became "ndigungsfrist".
+    Vowel signs are the trap: Python's `\\w` excludes combining marks and would
+    cut "مُدَّة" into single letters."""
+    assert search.terms("مدة العقد") == ['"مدة"', '"العقد"']
+    assert search.terms("مُدَّة") == ['"مُدَّة"']
+    assert search.terms("Kündigungsfrist café") == ['"Kündigungsfrist"', '"café"']
+    assert search.terms("Rania's co-operation") == ['"Rania\'s"', '"co-operation"']
 
 
 def test_an_empty_query_is_refused(documents):
@@ -176,7 +187,7 @@ def test_an_unsupported_file_type_is_ignored(temp_dirs):
 def test_a_missing_parser_is_a_fault_not_an_empty_document(documents, monkeypatch):
     """The bug this prevents cost a whole migration.
 
-    Running a rebuild under an interpreter without pymupdf indexed nineteen
+    Running a rebuild under an interpreter without the PDF parser indexed nineteen
     perfectly readable PDFs as empty, reported "0 document(s)" as though that
     were an ordinary outcome, and gave each file the reason "no extractable
     text, probably a scan" -- a cause the code had not established, for a
@@ -190,17 +201,20 @@ def test_a_missing_parser_is_a_fault_not_an_empty_document(documents, monkeypatc
 
     real = importlib_module.import_module
 
-    def without_pymupdf(name, *args, **kwargs):
-        if name == "pymupdf":
-            raise ImportError("No module named 'pymupdf'")
+    def without_the_pdf_parser(name, *args, **kwargs):
+        # docling since Step 4.2, pymupdf before it. The property under test is
+        # the same either way: hide the library that reads PDFs and a rebuild
+        # must refuse loudly rather than index every PDF as empty.
+        if name.startswith("docling"):
+            raise ImportError(f"No module named {name!r}")
         return real(name, *args, **kwargs)
 
     with monkeypatch.context() as scoped:
-        scoped.setattr(search.importlib, "import_module", without_pymupdf)
+        scoped.setattr(parse.importlib, "import_module", without_the_pdf_parser)
         with pytest.raises(search.SearchError) as caught:
             search.rebuild()
     message = str(caught.value)
-    assert "pymupdf" in message
+    assert "docling" in message
     assert "not installed" in message
 
 
@@ -239,9 +253,12 @@ def test_a_failed_rebuild_does_not_destroy_the_index_it_could_not_replace(docume
 
     real = importlib_module.import_module
 
-    def without_pymupdf(name, *args, **kwargs):
-        if name == "pymupdf":
-            raise ImportError("No module named 'pymupdf'")
+    def without_the_pdf_parser(name, *args, **kwargs):
+        # docling since Step 4.2, pymupdf before it. The property under test is
+        # the same either way: hide the library that reads PDFs and a rebuild
+        # must refuse loudly rather than index every PDF as empty.
+        if name.startswith("docling"):
+            raise ImportError(f"No module named {name!r}")
         return real(name, *args, **kwargs)
 
     # monkeypatch.context(), not monkeypatch.undo(). undo() reverts EVERY patch
@@ -249,7 +266,7 @@ def test_a_failed_rebuild_does_not_destroy_the_index_it_could_not_replace(docume
     # fixture set, so the assertion below would have read the real index on the
     # developer's machine instead of this test's. It did, once.
     with monkeypatch.context() as scoped:
-        scoped.setattr(search.importlib, "import_module", without_pymupdf)
+        scoped.setattr(parse.importlib, "import_module", without_the_pdf_parser)
         with pytest.raises(search.SearchError):
             search.rebuild()
 

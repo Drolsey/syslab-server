@@ -25,17 +25,21 @@ moment something exists only in this file it stops being a cache.
 
 from __future__ import annotations
 
-import importlib
-import re
 import sqlite3
-import sys
 import time
+import unicodedata
 from pathlib import Path
 
+from app import ingest, producers
 from app.config import ensure_data_dir, ensure_index_dir, index_path
 
-SEARCHABLE = {".pdf", ".xlsx", ".xlsm"}
-MAX_TEXT_PER_FILE = 400_000
+# Both moved to app/producers.py in Step 2.1 and re-exported here, because the
+# suffixes a file type can be read from are now a property of the producer that
+# reads them rather than of the index. Kept as names on this module so that
+# nothing which imported them from here has to care that they moved.
+SEARCHABLE = producers.SEARCHABLE
+MAX_TEXT_PER_FILE = producers.MAX_TEXT_PER_FILE
+extract = producers.extract
 
 
 class SearchError(Exception):
@@ -88,85 +92,35 @@ def connect() -> sqlite3.Connection:
 
 
 # --------------------------------------------------------------------------
-# extraction
-# --------------------------------------------------------------------------
-
-def _reader(module: str, what: str):
-    """Import a parser, or say plainly that it is missing.
-
-    A missing library is NOT an unreadable file, and catching both with one
-    `except Exception` made them indistinguishable. Running a rebuild under an
-    interpreter without pymupdf indexed nineteen perfectly good PDFs as empty
-    and reported each as "no extractable text, probably a scan": a cause the
-    code had not established, for a folder that was entirely fine.
-
-    An unreadable file affects one document. A missing parser affects every
-    document of that type, and it is an environment fault, not a data fault.
-    """
-    try:
-        return importlib.import_module(module)
-    except ImportError as exc:
-        raise SearchError(
-            f"{module} is not installed in the interpreter running this "
-            f"({sys.executable}), so {what}. Every file of that type would be "
-            "indexed as empty, which reads like a folder of unreadable documents "
-            "rather than a missing package. Install the project's requirements, "
-            "or run this with the virtualenv's python."
-        ) from exc
-
-
-def extract(path: Path) -> str:
-    """Pull readable text out of one file. Empty string if there is none.
-
-    Raises SearchError if the parser for this file type is not installed. That
-    is deliberately not the same outcome as a file that cannot be read.
-    """
-    suffix = path.suffix.lower()
-
-    if suffix == ".pdf":
-        pymupdf = _reader("pymupdf", "no PDF can be read")
-        try:
-            with pymupdf.open(path) as document:
-                pages = [document.load_page(i).get_text("text") for i in range(document.page_count)]
-            return "\n".join(pages)[:MAX_TEXT_PER_FILE]
-        except Exception:  # noqa: BLE001 - this one file is unreadable, never fatal
-            return ""
-
-    if suffix in {".xlsx", ".xlsm"}:
-        openpyxl = _reader("openpyxl", "no spreadsheet can be read")
-        try:
-            book = openpyxl.load_workbook(path, data_only=True, read_only=True)
-            try:
-                parts: list[str] = []
-                for sheet in book.worksheets:
-                    parts.append(sheet.title)
-                    for row in sheet.iter_rows(values_only=True):
-                        cells = [str(v) for v in row if v is not None]
-                        if cells:
-                            parts.append(" ".join(cells))
-                        if sum(len(p) for p in parts) > MAX_TEXT_PER_FILE:
-                            break
-            finally:
-                book.close()
-            return "\n".join(parts)[:MAX_TEXT_PER_FILE]
-        except Exception:  # noqa: BLE001
-            return ""
-
-    return ""
-
-
-# --------------------------------------------------------------------------
 # writing
 # --------------------------------------------------------------------------
 
 def index_file(path: Path, connection: sqlite3.Connection | None = None) -> dict:
-    """Add or replace one file in the index. Safe to call repeatedly."""
+    """Add or replace one file in the index. Safe to call repeatedly.
+
+    A CONSUMER of the ingestion pipeline since Step 2.1, not the owner of the
+    extraction any more. It asks ingest() to bring the file's fast producers up
+    to date and then reads the text artifact, which means a second call over an
+    unchanged file re-indexes without re-parsing the PDF -- and, more to the
+    point, means the next thing that wants this text reads the same bytes
+    rather than opening the file again for itself.
+
+    The return shape has not changed, and neither has what a caller sees when
+    a parser is missing: the pipeline reports that as an environment fault
+    rather than a per-file failure, and it is translated back into a
+    SearchError here because three callers already catch that.
+    """
     own = connection is None
     connection = connection or connect()
     try:
         if path.suffix.lower() not in SEARCHABLE or not path.is_file():
             return {"name": path.name, "indexed": False, "reason": "not a searchable file"}
-        text = extract(path)
+
+        report = ingest.ingest(path.name, only_fast=True)
+        unavailable = report["unavailable"].get(producers.TEXT.name)
+        if unavailable:
+            raise SearchError(unavailable)
+        text = producers.text_of(path.name) or ""
         stat = path.stat()
         connection.execute("DELETE FROM documents WHERE name = ?", (path.name,))
         if text.strip():
@@ -213,11 +167,17 @@ def rebuild(report=None) -> dict:
     # under the wrong interpreter cost the whole index and replaced it with
     # nothing. Same shape as the row cap that was applied after the fetch: a
     # limit enforced after the cost is paid is not a limit.
-    for suffix in sorted({p.suffix.lower() for p in files}):
-        if suffix == ".pdf":
-            _reader("pymupdf", "no PDF can be read")
-        elif suffix in {".xlsx", ".xlsm"}:
-            _reader("openpyxl", "no spreadsheet can be read")
+    try:
+        producers.require_readers(p.suffix for p in files)
+    except ingest.ProducerUnavailable as exc:
+        raise SearchError(str(exc)) from exc
+
+    # Bring the pipeline up to date first, in one call, and let it decide what
+    # that means -- including forgetting artifacts whose source file has left.
+    # A rebuild reads the text artifacts, so "rebuild from the files on disk"
+    # is only honest if what stands between this and the disk is current.
+    # Fast producers only: an index rebuild must not turn into an OCR run.
+    ingest.rebuild(only_fast=True)
 
     connection = connect()
     started = time.time()
@@ -299,19 +259,51 @@ def stale(connection: sqlite3.Connection | None = None) -> list[str]:
 # reading
 # --------------------------------------------------------------------------
 
-WORD = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_'-]*")
+def _words(text: str) -> list[str]:
+    """Runs of letters, digits, underscores and combining marks, in any script.
+
+    NOT `[A-Za-z0-9_]`, which it was until September 2026: that dropped every
+    Arabic word, so an Arabic question reached neither index, and it cut
+    "Kündigungsfrist" to "ndigungsfrist". NOT plain `\\w` either -- Python's
+    `\\w` leaves out combining marks, so it breaks "مُدَّة" into single
+    letters at every vowel sign, and the length filter below then drops them.
+
+    Every word goes to FTS5 in double quotes, and FTS5 splits a quoted string
+    with the same unicode61 tokenizer that built the index. So all this needs
+    to do is keep a word in one piece. It does not decide what a token is.
+    An apostrophe or hyphen stays inside a word ("don't", "co-operate"), as
+    before, but never starts one.
+    """
+    words: list[str] = []
+    current = ""
+    for ch in text:
+        if (ch.isalnum() or ch == "_" or unicodedata.category(ch).startswith("M")
+                or (current and ch in "'-")):
+            current += ch
+        elif current:
+            words.append(current)
+            current = ""
+    if current:
+        words.append(current)
+    return words
 
 
-def _terms(query: str) -> list[str]:
+def terms(query: str) -> list[str]:
     """Turn a plain question into terms FTS5 will accept.
 
     The model writes this string, so it can contain quotes, brackets and
     operators that are valid English and invalid FTS5. Extracting words and
     quoting them is safer than passing it through and catching the error.
+
+    PUBLIC SINCE STEP 4.4, and the rename is the whole change. `app/passages.py`
+    searches a second FTS5 table over the same tenant's material, and two
+    indexes that disagreed about what a query means would make every comparison
+    between them meaningless -- including the one scripts/check_retrieval.py
+    exists to make, which is whether passages beat documents.
     """
     stop = {"the", "a", "an", "of", "for", "in", "on", "to", "and", "is", "was",
             "what", "which", "who", "find", "me", "my", "any", "all", "with"}
-    words = [w for w in WORD.findall(query or "") if len(w) > 1]
+    words = [w for w in _words(query or "") if len(w) > 1]
     kept = [w for w in words if w.lower() not in stop] or words
     return [f'"{w}"' for w in kept[:12]]
 
@@ -323,8 +315,8 @@ def search(query: str, limit: int = 8) -> dict:
     falls back to any term, which is forgiving. Reports which one answered so
     the model knows how much to trust the match.
     """
-    terms = _terms(query)
-    if not terms:
+    found_terms = terms(query)
+    if not found_terms:
         raise SearchError("Nothing searchable in that query. Give me some words to look for.")
 
     connection = connect()
@@ -332,7 +324,7 @@ def search(query: str, limit: int = 8) -> dict:
         forget_missing(connection)
         total = connection.execute("SELECT count(*) AS n FROM documents").fetchone()["n"]
         for joiner, precision in ((" AND ", "all terms"), (" OR ", "any term")):
-            expression = joiner.join(terms)
+            expression = joiner.join(found_terms)
             try:
                 rows = connection.execute(
                     """

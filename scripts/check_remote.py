@@ -29,12 +29,33 @@ from app.config import (  # noqa: E402
     APP_TOKEN,
     LOOPBACK,
     MIN_TOKEN_LENGTH,
+    PUBLIC_MODE,
     WEAK_TOKENS,
     code_fingerprint,
 )
 
 LINE = "-" * 62
 LOCAL = f"http://127.0.0.1:{APP_PORT}"
+
+
+def restart_hint() -> str:
+    """How to restart the app ON THIS MACHINE.
+
+    This used to print a PowerShell path unconditionally, which was correct on
+    the development laptop and actively misleading on the Ubuntu server the
+    architecture plan moves production to: the advice named a file that is
+    documented as "not used on Windows"'s opposite -- a Windows-only script --
+    to an operator standing at a Linux box.
+    """
+    if platform.system() == "Windows":
+        return "powershell -ExecutionPolicy Bypass -File scripts\\service\\restart_windows.ps1"
+    return "sudo systemctl restart syslab-server   (or stop the foreground process and re-run: python -m app.main)"
+
+
+def port_owner_hint() -> str:
+    if platform.system() == "Windows":
+        return f"Get-NetTCPConnection -LocalPort {APP_PORT} -State Listen | Select OwningProcess"
+    return f"sudo ss -ltnp 'sport = :{APP_PORT}'"
 
 results: list[tuple[str, bool, str]] = []
 
@@ -141,12 +162,12 @@ def check_the_door() -> None:
             print("  real bug rather than a stale process. Report this output.")
 
         print("\n  Fix it now, before anything else:")
-        print("    powershell -ExecutionPolicy Bypass -File scripts\\service\\restart_windows.ps1")
-        print("    .\\run.cmd scripts\\check_remote.py")
+        print(f"    {restart_hint()}")
+        print("    python scripts/check_remote.py")
         print("\n  If you have already run that and this number has not changed, an old")
         print("  python is still holding the port and the new one could not start. See")
         print("  who owns it with:")
-        print(f"    Get-NetTCPConnection -LocalPort {APP_PORT} -State Listen | Select OwningProcess")
+        print(f"    {port_owner_hint()}")
         print("\n  APP_HOST is already 0.0.0.0 in .env, so the moment it restarts it will")
         print("  listen on your tailnet. It must be asking for a token by then.\n")
         record("Refuses a wrong token", False, "not tested: the door is open")
@@ -156,7 +177,7 @@ def check_the_door() -> None:
     record("Refuses a request with no token", code in (401, 503),
            f"HTTP {code}" + (" (APP_TOKEN unset)" if code == 503 else ""))
     record("Running app matches the code on disk", bool(running_code_is_current),
-           "" if running_code_is_current else "restart it: scripts\\service\\restart_windows.ps1")
+           "" if running_code_is_current else f"restart it: {restart_hint()}")
 
     code, _ = status_of(f"{LOCAL}/api/health", token="definitely-not-the-token")
     record("Refuses a wrong token", code == 401, f"HTTP {code}")
@@ -164,10 +185,54 @@ def check_the_door() -> None:
     record("Accepts the right token", with_token[0] == 200, f"HTTP {with_token[0]}")
     if with_token[0] == 401:
         print("\n  The running app is using a different token to the one in .env.")
-        print("  Restart it:  powershell -ExecutionPolicy Bypass -File scripts\\service\\restart_windows.ps1")
+        print(f"  Restart it:  {restart_hint()}")
 
     code, _ = status_of(f"{LOCAL}/api/files/../../.env", token=APP_TOKEN)
     record("Still refuses to serve files outside the data folder", code in (400, 404), f"HTTP {code}")
+
+
+def check_public_surface() -> None:
+    """Step 3.3's gate: what an unauthenticated stranger can reach.
+
+    Every check here is run with no token at all, because that is who this
+    section is about. On a tailnet these were fine and this section is
+    advisory; the moment PUBLIC_MODE is on, each one is a way of publishing
+    a server that writes files, and they are gates.
+    """
+    section("The public surface, with no token")
+
+    code, _ = status_of(f"{LOCAL}/v1/models", token=None)
+    record("Unauthenticated /v1/models is refused", code in (401, 503), f"HTTP {code}")
+
+    request = urllib.request.Request(
+        f"{LOCAL}/v1/chat/completions",
+        data=json.dumps({"model": "syslab-default", "messages": [{"role": "user", "content": "hi"}]}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            chat_code = response.status
+    except urllib.error.HTTPError as exc:
+        chat_code = exc.code
+    except (urllib.error.URLError, TimeoutError):
+        chat_code = 0
+    record("Unauthenticated chat is refused", chat_code in (401, 503), f"HTTP {chat_code}")
+
+    docs, _ = status_of(f"{LOCAL}/api/docs", token=None)
+    schema, _ = status_of(f"{LOCAL}/openapi.json", token=None)
+    page, _ = status_of(f"{LOCAL}/", token=None)
+
+    if PUBLIC_MODE:
+        # The schema matters as much as the docs page: the page is only a
+        # reader for it, and leaving it up publishes every route by name.
+        record("The docs page is unreachable in public mode", docs == 404, f"HTTP {docs}")
+        record("The API schema is unreachable in public mode", schema == 404, f"HTTP {schema}")
+        record("The admin page is unreachable in public mode", page == 404, f"HTTP {page}")
+    else:
+        print(f"  ....  PUBLIC_MODE is off: docs HTTP {docs}, schema HTTP {schema}, page HTTP {page}")
+        print("        Fine on a tailnet. Set PUBLIC_MODE=true in .env before this")
+        print("        server is reachable from the internet, and re-run this.")
 
 
 def check_binding() -> None:
@@ -232,7 +297,7 @@ def check_reachable(ip: str | None) -> None:
         if running_code_is_current is False:
             print("    0. The running app has not been restarted since you changed .env,")
             print("       so it is still bound to whatever APP_HOST said when it started.")
-            print("       Run: powershell -ExecutionPolicy Bypass -File scripts\\service\\restart_windows.ps1")
+            print(f"       Run: {restart_hint()}")
         print("    1. APP_HOST is still 127.0.0.1. Set it to 0.0.0.0 and restart the app.")
         print("    2. Windows Firewall is blocking the port. Allow it with, in an")
         print("       Administrator PowerShell:")
@@ -248,6 +313,7 @@ def main() -> int:
 
     check_token()
     check_the_door()
+    check_public_surface()
     check_binding()
     ip, name = check_tailscale()
     check_reachable(ip)

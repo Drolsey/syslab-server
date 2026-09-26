@@ -1,0 +1,544 @@
+{
+  "corpus": {
+    "source": "CUAD v1 subsample",
+    "documents": 52,
+    "licence": "CC BY 4.0, The Atticus Project, Inc."
+  },
+  "built": "11 September 2026, Step 4.1",
+  "how_to_read_this": "Every 'relevant' list is ground truth this file can defend. exact and clause queries were checked to occur in exactly one contract; paraphrase relevance is CUAD's lawyer annotation, not a judgement made here. Paraphrase queries are EXPECTED TO FAIL against keyword retrieval -- that is their purpose, and a golden set the current system passes completely cannot show an improvement.",
+  "queries": [
+    {
+      "id": "exact-01",
+      "query": "Digital Cinema Destinations Corp",
+      "relevant": [
+        "contract_01.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-02",
+      "query": "The TUBE Music Network",
+      "relevant": [
+        "contract_02.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-03",
+      "query": "At Home Corporation",
+      "relevant": [
+        "contract_03.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-04",
+      "query": "AS Parties",
+      "relevant": [
+        "contract_04.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-05",
+      "query": "Online BVI",
+      "relevant": [
+        "contract_07.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-06",
+      "query": "Ginkgo Bioworks",
+      "relevant": [
+        "contract_08.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-07",
+      "query": "LIFE TECHNOLOGIES CORPORATION",
+      "relevant": [
+        "contract_09.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-08",
+      "query": "Green Cross",
+      "relevant": [
+        "contract_11.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-09",
+      "query": "Aimmune Therapeutics",
+      "relevant": [
+        "contract_12.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-10",
+      "query": "Ono Pharmaceutical Co",
+      "relevant": [
+        "contract_13.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-11",
+      "query": "Coherus BioSciences",
+      "relevant": [
+        "contract_14.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-12",
+      "query": "T&B Seminars",
+      "relevant": [
+        "contract_15.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-13",
+      "query": "PhaseBio Pharmaceuticals Inc",
+      "relevant": [
+        "contract_16.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-14",
+      "query": "Revolution Medicines",
+      "relevant": [
+        "contract_17.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-15",
+      "query": "STAAR SURGICAL AG",
+      "relevant": [
+        "contract_18.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-16",
+      "query": "Nippon Shinyaku Company",
+      "relevant": [
+        "contract_19.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-17",
+      "query": "Papa John",
+      "relevant": [
+        "contract_20.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-18",
+      "query": "FRANCHISE SYSTEMS",
+      "relevant": [
+        "contract_21.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-19",
+      "query": "Goosehead Insurance Agency",
+      "relevant": [
+        "contract_22.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "exact-20",
+      "query": "The Joint Corp",
+      "relevant": [
+        "contract_23.pdf"
+      ],
+      "kind": "exact",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this string occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-01",
+      "query": "This Agreement shall be binding on the Parties as of the date hereof and",
+      "relevant": [
+        "contract_01.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-02",
+      "query": "The obligations of Affiliate and Network under this Agreement are subject to all applicable",
+      "relevant": [
+        "contract_02.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-03",
+      "query": "The Agreement will be governed by and construed in accordance with the laws of",
+      "relevant": [
+        "contract_03.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-04",
+      "query": "This Agreement has been executed and delivered in Los Angeles County in the State",
+      "relevant": [
+        "contract_04.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-05",
+      "query": "INITIAL TERM shall mean the Effective Date through the day prior to the second",
+      "relevant": [
+        "contract_05.pdf"
+      ],
+      "kind": "clause",
+      "category": "Expiration Date",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-06",
+      "query": "Initial Term shall mean the Effective Date through the day prior to the fourth",
+      "relevant": [
+        "contract_06.pdf"
+      ],
+      "kind": "clause",
+      "category": "Expiration Date",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-07",
+      "query": "This Agreement shall automatically continue following the Initial Term, for an additional period of",
+      "relevant": [
+        "contract_07.pdf"
+      ],
+      "kind": "clause",
+      "category": "Renewal Term",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-08",
+      "query": "This Agreement will be construed and interpreted in accordance with the laws of the",
+      "relevant": [
+        "contract_08.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-09",
+      "query": "This Agreement and any disputes, claims, or actions related thereto shall be governed by",
+      "relevant": [
+        "contract_09.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-10",
+      "query": "This Agreement and any dispute arising from the performance or breach hereof shall be",
+      "relevant": [
+        "contract_10.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-11",
+      "query": "Except as otherwise indicated, in all other respects, the right and obligations of the",
+      "relevant": [
+        "contract_11.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-12",
+      "query": "This Agreement shall be governed by and construed in accordance with the internal laws",
+      "relevant": [
+        "contract_12.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-13",
+      "query": "This Agreement and all questions regarding its validity or interpretation, or the breach or",
+      "relevant": [
+        "contract_13.pdf"
+      ],
+      "kind": "clause",
+      "category": "Governing Law",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "clause-14",
+      "query": "Except as otherwise specified in this Agreement, the Parties' respective rights and obligations under",
+      "relevant": [
+        "contract_14.pdf"
+      ],
+      "kind": "clause",
+      "category": "Renewal Term",
+      "expectation": "keyword retrieval should find this",
+      "verified": "this phrase occurs in exactly one contract in the corpus"
+    },
+    {
+      "id": "para-01",
+      "query": "if somebody else gets a sweeter deal later do we automatically get it too",
+      "relevant": [
+        "contract_07.pdf",
+        "contract_08.pdf",
+        "contract_33.pdf",
+        "contract_49.pdf",
+        "contract_52.pdf"
+      ],
+      "kind": "paraphrase",
+      "category": "Most Favored Nation",
+      "expectation": "EXPECTED TO FAIL until a semantic retriever exists (Step 5)",
+      "verified": "relevance is CUAD's lawyer annotation: 5 of 52 contracts carry this category"
+    },
+    {
+      "id": "para-02",
+      "query": "is the software lodged with a neutral third party in case the supplier folds",
+      "relevant": [
+        "contract_27.pdf",
+        "contract_28.pdf",
+        "contract_29.pdf",
+        "contract_30.pdf",
+        "contract_34.pdf",
+        "contract_46.pdf",
+        "contract_47.pdf",
+        "contract_51.pdf"
+      ],
+      "kind": "paraphrase",
+      "category": "Source Code Escrow",
+      "expectation": "EXPECTED TO FAIL until a semantic retriever exists (Step 5)",
+      "verified": "relevance is CUAD's lawyer annotation: 8 of 52 contracts carry this category"
+    },
+    {
+      "id": "para-03",
+      "query": "is either side barred from publicly saying bad things about the other",
+      "relevant": [
+        "contract_01.pdf",
+        "contract_18.pdf",
+        "contract_20.pdf",
+        "contract_23.pdf",
+        "contract_24.pdf",
+        "contract_26.pdf",
+        "contract_32.pdf",
+        "contract_33.pdf",
+        "contract_38.pdf"
+      ],
+      "kind": "paraphrase",
+      "category": "Non-Disparagement",
+      "expectation": "EXPECTED TO FAIL until a semantic retriever exists (Step 5)",
+      "verified": "relevance is CUAD's lawyer annotation: 9 of 52 contracts carry this category"
+    },
+    {
+      "id": "para-04",
+      "query": "can an outsider who never signed this still enforce part of it",
+      "relevant": [
+        "contract_08.pdf",
+        "contract_21.pdf",
+        "contract_22.pdf",
+        "contract_23.pdf",
+        "contract_26.pdf",
+        "contract_27.pdf",
+        "contract_34.pdf",
+        "contract_47.pdf",
+        "contract_50.pdf"
+      ],
+      "kind": "paraphrase",
+      "category": "Third Party Beneficiary",
+      "expectation": "EXPECTED TO FAIL until a semantic retriever exists (Step 5)",
+      "verified": "relevance is CUAD's lawyer annotation: 9 of 52 contracts carry this category"
+    },
+    {
+      "id": "para-05",
+      "query": "are they blocked from approaching the people we already sell to",
+      "relevant": [
+        "contract_01.pdf",
+        "contract_03.pdf",
+        "contract_15.pdf",
+        "contract_21.pdf",
+        "contract_22.pdf",
+        "contract_24.pdf",
+        "contract_25.pdf",
+        "contract_26.pdf",
+        "contract_36.pdf",
+        "contract_51.pdf"
+      ],
+      "kind": "paraphrase",
+      "category": "No-Solicit Of Customers",
+      "expectation": "EXPECTED TO FAIL until a semantic retriever exists (Step 5)",
+      "verified": "relevance is CUAD's lawyer annotation: 10 of 52 contracts carry this category"
+    },
+    {
+      "id": "para-06",
+      "query": "does the permission granted also cover businesses owned by the same parent",
+      "relevant": [
+        "contract_07.pdf",
+        "contract_08.pdf",
+        "contract_10.pdf",
+        "contract_12.pdf",
+        "contract_13.pdf",
+        "contract_19.pdf",
+        "contract_22.pdf",
+        "contract_37.pdf",
+        "contract_42.pdf",
+        "contract_51.pdf"
+      ],
+      "kind": "paraphrase",
+      "category": "Affiliate License-Licensor",
+      "expectation": "EXPECTED TO FAIL until a semantic retriever exists (Step 5)",
+      "verified": "relevance is CUAD's lawyer annotation: 10 of 52 contracts carry this category"
+    },
+    {
+      "id": "para-07",
+      "query": "is either side prevented from changing what they charge",
+      "relevant": [
+        "contract_29.pdf",
+        "contract_35.pdf",
+        "contract_37.pdf"
+      ],
+      "kind": "paraphrase",
+      "category": "Price Restrictions",
+      "expectation": "EXPECTED TO FAIL until a semantic retriever exists (Step 5)",
+      "verified": "relevance is CUAD's lawyer annotation: 3 of 52 contracts carry this category"
+    },
+    {
+      "id": "para-08",
+      "query": "can they use as much of it as they like without paying more",
+      "relevant": [
+        "contract_27.pdf",
+        "contract_28.pdf"
+      ],
+      "kind": "paraphrase",
+      "category": "Unlimited/All-You-Can-Eat-License",
+      "expectation": "EXPECTED TO FAIL until a semantic retriever exists (Step 5)",
+      "verified": "relevance is CUAD's lawyer annotation: 2 of 52 contracts carry this category"
+    }
+  ],
+  "aggregates": [
+    {
+      "id": "agg-01",
+      "question": "How many of these contracts contain an exclusivity commitment?",
+      "true_answer": {
+        "yes": 41,
+        "of": 52
+      },
+      "source": "counted from CUAD's Exclusivity-Answer over all 52 contracts",
+      "why_it_matters": "retrieval returns k passages and cannot see the whole corpus. This question must be answered INCOMPLETELY by the passage path, visibly so, until Step 9 builds the fact table."
+    },
+    {
+      "id": "agg-02",
+      "question": "How many of these contracts grant audit rights?",
+      "true_answer": {
+        "yes": 47,
+        "of": 52
+      },
+      "source": "counted from CUAD's Audit Rights-Answer over all 52 contracts",
+      "why_it_matters": "retrieval returns k passages and cannot see the whole corpus. This question must be answered INCOMPLETELY by the passage path, visibly so, until Step 9 builds the fact table."
+    },
+    {
+      "id": "agg-03",
+      "question": "How many of these contracts cap liability?",
+      "true_answer": {
+        "yes": 51,
+        "of": 52
+      },
+      "source": "counted from CUAD's Cap On Liability-Answer over all 52 contracts",
+      "why_it_matters": "retrieval returns k passages and cannot see the whole corpus. This question must be answered INCOMPLETELY by the passage path, visibly so, until Step 9 builds the fact table."
+    },
+    {
+      "id": "agg-04",
+      "question": "Which governing law is most common across these contracts, and in how many?",
+      "true_answer": {
+        "most_common": "New York",
+        "count": 13,
+        "distinct_values": 18
+      },
+      "source": "counted from CUAD's Governing Law-Answer over all 52 contracts",
+      "why_it_matters": "retrieval returns k passages and cannot see the whole corpus. This question must be answered INCOMPLETELY by the passage path, visibly so, until Step 9 builds the fact table."
+    }
+  ]
+}

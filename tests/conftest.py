@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import config, context, tenancy
+from app import config, context, llm, tenancy
 
 TEST_TENANT = "testtenant"
 OTHER_TENANT = "othertenant"
@@ -26,7 +26,7 @@ OTHER_TENANT = "othertenant"
 # looked equivalent and was not: fixture teardown order between two independent
 # function-scoped fixtures is not specified, so the guard sometimes ran while
 # the roots were still patched and dutifully compared a tmp folder with itself.
-REAL_ROOTS = (config.DATA_ROOT, config.INDEX_ROOT, config.CONTROL_DIR)
+REAL_ROOTS = (config.DATA_ROOT, config.INDEX_ROOT, config.CONTROL_DIR, config.DERIVED_ROOT)
 
 
 def _listing() -> dict:
@@ -86,12 +86,66 @@ def never_the_real_control_plane(tmp_path, monkeypatch):
     yield control
 
 
+@pytest.fixture(autouse=True)
+def a_private_network_unless_a_test_says_otherwise(monkeypatch):
+    """The network-shape settings are pinned off, whatever the developer's .env says.
+
+    Found the way these things are found. PUBLIC_MODE arrived in Step 3.3 and
+    changes what GET / returns; the operator set PUBLIC_MODE=true in .env to
+    test the public surface on the real server, and two long-standing tests in
+    test_api.py started failing, because config reads .env at import and the
+    suite had quietly inherited it.
+
+    The bug was never those two tests. It is that a test result depended on a
+    file that is not in the repository, so the suite meant something different
+    on each machine. Pinned here rather than in the tests that noticed, for the
+    same reason the folder guards above are autouse: a test that has to
+    remember to pin an ambient setting is a test that will forget.
+
+    A test that is ABOUT public mode overrides this with its own monkeypatch,
+    which wins for the duration of that test. See tests/test_public_mode.py.
+
+    TRUST_CLIENT_IP_HEADER (Step 3.5) is pinned here for the same reason and
+    not a different one: it decides whether a request header can name the
+    client, so a suite that inherited it from .env would test a different
+    throttle on the server than on a laptop.
+    """
+    monkeypatch.setattr(config, "PUBLIC_MODE", False)
+    monkeypatch.setattr(config, "TRUST_CLIENT_IP_HEADER", False)
+
+
+@pytest.fixture(autouse=True)
+def no_context_window_unless_a_test_says_otherwise(monkeypatch):
+    """llm.model_window answers None, instead of asking a server that may exist.
+
+    History trimming (app/agent.py) asks the model server how big its window is
+    before every model call. Left alone in the suite that is a real HTTP request
+    to LLM_BASE_URL, so the tests would mean one thing on a laptop with vLLM
+    running and another on a laptop without it -- the same defect the
+    PUBLIC_MODE fixture above exists to stop, arriving through a socket rather
+    than through .env.
+
+    None is the honest pin: it is what the function returns when the server is
+    unreachable, and app/llm.py's documented contract for None is to change
+    nothing. So every test that is not about trimming sees exactly the
+    behaviour it saw before trimming existed.
+
+    A test that IS about trimming overrides this with its own monkeypatch and
+    sets the window it wants. See tests/test_agent.py.
+    """
+    monkeypatch.setattr(llm, "model_window", lambda model: None)
+
+
 @pytest.fixture()
 def tenant_storage(tmp_path, monkeypatch):
     """Throwaway DATA_ROOT and INDEX_ROOT, and a tenant to be. Yields the
     tenant's own data folder, which is what tests used to get as DATA_DIR."""
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
     monkeypatch.setattr(config, "INDEX_ROOT", tmp_path / "index")
+    # Step 2's derived artifacts. Redirected here rather than in the ingest
+    # tests for the reason the guard above exists: a root that only the tests
+    # which remembered redirect is a root the rest of the suite writes into.
+    monkeypatch.setattr(config, "DERIVED_ROOT", tmp_path / "derived")
     # The web app decides the tenant per request in middleware and overrides
     # whatever the caller had set, which is correct in production and would
     # otherwise send every TestClient request to the bootstrap tenant while the

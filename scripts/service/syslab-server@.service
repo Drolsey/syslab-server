@@ -1,0 +1,47 @@
+# The app on Linux, started at boot. vLLM is NOT started by this file -- it is
+# a container, and docker compose with restart:unless-stopped already brings it
+# back after a reboot.
+#
+#   sudo cp scripts/service/syslab-server@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now syslab-server@syslab
+#   systemctl status syslab-server@syslab
+#   journalctl -u syslab-server@syslab -f
+#
+# A TEMPLATE unit, and the "@" in the filename is the whole reason it works.
+# This file used to be syslab-server.service and still used %i for the user and
+# the home directory. %i is the instance name, and a unit with no instance has
+# none: installed under the old name every one of those paths expanded to
+# nothing and the unit could not start. The name carries the user now, which is
+# also what makes a second install on the same box possible.
+
+[Unit]
+Description=syslab-server, a local file assistant (%i)
+Documentation=https://github.com/Drolsey/syslab-server
+After=network-online.target docker.service
+Wants=network-online.target
+# docker.service, not ollama.service: the model is served by the vllm container
+# in docker-compose.yml (Step 1), and Ollama is a dev-laptop tool now.
+#
+# Deliberately After= and not Requires=: if vLLM is down the app should still
+# start, serve its files, and say plainly that the model is unreachable, rather
+# than refusing to run and taking the diagnosis with it.
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/syslab-server
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/%i/syslab-server/.venv/bin/python -m app.main
+Restart=on-failure
+RestartSec=5s
+
+# The app only ever needs its own folder.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/%i/syslab-server
+
+[Install]
+WantedBy=multi-user.target

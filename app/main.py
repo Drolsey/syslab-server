@@ -10,11 +10,11 @@ before there is a check on the door.
 
 from __future__ import annotations
 
-import hmac
 import re
 import time
 import unicodedata
-from collections import defaultdict
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,15 +23,18 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Respon
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from app import agent, config, context, jobs, search, tenancy, tools
+from app import (
+    agent, config, context, gateway, ingest, intake, jobs, models, plane, retrieve,
+    search, tenancy, tools, vectors,
+)
 from app.config import (
     APP_HOST,
     APP_PORT,
     DATA_ROOT,
+    LLM_MODEL,
     LOOPBACK,
     MAX_UPLOAD_BYTES,
     MIN_TOKEN_LENGTH,
-    OLLAMA_MODEL,
     WEAK_TOKENS,
     UnsafePathError,
     code_fingerprint,
@@ -44,12 +47,87 @@ from app.llm import LlmError
 WEB_DIR = Path(__file__).resolve().parent / "web"
 ALLOWED_SUFFIXES = {".pdf", ".xlsx", ".xlsm"}
 
-app = FastAPI(title="syslab-server", docs_url="/api/docs", redoc_url=None)
+# In public mode the interactive docs and the schema behind them are not
+# served at all. docs_url alone is not enough: the docs page is only a reader
+# for /openapi.json, and leaving that up publishes every route, including the
+# ones that write files, to anyone who asks. Both go, or neither does.
+app = FastAPI(
+    title="syslab-server",
+    docs_url=None if config.PUBLIC_MODE else "/api/docs",
+    redoc_url=None,
+    openapi_url=None if config.PUBLIC_MODE else "/openapi.json",
+)
+
+# The inference plane (Step 3.2). Its routes carry their own token check and
+# never resolve a tenant -- see app/gateway.py and the boundary in Section 2
+# of the architecture plan. Mounted here so all three planes share one
+# process, as the plan's architecture diagram has them.
+app.include_router(gateway.router)
+
+# The retrieval plane (Step 4.0). The opposite of the one above it: every route
+# it will carry requires a tenant, resolved from a foreign id through the
+# tenant_alias bridge in app/plane.py. Mounted with NO ROUTES YET on purpose --
+# 4.0 is the bridge, and POST /api/v1/retrieve arrives in 4.5 onto a router
+# that is already wired and already authenticated. Step 2.0 landed its pipeline
+# the same way.
+app.include_router(plane.router)
 
 # Recorded at import so the Phase 05 check can tell a process that started
 # itself at boot from one someone started by hand afterwards.
 STARTED_AT = time.time()
 CODE_FINGERPRINT = code_fingerprint()
+
+# Step 5.4: the embeddings producer and Vector retriever are additive and
+# role-gated -- unlike app/producers.py's TEXT/CHUNKS and app/passages.py's
+# Keyword, which self-register at import because they are foundational.
+# app/vectors.py deliberately does NOT self-register EMBEDDINGS/VECTOR (see
+# its own docstring: importing it once made every document in the system
+# report not-ready the moment [roles.embed] was empty, caught by the existing
+# suite). Registration is therefore this entrypoint's explicit decision, made
+# once at process start, exactly like STARTED_AT/CODE_FINGERPRINT above --
+# not a side effect of merely importing app.vectors, which every test in
+# tests/test_vectors.py still does without turning Step 5 on for the rest of
+# the suite.
+#
+# CHECKING [roles.embed] ALONE IS NOT ENOUGH, though it looks like it should
+# be. models.toml is one file shared by every checkout -- production, a dev
+# laptop, CI -- so once a real deployment fills in [roles.embed] (Step 5.4,
+# 18 September), every OTHER checkout inherits "the role is filled" too, with
+# no server actually listening. Since EMBEDDINGS.handles equals CHUNKS.handles,
+# registering it makes ingest.status()'s `ready` (every handling producer
+# holding a current row, app/ingest.py) depend on embeddings succeeding for
+# every chunked document -- so on a machine with no embed server this
+# reproduces the exact "every document reports not-ready" bug d417bd3 already
+# fixed once, just through config presence instead of an empty role. Caught
+# live: tests/test_intake.py failed the moment registration was gated on
+# model_for() alone, on this machine, with the real production models.toml.
+#
+# A live probe is the one thing models.toml's declaration cannot tell you
+# (see app/config.py's own note: EMBED_BASE_URL "existing is not the same
+# claim as a container answering at this URL") and the one thing that tells
+# a production deployment and an unrelated checkout apart. Failing the probe
+# skips registration -- falling back to keyword-only, Step 5's own documented
+# rollback ("nothing in Steps 0-4 reads anything this step writes") -- rather
+# than a new failure mode. Short timeout so a slow-to-start or momentarily
+# restarting embed container does not hold up app startup; if it is not
+# ready in time, the next process restart (already how a models.toml edit
+# takes effect) is what picks Step 5 back up.
+def _embed_reachable() -> bool:
+    try:
+        urllib.request.urlopen(f"{config.EMBED_BASE_URL}/models", timeout=3)
+        return True
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+try:
+    models.model_for("embed")
+except models.RoleUnavailable:
+    pass
+else:
+    if _embed_reachable():
+        ingest.register(vectors.EMBEDDINGS)
+        retrieve.register(vectors.VECTOR)
 
 
 # --------------------------------------------------------------------------
@@ -83,8 +161,18 @@ class ChatRequest(BaseModel):
 TOKEN_COOKIE = "syslab_token"
 MAX_FAILURES = 8
 FAILURE_WINDOW_SECONDS = 900
+# The most client addresses whose recent failures are remembered at once.
+# There is no correct number; there is only "bounded" versus "not bounded".
+MAX_TRACKED_CLIENTS = 4096
 
-_failures: dict[str, list[float]] = defaultdict(list)
+# A plain dict, NOT a defaultdict, and that is the fix rather than a style
+# preference. Reading _failures[client] on a defaultdict CREATES the key, so
+# the old code grew an entry for every address that ever tried to sign in,
+# successful or not, and never removed one: the timestamps inside a key were
+# pruned, the keys themselves never were. On a tailnet that is a leak slow
+# enough never to matter. Facing the internet it is free memory exhaustion
+# from an attacker who only has to vary their source address.
+_failures: dict[str, list[float]] = {}
 
 
 def token_is_configured() -> bool:
@@ -95,8 +183,12 @@ def token_is_configured() -> bool:
 
 def token_matches(candidate: str) -> bool:
     """Does this match the operator's own token in .env?"""
-    # compare_digest, not ==, so a wrong guess takes the same time as a right one
-    return token_is_configured() and hmac.compare_digest(candidate, config.APP_TOKEN)
+    # Constant-time, so a wrong guess takes the same time as a right one, and
+    # through config.tokens_equal rather than hmac.compare_digest directly:
+    # compare_digest raises TypeError on a non-ASCII str, so a bearer token
+    # with one accented letter used to reach a 500 from an unauthenticated
+    # caller instead of a 401.
+    return token_is_configured() and config.tokens_equal(candidate, config.APP_TOKEN)
 
 
 def tenant_for_token(candidate: str) -> str | None:
@@ -182,10 +274,62 @@ async def require_auth(request: Request):
         context.reset_tenant(reset)
 
 
+def _sweep_failures(cutoff: float) -> None:
+    """Forget clients whose failures have all aged out, and cap what is left.
+
+    Forgetting a throttle entry is always the safe direction: it gives an
+    attacker nothing they did not already have by waiting out the window, and
+    it can never lock out someone who belongs here.
+    """
+    for client in [c for c, times in _failures.items() if not any(t > cutoff for t in times)]:
+        del _failures[client]
+    if len(_failures) > MAX_TRACKED_CLIENTS:
+        # Still over the cap, so somebody is deliberately varying their
+        # address. Drop the least recently failing first.
+        oldest_first = sorted(_failures.items(), key=lambda item: max(item[1]))
+        for client, _ in oldest_first[: len(_failures) - MAX_TRACKED_CLIENTS]:
+            del _failures[client]
+
+
+def client_address(request: Request) -> str:
+    """Who to hold the login throttle against.
+
+    Behind Cloudflare Tunnel every request arrives from the cloudflared
+    container, so `request.client.host` is one address for the whole internet.
+    The throttle then counts the world's wrong guesses into a single bucket:
+    eight from anybody locks out everybody, which turns a rate limit into a
+    denial of service against the operator. Cloudflare puts the real address in
+    CF-Connecting-IP, and it sets that header itself, discarding whatever the
+    caller sent.
+
+    Guarded by a setting rather than always trusted, because the danger runs
+    the other way round when nothing is in front: a header anyone may set is a
+    throttle anyone may evade by varying one string. TRUST_CLIENT_IP_HEADER is
+    therefore off by default and is only true when the app is genuinely
+    unreachable except through the tunnel -- which is the same condition
+    docs/runbook.md makes the operator assert when they publish it.
+    """
+    if config.TRUST_CLIENT_IP_HEADER:
+        forwarded = request.headers.get("cf-connecting-ip", "").strip()
+        if forwarded:
+            # One address, never a list: CF-Connecting-IP is a single value.
+            # X-Forwarded-For is deliberately not read -- it is caller-appended
+            # and the left-most entry is whatever an attacker typed.
+            return forwarded[:64]
+    return request.client.host if request.client else "unknown"
+
+
 def _recent_failures(client: str) -> list[float]:
     cutoff = time.time() - FAILURE_WINDOW_SECONDS
-    _failures[client] = [t for t in _failures[client] if t > cutoff]
-    return _failures[client]
+    _sweep_failures(cutoff)
+    recent = [t for t in _failures.get(client, []) if t > cutoff]
+    # Only write back a key that has something in it. An empty list is the
+    # same information as no key at all, and one of the two is unbounded.
+    if recent:
+        _failures[client] = recent
+    else:
+        _failures.pop(client, None)
+    return recent
 
 
 # --------------------------------------------------------------------------
@@ -232,6 +376,13 @@ def unique_path(name: str) -> Path:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
+    # The page is an operator tool, not a product surface (Section 11 of the
+    # architecture plan). Unauthenticated it is harmless on a tailnet and it
+    # is an advertisement on the public internet, so in public mode there is
+    # nothing here. 404 rather than 401: "nothing to see" is a smaller
+    # disclosure than "something here needs a password".
+    if config.PUBLIC_MODE:
+        raise HTTPException(404, "Not found.")
     return HTMLResponse((WEB_DIR / "index.html").read_text(encoding="utf-8"))
 
 
@@ -244,13 +395,13 @@ def login(request: Request, response: Response, body: LoginRequest = Body(...)) 
             "py scripts/new_token.py or py scripts/tenant.py new \"Name\"",
         )
 
-    client = request.client.host if request.client else "unknown"
+    client = client_address(request)
     if len(_recent_failures(client)) >= MAX_FAILURES:
         raise HTTPException(429, "Too many wrong tokens. Wait fifteen minutes.")
 
     presented = body.token.strip()
     if tenant_for_token(presented) is None:
-        _failures[client].append(time.time())
+        _failures.setdefault(client, []).append(time.time())
         time.sleep(0.4)  # slow down anyone trying tokens in a loop
         remaining = MAX_FAILURES - len(_recent_failures(client))
         raise HTTPException(401, f"That token is not right. {remaining} attempts left.")
@@ -281,7 +432,7 @@ def logout(response: Response) -> dict:
 def health() -> dict:
     return {
         "ok": True,
-        "model": OLLAMA_MODEL,
+        "model": LLM_MODEL,
         "data_dir": str(data_dir()),
         "started_at": datetime.fromtimestamp(STARTED_AT).isoformat(timespec="seconds"),
         "job_kinds": jobs.lane.kinds,
@@ -324,21 +475,26 @@ async def upload(file: UploadFile = File(...)) -> dict:
     path = unique_path(name)
     path.write_bytes(contents)
 
-    # Index it now, while we have it. Doing this at upload is what lets someone
+    # Ingest it now, while we have it. Doing this at upload is what lets someone
     # later find a document by what is in it rather than by remembering its name.
     # A failure here must never lose the upload: the file is already on disk and
     # scripts/check_search.py can rebuild the index at any time.
-    indexed = False
-    try:
-        indexed = bool(search.index_file(path).get("indexed"))
-    except Exception:  # noqa: BLE001
-        pass
+    #
+    # intake.arrived does not raise, and it is what decides that the fast
+    # producers run here and anything slow goes to the job lane -- which is why
+    # a 200 page scan does not turn this into a request that times out.
+    outcome = intake.arrived(path)
 
     return {
         "name": path.name,
         "size_kb": round(len(contents) / 1024, 1),
         "renamed": path.name != name,
-        "searchable": indexed,
+        "searchable": bool(outcome.get("indexed")),
+        # Step 2.3. Without these an uploader has no way to know the document
+        # is not finished: "searchable" says the text is in, and says nothing
+        # about the producers still queued behind it.
+        "outstanding": outcome.get("deferred") or [],
+        "job": outcome.get("queued"),
     }
 
 
@@ -351,6 +507,82 @@ def download(name: str) -> FileResponse:
     if not path.is_file():
         raise HTTPException(404, f"No file named {name!r}.")
     return FileResponse(path, filename=path.name)
+
+
+# --------------------------------------------------------------------------
+# the ingestion pipeline
+# --------------------------------------------------------------------------
+#
+# Step 2.3. What has been produced from a document, what is outstanding, and a
+# way to ask for the outstanding work without waiting for it. The read side is
+# the point: before this, "is this document ready" had no answer, only a search
+# index row that either existed or did not.
+
+@app.get("/api/ingest", dependencies=[Depends(require_auth)])
+def ingest_summary() -> dict:
+    """The folder at a glance: what is ready, what is not, and what failed."""
+    ready, outstanding, failed = [], [], []
+    for path in sorted(config.ensure_data_dir().iterdir()):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        if not ingest.producers_for(path.suffix):
+            continue
+        state = ingest.status(path.name)
+        if state["failed"]:
+            failed.append(path.name)
+        elif state["ready"]:
+            ready.append(path.name)
+        else:
+            outstanding.append(path.name)
+    return {
+        "ready": ready,
+        "outstanding": outstanding,
+        "failed": failed,
+        "producers": sorted(ingest.registered()),
+    }
+
+
+@app.post("/api/ingest", status_code=202, dependencies=[Depends(require_auth)])
+def ingest_folder(only_fast: bool = False) -> dict:
+    """Reconcile and produce the whole folder. Always a job, never a wait.
+
+    This is the rebuild affordance the app never had: `search.rebuild()` was
+    reachable only from a script, so an operator whose index had drifted had to
+    open a terminal. It also forgets artifacts belonging to files that have
+    left, which for now is the only way that happens -- nothing here deletes a
+    document, so they go by hand and nothing notices until something sweeps.
+    """
+    try:
+        job = jobs.lane.submit(intake.FOLDER_INGEST, {"only_fast": only_fast})
+    except jobs.JobError as exc:
+        raise HTTPException(429, str(exc)) from exc
+    return job.public(jobs.lane.position_of(job.id))
+
+
+@app.get("/api/ingest/{name}", dependencies=[Depends(require_auth)])
+def ingest_status(name: str) -> dict:
+    """Is this document ready, and what failed?"""
+    try:
+        return ingest.status(name)
+    except ingest.IngestError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/ingest/{name}", dependencies=[Depends(require_auth)])
+def ingest_file(name: str) -> dict:
+    """Bring one document up to date.
+
+    Returns as soon as the fast producers are done. Anything slow is a job id
+    in the response rather than time spent in this request, which is the whole
+    point of decision 4.3 and the gate for this sub-step.
+    """
+    try:
+        path = resolve_in_data_dir(name)
+    except UnsafePathError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(404, f"No file named {name!r}.")
+    return intake.arrived(path)
 
 
 # --------------------------------------------------------------------------
@@ -438,7 +670,15 @@ def main() -> None:
         print("  Or set:   APP_HOST=127.0.0.1\n")
         raise SystemExit(2)
 
-    print(f"syslab-server: model {OLLAMA_MODEL}, files under {DATA_ROOT}")
+    # A token that could not be parsed authenticates nobody, which is the right
+    # direction to fail, but silently means an operator sees 401s and nothing
+    # explaining them. config drops malformed entries rather than raising at
+    # import, because a config typo that stops the process leaves no server to
+    # read the error from -- so it is said here instead.
+    for problem in config.RETRIEVAL_TOKEN_PROBLEMS:
+        print(f"  RETRIEVAL_TOKENS: ignoring an entry -- {problem}")
+
+    print(f"syslab-server: model {LLM_MODEL}, files under {DATA_ROOT}")
     if APP_HOST in LOOPBACK:
         print("Listening on this machine only. Phase 06 opens it to your tailnet.")
     else:

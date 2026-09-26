@@ -1,0 +1,11 @@
+{
+  "why": "Each file carries a unique string found nowhere else in the corpus. A gate asserts the parser reached the CONTENT, which a parser that silently produces empty text would otherwise pass.",
+  "sentinels": {
+    "format_html.html": "ZARAMANDA-HTML-7731",
+    "format_csv.csv": "ZARAMANDA-CSV-4412",
+    "format_docx.docx": "ZARAMANDA-DOCX-9028",
+    "format_scanned.pdf": "ZARAMANDA-SCAN-5567"
+  },
+  "format_corrupt.pdf": "no sentinel: this file must FAIL to parse, loudly",
+  "format_scanned.pdf": "the sentinel is in the IMAGE only. Until an OCR producer exists it is unreachable, and that is the measurement."
+}
