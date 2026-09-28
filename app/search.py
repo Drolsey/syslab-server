@@ -31,7 +31,7 @@ import unicodedata
 from pathlib import Path
 
 from app import ingest, producers
-from app.config import ensure_data_dir, ensure_index_dir, index_path
+from app.config import data_files, doc_id, ensure_data_dir, ensure_index_dir, index_path
 
 # Both moved to app/producers.py in Step 2.1 and re-exported here, because the
 # suffixes a file type can be read from are now a property of the producer that
@@ -116,21 +116,22 @@ def index_file(path: Path, connection: sqlite3.Connection | None = None) -> dict
         if path.suffix.lower() not in SEARCHABLE or not path.is_file():
             return {"name": path.name, "indexed": False, "reason": "not a searchable file"}
 
-        report = ingest.ingest(path.name, only_fast=True)
+        name = doc_id(path)
+        report = ingest.ingest(name, only_fast=True)
         unavailable = report["unavailable"].get(producers.TEXT.name)
         if unavailable:
             raise SearchError(unavailable)
-        text = producers.text_of(path.name) or ""
+        text = producers.text_of(name) or ""
         stat = path.stat()
-        connection.execute("DELETE FROM documents WHERE name = ?", (path.name,))
+        connection.execute("DELETE FROM documents WHERE name = ?", (name,))
         if text.strip():
             connection.execute(
                 "INSERT INTO documents (name, text, size, mtime, indexed_at) VALUES (?,?,?,?,?)",
-                (path.name, text, stat.st_size, stat.st_mtime, time.time()),
+                (name, text, stat.st_size, stat.st_mtime, time.time()),
             )
         connection.commit()
         return {
-            "name": path.name,
+            "name": name,
             "indexed": bool(text.strip()),
             "characters": len(text),
             # Do not name a cause this has not established. A scan is one
@@ -157,11 +158,7 @@ def rebuild(report=None) -> dict:
     This is the proof that the index is disposable. If it can always be
     rebuilt, nothing irreplaceable can accumulate in it.
     """
-    folder = ensure_data_dir()
-    files = sorted(
-        p for p in folder.iterdir()
-        if p.is_file() and p.suffix.lower() in SEARCHABLE and not p.name.startswith(".")
-    )
+    files = [p for p in data_files() if p.suffix.lower() in SEARCHABLE]
     # Check we can actually read these before throwing the index away. rebuild()
     # used to DELETE first and discover the missing parser afterwards, so a run
     # under the wrong interpreter cost the whole index and replaced it with
@@ -189,7 +186,7 @@ def rebuild(report=None) -> dict:
             result = index_file(path, connection)
             (indexed if result["indexed"] else skipped).append(result)
             if report:
-                report(number / max(1, len(files)), f"{number} of {len(files)}: {path.name}")
+                report(number / max(1, len(files)), f"{number} of {len(files)}: {doc_id(path)}")
     finally:
         connection.close()
     return {
@@ -240,15 +237,14 @@ def stale(connection: sqlite3.Connection | None = None) -> list[str]:
             for row in connection.execute("SELECT name, size, mtime FROM documents")
         }
         out = []
-        for path in ensure_data_dir().iterdir():
-            if not path.is_file() or path.suffix.lower() not in SEARCHABLE:
-                continue
-            if path.name.startswith("."):
+        for path in data_files():
+            if path.suffix.lower() not in SEARCHABLE:
                 continue
             stat = path.stat()
-            seen = known.get(path.name)
+            name = doc_id(path)
+            seen = known.get(name)
             if seen is None or int(seen[0]) != stat.st_size or abs(float(seen[1]) - stat.st_mtime) > 1:
-                out.append(path.name)
+                out.append(name)
         return sorted(out)
     finally:
         if own:

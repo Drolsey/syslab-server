@@ -1266,6 +1266,31 @@ the short version:
      keep a held-out part the tuning never sees. `retrieve.search()` already
      accepts per-retriever weights, so a change would be small.
 
+6. **Step 11, the operator dashboard (v2), 28 September. Built and tested locally; not yet
+   deployed to the box.** Decided the same day: the real client corpus will take a while and
+   retrieval tuning and LLM changes wait for it, so the dashboard was cut to the slice that
+   gets a corpus in and shows what the pipeline does with it. `docs/plans/step-11-operator-dashboard.md`
+   is versioned: v1 (the full dashboard) is kept there as Step 11b, deferred, with why each
+   part waits. Scope agreed: Syslab operators on the LAN only, personal accounts, one role,
+   `/admin` beside the old page at `/`, no cloud connectors (Steps 7 and 8).
+
+   - **11.1 nested folders.** A document's name is its path in the tenant's folder. A
+     top-level file keeps its bare name, so nothing stored needed migrating. Gates all pass;
+     `check_retrieval` numbers unchanged (documents MRR 0.576, passages 0.768, keyword-only
+     locally). database-agent's `sources` filter must send the path for nested documents.
+   - **11.2** `scripts/seed_test_corpus.py`: `syslab-test-corpus`, 57 documents, 56 ready,
+     `formats/format_corrupt.pdf` failed on purpose. Seeded on the laptop only.
+   - **11.3-11.6** `app/operators.py`, `app/throttle.py`, `app/admin.py`, `app/corpus.py`,
+     `app/web/admin/`, `scripts/operator_account.py` (not `operator.py`: that name shadows the
+     standard library's `operator` module when the script runs). Driven end to end in headless
+     Edge: a folder upload kept its structure, skipped `.DS_Store` and an `.exe`, ingested on
+     its own, and the retrieval tester cited `client-docs/contracts/...`. Suite **741 passed,
+     1 skipped** (was 684).
+   - **Still to do (11.7):** the security and code reviews, then deploy: pull on the box,
+     restart `syslab-server@syslab`, `python scripts/operator_account.py new <you>`,
+     optionally `python scripts/seed_test_corpus.py` (about 7 minutes of parsing), and accept
+     from a second LAN machine. Plain HTTP on the LAN is a named risk for the beta.
+
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
 10 September. `docs/plans/step-04-retrieval-plane.md`, to the standard of 0-3:

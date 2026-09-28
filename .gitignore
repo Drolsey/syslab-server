@@ -23,6 +23,8 @@ control/*
 !control/.gitkeep
 
 # runtime data
+# documents the dashboard removed from a corpus (Step 11.5)
+trash/
 data/*
 !data/.gitkeep
 logs/*
@@ -34,3 +36,6 @@ logs/*
 Thumbs.db
 .vscode/
 .idea/
+
+#Graphify outputs
+graphify-out/

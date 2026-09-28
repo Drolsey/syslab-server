@@ -417,7 +417,7 @@ def list_documents() -> dict:
     return {"count": listing["count"], "documents": listing["files"]}
 
 
-@router.get("/documents/{name}", dependencies=[Depends(require_tenant)])
+@router.get("/documents/{name:path}", dependencies=[Depends(require_tenant)])
 def document_status(name: str) -> dict:
     """Is this document ready, and what failed -- Step 2.3's own question.
 
@@ -431,7 +431,7 @@ def document_status(name: str) -> dict:
         raise HTTPException(404, str(exc)) from exc
 
 
-@router.post("/ingest/{name}", dependencies=[Depends(require_tenant)])
+@router.post("/ingest/{name:path}", dependencies=[Depends(require_tenant)])
 def ingest_document(name: str) -> dict:
     """Bring one of this tenant's documents up to date.
 

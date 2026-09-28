@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Syslab Server</title>
+<link rel="icon" href="/admin/assets/logo.png">
+<link rel="stylesheet" href="/admin/assets/admin.css">
+<script>
+  // Before first paint, so a dark-mode operator never sees a white flash.
+  try { var t = localStorage.getItem("syslab-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<script src="/admin/assets/admin.js" defer></script>
+</head>
+<body>
+
+<section class="login" id="login" hidden>
+  <form class="login-card" id="login-form" autocomplete="on">
+    <div class="bar" aria-hidden="true"></div>
+    <div class="mark">
+      <img src="/admin/assets/logo.png" alt="">
+      <div>
+        <h1>Syslab Server</h1>
+        <p class="sub">Operator dashboard</p>
+      </div>
+    </div>
+    <label class="field">Username
+      <input type="text" name="username" autocomplete="username" required autofocus>
+    </label>
+    <label class="field">Password
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <div class="error" id="login-error" role="alert" hidden></div>
+    <button class="btn primary" type="submit" style="justify-content:center">Sign in</button>
+    <p class="foot">Available on the Syslab office network only.</p>
+  </form>
+</section>
+
+<div class="shell" id="app" hidden>
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="/admin/assets/logo.png" alt="Syslab">
+      <div><b>Syslab</b><small>Server dashboard</small></div>
+    </div>
+    <nav class="nav" aria-label="Main">
+      <a href="#/overview" data-page="overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        <span>Overview</span></a>
+      <a href="#/companies" data-page="companies">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-5h6v5"/><path d="M9 10h.01M15 10h.01"/></svg>
+        <span>Companies</span></a>
+      <a href="#/corpus" data-page="corpus">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span>Corpus</span></a>
+      <a href="#/retrieval" data-page="retrieval">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span>Retrieval tester</span></a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="side-actions">
+      <button class="btn ghost icon" id="theme-toggle" type="button" aria-label="Switch light or dark mode" title="Light / dark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <button class="btn ghost icon" id="password-button" type="button" aria-label="Change password" title="Change password">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      </button>
+      <button class="btn ghost icon" id="signout" type="button" aria-label="Sign out" title="Sign out">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+      </button>
+    </div>
+    <div class="who">
+      <div class="avatar" id="who-initial" aria-hidden="true">?</div>
+      <div class="name"><b id="who-name"></b><small id="who-id"></small></div>
+    </div>
+  </aside>
+  <main id="view" tabindex="-1"></main>
+</div>
+
+<dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+</body>
+</html>

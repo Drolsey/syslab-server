@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Sequence
 
 from app import ingest, producers, retrieve, search
-from app.config import ensure_data_dir, index_path
+from app.config import data_files, doc_id, ensure_data_dir, index_path
 
 # Asked of the chunk producer rather than kept here, the way the text producer
 # asks app/parse. `search.SEARCHABLE` is three suffixes and is a Step 2 legacy
@@ -172,7 +172,7 @@ def index_file(path: Path, connection: sqlite3.Connection | None = None) -> dict
     """
     if path.suffix.lower() not in handles():
         return {"name": path.name, "passages": 0, "reason": "nothing chunks this file type"}
-    return index_source(path.name, connection)
+    return index_source(doc_id(path), connection)
 
 
 def remove(name: str, connection: sqlite3.Connection | None = None) -> None:
@@ -226,11 +226,7 @@ def rebuild(report=None) -> dict:
     """
     ingest.rebuild(only_fast=True)
 
-    folder = ensure_data_dir()
-    names = sorted(
-        p.name for p in folder.iterdir()
-        if p.is_file() and p.suffix.lower() in handles() and not p.name.startswith(".")
-    )
+    names = [doc_id(p) for p in data_files() if p.suffix.lower() in handles()]
     connection = connect()
     started = time.time()
     indexed, empty = [], []

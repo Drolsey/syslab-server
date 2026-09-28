@@ -13,7 +13,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from app import config, main
+from app import config, main, throttle
 
 TEST_TOKEN = "a-test-token-long-enough-to-count"
 
@@ -90,14 +90,15 @@ def test_failures_that_have_aged_out_are_forgotten_by_key(stranger):
 def test_the_throttle_is_bounded_under_a_flood(stranger, monkeypatch):
     """An attacker varying their source address must not be able to grow this
     without limit. The cap is arbitrary; being capped at all is not."""
-    monkeypatch.setattr(main, "MAX_TRACKED_CLIENTS", 10)
+    # Patched where the throttle reads it: it lives in app/throttle.py since 11.3.
+    monkeypatch.setattr(throttle, "MAX_TRACKED_CLIENTS", 10)
     now = time.time()
     for n in range(500):
         main._failures[f"10.0.{n // 256}.{n % 256}"] = [now]
 
     stranger.post("/api/login", json={"token": "wrong"})
 
-    assert len(main._failures) <= main.MAX_TRACKED_CLIENTS + 1
+    assert len(main._failures) <= throttle.MAX_TRACKED_CLIENTS + 1
 
 
 # That bounding the throttle did not cost it the job it exists to do is

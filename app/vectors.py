@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Sequence
 
 from app import embed, ingest, models, producers, retrieve, search
-from app.config import ensure_data_dir
+from app.config import doc_id, ensure_data_dir
 
 # scripts/bench_embeddings.py measured batching's throughput gain mostly
 # captured by 32 chunks per call (docs/models.md, Step 5.1's candidate
@@ -201,13 +201,14 @@ def _run_embeddings(source: Path, out_dir: Path) -> ingest.Result:
             f"this file: {exc}"
         ) from exc
 
-    current = producers.chunks_of(source.name)
+    name = doc_id(source)
+    current = producers.chunks_of(name)
     current_hashes = {c.chunk_id: _content_hash(c.text) for c in current}
     fingerprint = _config_fingerprint(config)
 
     connection = connect()
     try:
-        existing = _existing_rows(connection, source.name)
+        existing = _existing_rows(connection, name)
 
         if not current:
             gone = set(existing)
@@ -254,7 +255,7 @@ def _run_embeddings(source: Path, out_dir: Path) -> ingest.Result:
                     indexed_at   = excluded.indexed_at
                 """,
                 [
-                    (c.chunk_id, source.name, _pack(v), len(v),
+                    (c.chunk_id, name, _pack(v), len(v),
                      current_hashes[c.chunk_id], fingerprint, now)
                     for c, v in zip(batch, vectors)
                 ],

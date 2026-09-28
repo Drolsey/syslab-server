@@ -123,16 +123,11 @@ class Files:
     name: str = "files"
 
     def list(self) -> list[Item]:
-        from app.config import ensure_data_dir  # local: keeps the import graph flat
+        from app.config import data_files, doc_id  # local: keeps the import graph flat
 
-        return sorted(
-            (
-                Item(id=p.name, suffix=p.suffix.lower())
-                for p in ensure_data_dir().iterdir()
-                if p.is_file()
-            ),
-            key=lambda item: item.id,
-        )
+        # Subfolders included since 11.1, ids relative to the tenant's folder.
+        # Hidden files are now left out here rather than by every caller.
+        return [Item(id=doc_id(p), suffix=p.suffix.lower()) for p in data_files()]
 
     def fetch(self, item_id: str) -> Path:
         from app.config import UnsafePathError, resolve_in_data_dir

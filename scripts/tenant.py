@@ -20,15 +20,13 @@ If it is lost, revoke it and issue another.
 from __future__ import annotations
 
 import argparse
-import shutil
 import socket
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import tenancy  # noqa: E402
+from app import corpus, tenancy  # noqa: E402
 from app.config import (  # noqa: E402
     BOOTSTRAP_TENANT, CONTROL_PATH, DATA_ROOT, DERIVED_ROOT, INDEX_ROOT,
 )
@@ -147,7 +145,7 @@ def cmd_token_revoke(args) -> int:
 # deleting, which is the one thing here that cannot be undone
 # --------------------------------------------------------------------------
 
-REMOVED = "_removed"
+REMOVED = corpus.REMOVED
 
 
 def _app_is_running() -> bool:
@@ -226,34 +224,24 @@ def cmd_delete(args) -> int:
     print("\n  Removing")
     print("  " + LINE)
 
-    removed = tenancy.delete_tenant(tenant["id"])
+    # The removal itself lives in app/corpus.py since Step 11.5, so the
+    # dashboard retires a company exactly the way this does.
+    result = corpus.retire_company(tenant["id"], purge_files=args.purge_files)
+    removed = result["control"]
     print(f"  control plane: {removed['tokens']} token(s), {removed['users']} user(s), "
           f"{removed['tenant_database']} database row(s), and the tenant itself")
-
-    if index.exists():
-        index.unlink()
+    if result["index"]:
         print(f"  index:         deleted {index.name} (derived, rebuildable)")
-
-    # Deleted rather than moved aside, even when the documents are only moved.
-    # Everything in it can be made again from the files, so keeping it would
-    # preserve a second copy of the customer's text for no benefit.
-    if derived.exists():
-        shutil.rmtree(derived)
+    if result["derived"]:
         print("  derived:       deleted (artifacts and manifest, rebuildable)")
-
-    if not folder.exists():
-        print("  files:         none on disk")
-    elif args.purge_files:
-        shutil.rmtree(folder)
+    if result["files"] == "deleted":
         print(f"  files:         DELETED {count} file(s) permanently")
-    else:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        destination = DATA_ROOT / REMOVED / f"{tenant['id']}-{stamp}"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(folder), str(destination))
-        print(f"  files:         moved {count} file(s) to {destination}")
+    elif result["files"].startswith("moved to "):
+        print(f"  files:         {result['files']} ({count} file(s))")
         print("                 access is gone; the documents are not. Delete that")
         print("                 folder by hand when you are sure.")
+    else:
+        print("  files:         none on disk")
 
     print("\n  Done. The tenant cannot sign in, and nothing of theirs is reachable")
     print("  through the app.\n")

@@ -81,8 +81,58 @@ python scripts/tenant.py disable <id>          # instant and reversible; touches
 Copy the token when it is printed. Only its hash is stored, so it cannot be shown again; if
 lost, revoke it and issue another.
 
-Send the token on API requests as `Authorization: Bearer <token>` or `X-Syslab-Token: <token>`.
-The web page uses a cookie set by `POST /api/login`.
+Send the token on `/api/*` requests (upload, ingest, files, jobs, chat) as
+`Authorization: Bearer <token>` or `X-Syslab-Token: <token>`. The web page uses a cookie set by
+`POST /api/login`.
+
+**These tenant tokens do not work on `/api/v1/*`.** The retrieval plane has its own service
+tokens and tenant mapping; see section 5.
+
+## 3a. The operator dashboard (`/admin`)
+
+A web page for Syslab staff on the office LAN: companies, their document folders, ingestion,
+and a retrieval tester. It is **not** reachable from outside the LAN (see `ADMIN_ALLOWED_NETWORKS`
+in `.env.example`) and is switched off entirely when `PUBLIC_MODE=true`.
+
+**Create your account on the box** (once per person; there is no sign-up page):
+
+```bash
+python scripts/operator_account.py new amro --name "Amro Taha"     # asks for a password twice
+python scripts/operator_account.py new sara --generate             # or print a strong one once
+python scripts/operator_account.py list
+python scripts/operator_account.py reset-password sara             # also signs them out
+python scripts/operator_account.py disable sara                    # instant, reversible
+```
+
+Then open `http://192.168.1.185:8080/admin` from any machine on the office network.
+
+| Page | What it does |
+|---|---|
+| Overview | App uptime, whether the chat and embedding models answer, jobs, recent activity |
+| Companies | Create, disable, enable, delete (disable first, then type the id to confirm) |
+| Corpus | Browse a company's folders; upload files or a whole folder (or drag them in); new folder; download; re-ingest one file; move to trash; **Ingest now**; watch the job |
+| Retrieval tester | Ask a question as a company and see exactly what `/api/v1/retrieve` returns to database-agent |
+
+- A company is a tenant. Creating one here is the same as `scripts/tenant.py new`, with an id you
+  choose. Tokens and aliases for database-agent are still made with `scripts/tenant.py`.
+- Uploading a folder keeps its structure: `client-docs/contracts/lease.pdf` stays exactly that,
+  and that path is the document's name everywhere, including in retrieval citations.
+- Hidden files (`.DS_Store`, `.git/...`) and file types nothing reads are skipped and listed in
+  the upload summary. A file that already exists is left alone unless **Replace files that
+  already exist** is ticked.
+- An upload never ingests on its own request; the page starts one ingestion job when the batch
+  finishes. If the app restarts mid-job the job is lost (jobs live in memory), but the documents
+  still show as **Outstanding**; press **Ingest now**.
+- **Move to trash** moves the file or folder to `trash/<company>/<time>/` and removes it from
+  the index. Nothing is deleted; empty `trash/` by hand when you are sure.
+- Deleting a company moves its documents to `data/_removed/`, never deletes them.
+- Every change made through the page is recorded in `audit_log` in `control/control.sqlite3`,
+  under the operator who made it.
+
+**The test corpus as a company.** `python scripts/seed_test_corpus.py` creates
+`syslab-test-corpus` from `tests/fixtures/corpus` (52 contracts under `contracts/`, 5 format
+samples under `formats/`) and ingests it. Safe to run again. `formats/format_corrupt.pdf` fails
+on purpose, so there is always a failed document to look at.
 
 ## 4. Ingesting a corpus
 
@@ -90,13 +140,18 @@ A tenant's documents live in `data/<tenant-id>/`. Formats: `.pdf`, `.xlsx`, `.xl
 `.pptx`, `.md` (the non-PDF/Excel types are read through docling). Uploads are capped at
 `MAX_UPLOAD_MB` (default 50).
 
-**Step 1: get the files in.** Either way works:
+**Step 1: get the files in.** Any of these works:
 
 - **Upload** through the web page or `POST /api/upload`, one file at a time. It also starts
   ingesting that file.
 - **Copy** the files straight into `data/<tenant-id>/`. Easier for a whole corpus, but nothing
   is processed until you trigger step 2. Copy as the user the app runs as (`syslab`) so the
   app can read them.
+- **The dashboard** (section 3a): upload files or whole folders and it ingests them for you.
+
+Subfolders are fine (since Step 11.1). A document's name is its path inside the tenant's folder,
+e.g. `contracts/lease.pdf`, and that is the name every API and citation uses. A file at the top
+of the folder keeps its bare name.
 
 **Step 2: trigger ingest.** *(not yet run against a hand-copied folder)*
 
@@ -127,22 +182,34 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/ingest
 **Editing or deleting files.** Editing a file re-embeds only the chunks whose text changed.
 Deleting one is swept from the chunk and embedding tables on the next search.
 
-## 5. Searching
+## 5. Searching (the retrieval plane, `/api/v1`)
 
-The retrieval API, tenant-scoped by the token:
+This is what other systems (such as database-agent) call. It authenticates differently from the
+web app, with two credentials that answer two different questions:
+
+- **A service token** says which *system* is calling. Set `RETRIEVAL_TOKENS=<system>:<token>` in
+  the box's `.env` (comma-separated for several systems; generate a token with
+  `python scripts/new_token.py`; the system name is lowercase, e.g. `database-agent`). Restart
+  the app after editing `.env`. If it is empty, `/api/v1/*` answers `503`.
+- **An `X-Syslab-Tenant` header** names *that system's own* tenant id. An operator links it to one
+  of ours: `python scripts/tenant.py alias link <system> <their tenant id> <our tenant id>`.
+  An id nothing has linked answers `404`, never `403`. A missing header is `400`.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/api/v1/retrieve \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $RETRIEVAL_TOKEN" \
+  -H "X-Syslab-Tenant: <their tenant id>" \
+  -H "Content-Type: application/json" \
   -d '{"query": "who pays if the supplier delivers late", "k": 8}'
 ```
 
-`k` is 1 to 50 (default 8); `budget_tokens` caps returned text (default 4000). Other routes:
-`GET /api/v1/documents`, `GET /api/v1/documents/{name}`, `POST /api/v1/ingest/{name}`.
+`k` is 1 to 50 (default 8); `budget_tokens` caps returned text (default 4000). Other routes, same
+auth: `GET /api/v1/documents`, `GET /api/v1/documents/{name}`, `POST /api/v1/ingest/{name}`.
 
 With both retrievers registered, results are fused (reciprocal-rank fusion) from keyword and
-vector rankings. A paraphrased query ("who pays if the supplier is late") should find the
-clause even when it shares no words with it; that is what the vector retriever adds.
+vector rankings. Each passage's `found_by` says which retrievers found it, and the response's
+`retrievers` lists which ran. A paraphrased query should find a clause even when it shares no
+words with it; `found_by` containing `vector` is the visible proof the embeddings are wired in.
 
 ## 6. Measuring retrieval quality
 
@@ -211,3 +278,88 @@ opening anything, so they are safe to run against a live box.
 | Login `429` | too many wrong tokens | wait fifteen minutes |
 
 More failures and their fixes: [runbook.md](runbook.md) § Common failures.
+
+## 9. Testing database-agent's RAG wiring and tool calling
+
+database-agent (the Next.js app in `../database-agent`) uses this box two ways: chat and tool
+calling through the gateway (`:8080/v1`, model alias `syslab-default`), and document search
+through the retrieval plane (`:8080/api/v1/retrieve`). Test the box side first with `curl`, so
+that when the app misbehaves you know which half to blame.
+
+**A. Retrieval plane, from the box.** Do sections 4 and 5 first: a tenant with documents ingested,
+`RETRIEVAL_TOKENS=database-agent:<token>` in `.env` with the app restarted, and an alias linking
+database-agent's tenant id to that tenant. Then run the section 5 `curl`. A good answer has:
+- `retrievers` listing both `keyword` and `vector`, and `retrievers_unavailable` empty;
+- passages whose `found_by` includes `vector` for a paraphrased query;
+- a `coverage` block (`searched`, `matched`, `returned`).
+
+Errors mean: `503` no `RETRIEVAL_TOKENS` set, `401` wrong token, `400` no `X-Syslab-Tenant`
+header, `404` that tenant id is not linked.
+
+**B. Tool calling, straight at the gateway.** Send a request that should make the model call a
+tool, and check that the reply contains `tool_calls` instead of prose (the token is one of the
+box's `GATEWAY_TOKENS`):
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer $GATEWAY_TOKEN" -H "Content-Type: application/json" \
+  -d '{"model": "syslab-default",
+       "messages": [{"role": "user", "content": "What is the weather in Cairo? Use the tool."}],
+       "tools": [{"type": "function", "function": {"name": "get_weather",
+         "description": "Current weather for a city",
+         "parameters": {"type": "object",
+           "properties": {"city": {"type": "string"}}, "required": ["city"]}}}]}'
+```
+
+Expect `choices[0].message.tool_calls[0].function.name` to be `get_weather` with
+`{"city": "Cairo"}`. The model's `<think>` text should be in a separate `reasoning` field, not in
+`content`. *(request shape not yet run; adjust if the gateway wants different fields)*
+
+**C. Wire database-agent to the box.** In `database-agent/.env.local` (never commit it):
+
+```
+MODEL_BASE_URL=http://192.168.1.185:8080/v1
+MODEL_API_KEY=<a GATEWAY_TOKENS value>
+RETRIEVAL_BASE_URL=http://192.168.1.185:8080/api/v1
+RETRIEVAL_TOKEN=<the database-agent value from RETRIEVAL_TOKENS>
+```
+
+Restart `npm run dev`. If `RETRIEVAL_BASE_URL` or `RETRIEVAL_TOKEN` is unset, the
+`search_documents` tool is simply not offered, so a missing tool usually means missing config.
+
+The app sends its own workspace tenant id as `X-Syslab-Tenant`. That exact id has to be linked on
+the box with `python scripts/tenant.py alias link database-agent <that workspace id> <our tenant id>`.
+Check with `python scripts/tenant.py alias list`.
+
+The workspace id is whatever database-agent uses as its own tenant id (`lib/services/tenancy.ts`):
+- **Local dev with no signed-in company** (open access, the dev default): the constant
+  `ten_local`.
+- **A signed-in user who belongs to a company:** that user's `companyId`, the `id` of their row in
+  database-agent's `Company` table. Look it up with `npx prisma studio` in `database-agent`, or
+  with SQL against its Postgres.
+- **A user with no company** falls back to `ten_local`.
+
+The `404` from step A does *not* tell you which id was sent; it only says the id isn't linked.
+
+**D. Automated live test, from `database-agent`.** It skips itself unless all three variables are
+set, and it queries contract text, so the linked tenant must hold the benchmark contracts
+(`tests/fixtures/corpus/contracts/` in this repo):
+
+```powershell
+$env:RETRIEVAL_BASE_URL = "http://192.168.1.185:8080/api/v1"
+$env:RETRIEVAL_TOKEN = "<token>"
+$env:RETRIEVAL_TEST_TENANT = "<the workspace id you linked>"
+npm test
+```
+
+`tests/retrieval-integration-live.test.ts` should then show a paraphrase query returning passages
+found by `vector`, a bad token rejected with 401, and an unreachable server turned into an error.
+
+**E. By hand in the app.** Ask a question that needs the documents, for example (from the
+benchmark's paraphrase queries) *"if somebody else gets a sweeter deal later do we automatically
+get it too"*. In the step trace you should see `Searched documents: ...` with a detail like
+`5 of 40 matching passages`, then an answer that cites a source file. A failed retrieval shows as
+a failed step with the reason, and the model is told retrieval failed rather than being handed
+invented context. To test SQL tool calling, ask a data question and confirm a `run_sql` step
+appears, and check the query really ran rather than trusting a table on screen (HANDOVER.md
+explains why the screen alone is not proof).

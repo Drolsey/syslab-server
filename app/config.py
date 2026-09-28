@@ -145,6 +145,12 @@ INDEX_ROOT = _path("INDEX_DIR", PROJECT_ROOT / "index")
 # search index.
 DERIVED_ROOT = _path("DERIVED_DIR", PROJECT_ROOT / "derived")
 
+# --- trash (Step 11.5) ---
+# Where the dashboard moves a document or folder it removes from a corpus.
+# Outside DATA_DIR so the pipeline never sees it, and not deleted, so a misclick
+# is a move back rather than a lost document. Emptied by hand for now.
+TRASH_ROOT = _path("TRASH_DIR", PROJECT_ROOT / "trash")
+
 # --- control plane ---
 # Who exists, and which token belongs to whom. Deliberately outside DATA_DIR,
 # which is customer content, and outside INDEX_DIR, which is a derived cache
@@ -216,6 +222,19 @@ LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 WEAK_TOKENS = {"", "change-me", "changeme", "password", "token", "secret"}
 MIN_TOKEN_LENGTH = 16
 
+
+# --- the operator dashboard (Step 11.3) ---
+# Where /admin may be reached from. Private LAN ranges and this machine, and
+# 172.16.0.0/12 DELIBERATELY NOT: that is where Docker bridge networks live,
+# which is where a cloudflared container's traffic would arrive from. Judged on
+# the TCP peer address only, never on a forwarded header. The dashboard is also
+# not mounted at all in PUBLIC_MODE; this is the second lock, not the first.
+ADMIN_ALLOWED_NETWORKS = [
+    n.strip() for n in _env(
+        "ADMIN_ALLOWED_NETWORKS", "127.0.0.0/8,::1/128,10.0.0.0/8,192.168.0.0/16"
+    ).split(",") if n.strip()
+]
+ADMIN_SESSION_HOURS = int(_env("ADMIN_SESSION_HOURS", "12"))
 
 # --- the retrieval plane (Step 4.0) ---
 def _retrieval_tokens(raw: str) -> tuple[dict[str, str], list[str]]:
@@ -391,6 +410,50 @@ def resolve_in_data_dir(name: str) -> Path:
     if resolved != root and root not in resolved.parents:
         raise UnsafePathError(f"Refusing path outside the data folder: {name}")
     return resolved
+
+
+def doc_id(path: Path) -> str:
+    """A document's name: its path relative to the tenant's folder, with /.
+
+    Step 11.1. Every index, manifest row and chunk id used to key on the bare
+    filename, so contracts/a.pdf and invoices/a.pdf were one document. A file
+    at the top of the folder still gets its bare name, which is why nothing
+    already stored needed migrating.
+
+    Raises UnsafePathError for a path outside the folder rather than falling
+    back to the bare name: a fallback is how two tenants' a.pdf would meet.
+    """
+    root = data_dir().resolve()
+    try:
+        return Path(path).resolve().relative_to(root).as_posix()
+    except ValueError as exc:
+        raise UnsafePathError(f"{path} is not inside this tenant's folder.") from exc
+
+
+def data_files() -> list[Path]:
+    """Every visible file in the tenant's folder, subfolders included.
+
+    Hidden files and anything under a hidden folder are skipped, the same rule
+    the flat listing had for files. Sorted by document name so every caller
+    walks in the same order.
+    """
+    root = ensure_data_dir()
+    found = [
+        p for p in root.rglob("*")
+        if p.is_file() and not any(part.startswith(".") for part in p.relative_to(root).parts)
+    ]
+    return sorted(found, key=lambda p: p.relative_to(root).as_posix())
+
+
+def derived_key(name: str) -> str:
+    """A document name as ONE folder name under derived/<tenant>/<producer>/.
+
+    Escaping rather than nesting keeps every producer folder one level deep, so
+    forget() and forget_missing() stay a single listdir. '%' goes first so the
+    mapping reverses exactly (urllib.parse.unquote); a name with neither
+    character -- every name stored before 11.1 -- maps to itself.
+    """
+    return name.replace("%", "%25").replace("/", "%2F")
 
 
 def code_fingerprint() -> str:

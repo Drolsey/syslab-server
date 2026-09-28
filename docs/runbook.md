@@ -106,6 +106,29 @@ the fix.
 
 ---
 
+## The operator dashboard (`/admin`)
+
+LAN-only web page for Syslab staff (Step 11). `docs/usage.md` section 3a has what each page does.
+
+```bash
+python scripts/operator_account.py new <you>          # the first account; there is no sign-up page
+python scripts/operator_account.py reset-password <who>
+python scripts/operator_account.py disable <who>      # ends their sessions at once
+```
+
+- **Locked out after wrong passwords:** the throttle is shared with the tenant login, eight
+  failures per address or per username in fifteen minutes. Wait it out or restart the app.
+- **404 on `/admin` from a LAN machine:** its address is outside `ADMIN_ALLOWED_NETWORKS`, or
+  `PUBLIC_MODE=true`. Docker's `172.16.0.0/12` is excluded on purpose.
+- **Trash:** removed documents sit in `trash/<company>/<time>/`. Restore by moving the file back
+  into `data/<company>/` and pressing **Ingest now**; empty it with `rm -rf trash/<company>/<time>`.
+- **Backups:** `control/control.sqlite3` now also holds operator accounts, sessions and the
+  audit log. It was already the one directory worth backing up; it is more so now.
+- **Plain HTTP:** passwords and the session cookie cross the office LAN unencrypted. Acceptable
+  for the beta on a trusted LAN; put TLS in front (or use it over Tailscale) before anything more.
+- **Never publish it:** the tunnel's WAF rule must keep blocking everything except `/v1`.
+  `PUBLIC_MODE=true` also unmounts the dashboard.
+
 ## Publishing it: Cloudflare Tunnel
 
 Done once. The tunnel dials out to Cloudflare and holds the connection open, so

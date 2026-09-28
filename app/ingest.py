@@ -62,9 +62,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from urllib.parse import unquote
 
 from app import sources
-from app.config import ensure_derived_dir, manifest_path
+from app.config import derived_key, doc_id, ensure_derived_dir, manifest_path
 
 # A recorded error is read by a person scanning a manifest and, later, by a
 # model deciding whether a document is usable. A stack trace pasted whole
@@ -446,10 +447,12 @@ def output_dir(producer_name: str, source_name: str) -> Path:
     that makes one thing today makes forty page images tomorrow, and forget()
     has to be able to remove all of it without knowing which.
 
-    source_name is a real filename read off disk, so it is already legal as a
-    directory name; nothing model-supplied reaches here unresolved.
+    source_name is a document name built from a path read off disk, so each
+    part is already legal in a directory name; nothing model-supplied reaches
+    here unresolved. Since 11.1 it may hold '/', which derived_key escapes so
+    the folder stays one level deep.
     """
-    return ensure_derived_dir() / producer_name / source_name
+    return ensure_derived_dir() / producer_name / derived_key(source_name)
 
 
 def _prune_if_empty(folder: Path) -> None:
@@ -525,7 +528,7 @@ def ingest(name: str, *, only_fast: bool = False) -> dict:
     """
     source = _source(name)
     stat = source.stat()
-    key = source.name
+    key = doc_id(source)
 
     report = {
         "name": key,
@@ -627,7 +630,7 @@ def needs(name: str) -> list[str]:
     connection = connect()
     try:
         handling = producers_for(source.suffix)
-        stale = _must_run(_rows(connection, source.name), stat, handling)
+        stale = _must_run(_rows(connection, doc_id(source)), stat, handling)
         return [p.name for p in handling if p.name in stale]
     finally:
         connection.close()
@@ -644,8 +647,11 @@ def deferred(name: str) -> list[str]:
     return [n for n in needs(name) if n in _PRODUCERS and _PRODUCERS[n].slow]
 
 
-def status(name: str) -> dict:
+def status(name: str, connection: sqlite3.Connection | None = None) -> dict:
     """Is this document ready, and what failed?
+
+    `connection` lets a caller asking about many documents -- the dashboard's
+    folder listing -- open the manifest once rather than once per document.
 
     The question the index cannot answer today, and the reason this step
     exists. `ready` is every handling producer holding a current row that is
@@ -658,10 +664,11 @@ def status(name: str) -> dict:
     """
     source = _source(name)
     stat = source.stat()
-    connection = connect()
+    own = connection is None
+    connection = connection or connect()
     try:
         handling = producers_for(source.suffix)
-        existing = _rows(connection, source.name)
+        existing = _rows(connection, doc_id(source))
         must_run = _must_run(existing, stat, handling)
         detail: dict[str, dict] = {}
         missing, stale_now, failed = [], [], []
@@ -689,7 +696,7 @@ def status(name: str) -> dict:
                 "updated_at": row["updated_at"],
             }
         return {
-            "name": source.name,
+            "name": doc_id(source),
             "ready": not missing and not stale_now and not failed,
             "producers": detail,
             "missing": missing,
@@ -697,7 +704,8 @@ def status(name: str) -> dict:
             "failed": failed,
         }
     finally:
-        connection.close()
+        if own:
+            connection.close()
 
 
 def forget(name: str) -> dict:
@@ -709,17 +717,21 @@ def forget(name: str) -> dict:
     registered, because a producer removed from the code does not take its old
     output with it.
     """
-    key = Path(str(name).replace("\\", "/")).name
-    if not key or key in {".", ".."}:
+    # A document name, subfolders included since 11.1. It is only ever a key:
+    # derived_key() turns it into ONE folder name, so no part of it can walk
+    # out of a producer folder -- but a '..' part is refused anyway, because
+    # no name the pipeline makes has one.
+    key = str(name).replace("\\", "/").strip("/")
+    if not key or any(part in {"", ".", ".."} for part in key.split("/")):
         raise IngestError(f"{name!r} does not name a file.")
 
     removed = []
     root = ensure_derived_dir()
     for producer_folder in sorted(p for p in root.iterdir() if p.is_dir()):
-        target = producer_folder / key
+        target = producer_folder / derived_key(key)
         if target.is_dir():
             shutil.rmtree(target, ignore_errors=True)
-            removed.append(f"{producer_folder.name}/{key}")
+            removed.append(f"{producer_folder.name}/{derived_key(key)}")
         _prune_if_empty(producer_folder)
 
     connection = connect()
@@ -767,11 +779,11 @@ def forget_missing() -> dict:
     finally:
         connection.close()
     for producer_folder in (p for p in root.iterdir() if p.is_dir()):
-        known.update(p.name for p in producer_folder.iterdir() if p.is_dir())
+        known.update(unquote(p.name) for p in producer_folder.iterdir() if p.is_dir())
 
     # Set membership rather than `(folder / name).is_file()`. Same answer for
-    # every name the pipeline can produce -- source_name is always a bare
-    # filename -- and it no longer turns a manifest row into a path lookup,
+    # every name the pipeline can produce -- source_name is a document name,
+    # relative to the tenant's folder -- and it never turns a manifest row into a path lookup,
     # which is the sort of thing a hand-edited control plane gets to exploit.
     gone = sorted(known - present)
     removed = []

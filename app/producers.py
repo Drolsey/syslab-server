@@ -169,9 +169,9 @@ def text_of(source_name: str) -> str | None:
     "this has not been produced yet"; a caller that needs to tell those apart
     asks ingest.status().
     """
-    from app.config import derived_dir  # local: this module is imported early
+    from app.config import derived_dir, derived_key  # local: this module is imported early
 
-    written = derived_dir() / TEXT.name / source_name / TEXT_ARTIFACT
+    written = derived_dir() / TEXT.name / derived_key(source_name) / TEXT_ARTIFACT
     try:
         return written.read_text(encoding="utf-8")
     except OSError:
@@ -199,7 +199,10 @@ def _run_chunks(source: Path, out_dir: Path) -> ingest.Result:
     enough to be worth saying out loud -- a producer signature is a contract
     and not every producer has to open the file it is about.
     """
-    text = text_of(source.name)
+    from app.config import doc_id  # local: this module is imported early
+
+    name = doc_id(source)
+    text = text_of(name)
 
     if text is None:
         # No text artifact. Either the text producer skipped this file -- a
@@ -211,7 +214,7 @@ def _run_chunks(source: Path, out_dir: Path) -> ingest.Result:
             "there is no extracted text for this file to split into passages"
         )
 
-    made = chunks.split(text, source.name)
+    made = chunks.split(text, name)
     if not made:
         return ingest.Result.nothing("the extracted text is empty, so there is nothing to split")
 
@@ -223,7 +226,7 @@ def _run_chunks(source: Path, out_dir: Path) -> ingest.Result:
     # between two. This project already runs the same code on Windows and
     # on the Ubuntu box.
     written.write_text(
-        chunks.dumps(source.name, len(text), made),
+        chunks.dumps(name, len(text), made),
         encoding="utf-8",
         newline="\n",
     )
@@ -262,9 +265,9 @@ def chunks_of(source_name: str) -> list[chunks.Chunk]:
     format this reader does not know". A caller that needs to tell those apart
     asks ingest.status(), which is where that question is answerable.
     """
-    from app.config import derived_dir  # local: this module is imported early
+    from app.config import derived_dir, derived_key  # local: this module is imported early
 
-    written = derived_dir() / CHUNKS.name / source_name / CHUNKS_ARTIFACT
+    written = derived_dir() / CHUNKS.name / derived_key(source_name) / CHUNKS_ARTIFACT
     try:
         payload = written.read_text(encoding="utf-8")
     except OSError:

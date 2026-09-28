@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from app.config import UnsafePathError, ensure_data_dir, resolve_in_data_dir
+from app.config import UnsafePathError, data_files, doc_id, ensure_data_dir, resolve_in_data_dir
 
 TOOL_FOR_SUFFIX = {".pdf": "read_pdf", ".xlsx": "read_excel", ".xlsm": "read_excel"}
 
@@ -83,10 +83,7 @@ def _resolve(filename: str, must_exist: bool) -> Path:
     except UnsafePathError as exc:
         raise ToolError(str(exc)) from exc
     if must_exist and not path.is_file():
-        available = [
-            p.name for p in sorted(ensure_data_dir().iterdir())
-            if p.is_file() and not p.name.startswith(".")
-        ]
+        available = [doc_id(p) for p in data_files()]
         # Before anything else: is the user asking for a database table?
         # "Report" is a table in the customer database and not a file, and
         # answering that with eighteen unrelated filenames is what sends the
@@ -182,21 +179,22 @@ def list_files() -> dict:
     """
     folder = ensure_data_dir()
     files = []
-    for path in sorted(folder.iterdir()):
-        if path.is_file() and not path.name.startswith("."):
-            stat = path.stat()
-            files.append(
-                {
-                    "name": path.name,
-                    "size_kb": round(stat.st_size / 1024, 1),
-                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(
-                        sep=" ", timespec="minutes"
-                    ),
-                    # Saying this here costs nothing and saves a wasted call:
-                    # otherwise the model guesses the tool from the file name.
-                    "read_with": TOOL_FOR_SUFFIX.get(path.suffix.lower(), "not readable"),
-                }
-            )
+    for path in data_files():
+        stat = path.stat()
+        files.append(
+            {
+                # Relative to the folder since 11.1: contracts/a.pdf, and the
+                # model passes exactly that back to read_pdf.
+                "name": doc_id(path),
+                "size_kb": round(stat.st_size / 1024, 1),
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(
+                    sep=" ", timespec="minutes"
+                ),
+                # Saying this here costs nothing and saves a wasted call:
+                # otherwise the model guesses the tool from the file name.
+                "read_with": TOOL_FOR_SUFFIX.get(path.suffix.lower(), "not readable"),
+            }
+        )
     return {"folder": str(folder), "count": len(files), "files": files}
 
 
@@ -236,7 +234,7 @@ def read_pdf(filename: str, pages: str | None = None) -> dict:
     empty = all("(no extractable text)" in c for c in chunks)
 
     result = {
-        "file": path.name,
+        "file": doc_id(path),
         "page_count": page_count,
         "pages_read": [i + 1 for i in wanted],
         "characters": len(body),
@@ -326,7 +324,7 @@ def read_excel(filename: str, sheet: str | None = None, max_rows: int = MAX_ROWS
 
     header = rows[0] if rows else []
     result = {
-        "file": path.name,
+        "file": doc_id(path),
         "sheet": sheet_title,
         "sheets_available": names,
         "total_rows": total,
@@ -385,6 +383,7 @@ def write_excel(
     path = _resolve(filename, must_exist=False)
     if path.suffix.lower() not in {".xlsx", ".xlsm"}:
         raise ToolError("write_excel only writes .xlsx files. Give the filename an .xlsx suffix.")
+    path.parent.mkdir(parents=True, exist_ok=True)  # the name may include a subfolder
 
     existed = path.is_file()
     if existed:
@@ -437,7 +436,7 @@ def write_excel(
     _index_quietly(path)
 
     return {
-        "file": path.name,
+        "file": doc_id(path),
         "path": str(path),
         "sheet": ws.title,
         "action": "appended to" if (existed and mode == "append") else ("overwrote" if existed else "created"),
@@ -473,6 +472,7 @@ def write_pdf(filename: str, title: str, body: str) -> dict:
         raise ToolError("A title is required.")
     if not str(body).strip():
         raise ToolError("The body text is empty; there would be nothing on the page.")
+    path.parent.mkdir(parents=True, exist_ok=True)  # the name may include a subfolder
 
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
@@ -526,7 +526,7 @@ def write_pdf(filename: str, title: str, body: str) -> dict:
     text = str(body).strip()
     opening = " ".join(text.split())[:160]
     return {
-        "file": path.name,
+        "file": doc_id(path),
         "path": str(path),
         "pages": doc.page,
         "paragraphs": paragraphs,

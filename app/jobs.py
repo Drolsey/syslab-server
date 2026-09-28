@@ -178,6 +178,18 @@ class Lane:
                        if i in self._jobs and self._jobs[i].status == QUEUED]
         return waiting.index(job_id) + 1 if job_id in waiting else None
 
+    def counts(self) -> dict:
+        """How busy the lane is, server-wide, for the operator dashboard.
+
+        Numbers only and no tenant needed: snapshot() already treats how busy
+        the machine is as public, and only WHICH jobs are whose as private.
+        """
+        with self._lock:
+            self._prune()
+            statuses = [self._jobs[i].status for i in self._order if i in self._jobs]
+        return {"queued": statuses.count(QUEUED), "running": statuses.count(RUNNING),
+                "workers": self._worker_count, "persistent": False}
+
     def snapshot(self, limit: int = 40) -> dict:
         tenant = context.current_tenant()
         with self._lock:

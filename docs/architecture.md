@@ -80,6 +80,10 @@ passages.py     -> config, ingest, producers, retrieve, search    FTS5 over PASS
 embed.py        -> config            one POST to the embedding server, app/llm.py's shape
 vectors.py      -> embed, ingest, models, producers, retrieve, search   embeddings + Vector, Step 5.2/5.3
 intake.py       -> ingest, jobs, passages, search    what happens to a new file, in one place
+throttle.py     -> config           the sign-in throttle both logins share (Step 11.3)
+operators.py    -> config, tenancy  operator accounts, sessions, audit log (Step 11.3)
+corpus.py       -> config, ingest, parse, passages, retrieve, search, tenancy   a company's folder on disk (Step 11.5)
+admin.py        -> config, context, corpus, intake, jobs, operators, plane, retrieve, tenancy, throttle   /admin (Step 11)
 agent.py        -> config, db, jobs, llm, search, tools
 main.py         -> everything       FastAPI, the auth dependency, the three planes
 ```
@@ -221,6 +225,16 @@ still to come.
 | **Inference** | `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/audio/*` | none | **No, enforced by a source check** |
 | **Retrieval** | `POST /api/v1/retrieve` (Step 4.6); `/api/v1/documents` and `/api/v1/ingest/{name}` are Step 4.8 | required, resolved through `tenant_alias` | Yes |
 | **Local** | the existing `/api/*` and `app/agent.py` | required | Yes, unchanged |
+| **Operator** | `/admin` and `/admin/api/*` (Step 11) | none of its own: an operator acts on each company inside `context.use_tenant` | Yes, through the same `resolve_in_data_dir` |
+
+The operator surface is LAN-only (`ADMIN_ALLOWED_NETWORKS`, TCP peer only), not mounted in
+`PUBLIC_MODE`, signed into with a personal operator account, and its cookie is scoped to
+`/admin` so it is never a credential on the other three planes (`tests/test_admin.py`).
+
+**A document's name is its path inside the tenant's folder** (Step 11.1): `contracts/a.pdf`,
+or a bare `a.pdf` at the top level. That one string is the manifest key, the index row, the
+`source` in every citation and the prefix of every `chunk_id`. Under `derived/<tenant>/<producer>/`
+it is stored as one folder name with `/` escaped as `%2F`.
 
 **Both `/v1` and `/api/v1` are frozen contracts**, compared independently on every run of
 `scripts/check_api_compat.py` against `docs/api/gateway-v1.released.json` and

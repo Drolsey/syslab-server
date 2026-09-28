@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from app import (
-    agent, config, context, gateway, ingest, intake, jobs, models, plane, retrieve,
+    admin, agent, config, context, gateway, ingest, intake, jobs, models, plane, retrieve,
     search, tenancy, tools, vectors,
 )
 from app.config import (
@@ -43,6 +43,10 @@ from app.config import (
     resolve_in_data_dir,
 )
 from app.llm import LlmError
+from app.throttle import (  # noqa: F401 - re-exported; tests reach them here
+    FAILURE_WINDOW_SECONDS, MAX_FAILURES, MAX_TRACKED_CLIENTS, _failures, _recent_failures,
+    _sweep_failures, client_address,
+)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 ALLOWED_SUFFIXES = {".pdf", ".xlsx", ".xlsm"}
@@ -71,6 +75,12 @@ app.include_router(gateway.router)
 # that is already wired and already authenticated. Step 2.0 landed its pipeline
 # the same way.
 app.include_router(plane.router)
+
+# The operator dashboard (Step 11). LAN-only and never part of a public
+# surface, so in public mode it is not mounted at all -- app/admin.py still
+# refuses per request, in case the setting and the mount ever disagree.
+if not config.PUBLIC_MODE:
+    app.include_router(admin.router)
 
 # Recorded at import so the Phase 05 check can tell a process that started
 # itself at boot from one someone started by hand afterwards.
@@ -159,20 +169,6 @@ class ChatRequest(BaseModel):
 # the way you left it.
 
 TOKEN_COOKIE = "syslab_token"
-MAX_FAILURES = 8
-FAILURE_WINDOW_SECONDS = 900
-# The most client addresses whose recent failures are remembered at once.
-# There is no correct number; there is only "bounded" versus "not bounded".
-MAX_TRACKED_CLIENTS = 4096
-
-# A plain dict, NOT a defaultdict, and that is the fix rather than a style
-# preference. Reading _failures[client] on a defaultdict CREATES the key, so
-# the old code grew an entry for every address that ever tried to sign in,
-# successful or not, and never removed one: the timestamps inside a key were
-# pruned, the keys themselves never were. On a tailnet that is a leak slow
-# enough never to matter. Facing the internet it is free memory exhaustion
-# from an attacker who only has to vary their source address.
-_failures: dict[str, list[float]] = {}
 
 
 def token_is_configured() -> bool:
@@ -274,62 +270,6 @@ async def require_auth(request: Request):
         context.reset_tenant(reset)
 
 
-def _sweep_failures(cutoff: float) -> None:
-    """Forget clients whose failures have all aged out, and cap what is left.
-
-    Forgetting a throttle entry is always the safe direction: it gives an
-    attacker nothing they did not already have by waiting out the window, and
-    it can never lock out someone who belongs here.
-    """
-    for client in [c for c, times in _failures.items() if not any(t > cutoff for t in times)]:
-        del _failures[client]
-    if len(_failures) > MAX_TRACKED_CLIENTS:
-        # Still over the cap, so somebody is deliberately varying their
-        # address. Drop the least recently failing first.
-        oldest_first = sorted(_failures.items(), key=lambda item: max(item[1]))
-        for client, _ in oldest_first[: len(_failures) - MAX_TRACKED_CLIENTS]:
-            del _failures[client]
-
-
-def client_address(request: Request) -> str:
-    """Who to hold the login throttle against.
-
-    Behind Cloudflare Tunnel every request arrives from the cloudflared
-    container, so `request.client.host` is one address for the whole internet.
-    The throttle then counts the world's wrong guesses into a single bucket:
-    eight from anybody locks out everybody, which turns a rate limit into a
-    denial of service against the operator. Cloudflare puts the real address in
-    CF-Connecting-IP, and it sets that header itself, discarding whatever the
-    caller sent.
-
-    Guarded by a setting rather than always trusted, because the danger runs
-    the other way round when nothing is in front: a header anyone may set is a
-    throttle anyone may evade by varying one string. TRUST_CLIENT_IP_HEADER is
-    therefore off by default and is only true when the app is genuinely
-    unreachable except through the tunnel -- which is the same condition
-    docs/runbook.md makes the operator assert when they publish it.
-    """
-    if config.TRUST_CLIENT_IP_HEADER:
-        forwarded = request.headers.get("cf-connecting-ip", "").strip()
-        if forwarded:
-            # One address, never a list: CF-Connecting-IP is a single value.
-            # X-Forwarded-For is deliberately not read -- it is caller-appended
-            # and the left-most entry is whatever an attacker typed.
-            return forwarded[:64]
-    return request.client.host if request.client else "unknown"
-
-
-def _recent_failures(client: str) -> list[float]:
-    cutoff = time.time() - FAILURE_WINDOW_SECONDS
-    _sweep_failures(cutoff)
-    recent = [t for t in _failures.get(client, []) if t > cutoff]
-    # Only write back a key that has something in it. An empty list is the
-    # same information as no key at all, and one of the two is unbounded.
-    if recent:
-        _failures[client] = recent
-    else:
-        _failures.pop(client, None)
-    return recent
 
 
 # --------------------------------------------------------------------------
@@ -498,7 +438,7 @@ async def upload(file: UploadFile = File(...)) -> dict:
     }
 
 
-@app.get("/api/files/{name}", dependencies=[Depends(require_auth)])
+@app.get("/api/files/{name:path}", dependencies=[Depends(require_auth)])
 def download(name: str) -> FileResponse:
     try:
         path = resolve_in_data_dir(name)
@@ -522,18 +462,17 @@ def download(name: str) -> FileResponse:
 def ingest_summary() -> dict:
     """The folder at a glance: what is ready, what is not, and what failed."""
     ready, outstanding, failed = [], [], []
-    for path in sorted(config.ensure_data_dir().iterdir()):
-        if not path.is_file() or path.name.startswith("."):
-            continue
+    for path in config.data_files():
         if not ingest.producers_for(path.suffix):
             continue
-        state = ingest.status(path.name)
+        name = config.doc_id(path)
+        state = ingest.status(name)
         if state["failed"]:
-            failed.append(path.name)
+            failed.append(name)
         elif state["ready"]:
-            ready.append(path.name)
+            ready.append(name)
         else:
-            outstanding.append(path.name)
+            outstanding.append(name)
     return {
         "ready": ready,
         "outstanding": outstanding,
@@ -559,7 +498,7 @@ def ingest_folder(only_fast: bool = False) -> dict:
     return job.public(jobs.lane.position_of(job.id))
 
 
-@app.get("/api/ingest/{name}", dependencies=[Depends(require_auth)])
+@app.get("/api/ingest/{name:path}", dependencies=[Depends(require_auth)])
 def ingest_status(name: str) -> dict:
     """Is this document ready, and what failed?"""
     try:
@@ -568,7 +507,7 @@ def ingest_status(name: str) -> dict:
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.post("/api/ingest/{name}", dependencies=[Depends(require_auth)])
+@app.post("/api/ingest/{name:path}", dependencies=[Depends(require_auth)])
 def ingest_file(name: str) -> dict:
     """Bring one document up to date.
 

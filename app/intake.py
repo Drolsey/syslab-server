@@ -40,6 +40,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app import ingest, jobs, passages, search
+from app.config import doc_id
 
 # The job kind the lane knows this by. One kind for all slow producers rather
 # than one per producer: the lane serialises anyway, and a file with three slow
@@ -68,6 +69,8 @@ def arrived(path: Path) -> dict:
     outcome = {"name": path.name, "indexed": False, "queued": None, "deferred": [],
                "passages": 0}
     try:
+        name = doc_id(path)
+        outcome["name"] = name
         outcome.update(search.index_file(path))
     except Exception as exc:  # noqa: BLE001 - the file is already written
         outcome["reason"] = f"{type(exc).__name__}: {exc}"
@@ -88,7 +91,7 @@ def arrived(path: Path) -> dict:
         outcome["passages_error"] = f"{type(exc).__name__}: {exc}"
 
     try:
-        deferred = ingest.deferred(path.name)
+        deferred = ingest.deferred(name)
     except ingest.IngestError:
         return outcome
     if not deferred:
@@ -96,7 +99,7 @@ def arrived(path: Path) -> dict:
 
     outcome["deferred"] = deferred
     try:
-        job = jobs.lane.submit(SLOW_INGEST, {"name": path.name})
+        job = jobs.lane.submit(SLOW_INGEST, {"name": name})
         outcome["queued"] = job.id
     except jobs.JobError as exc:
         # The queue is full, or the lane does not know this kind. The work is

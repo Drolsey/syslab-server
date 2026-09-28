@@ -127,9 +127,12 @@ app/               FastAPI app, tool functions, model loop
   config.py        every setting and path, read from .env
   context.py       whose request is this
   tenancy.py       the control plane: tenants and tokens
-data/<tenant>/     customer documents, one folder each      (gitignored)
+  admin.py         the operator dashboard at /admin (LAN only, Step 11)
+  web/admin/       its page: vanilla HTML, CSS and JS
+data/<tenant>/     customer documents, one folder each; subfolders allowed   (gitignored)
 index/<tenant>.sqlite3   that tenant's search index         (gitignored, disposable)
-control/           control.sqlite3: tenants, tokens         (gitignored, back this up)
+control/           control.sqlite3: tenants, tokens, operators, audit log   (gitignored, back this up)
+trash/<tenant>/    documents the dashboard removed           (gitignored, empty by hand)
 logs/              server.log
 docs/              architecture, licences, plans
 scripts/           gate scripts and admin tools

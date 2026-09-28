@@ -18,6 +18,41 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 ## [Unreleased]
 
 ### Added
+- **Step 11 (v2): the operator dashboard at `/admin`, LAN-only pre-production beta,
+  28 September 2026.** Personal operator accounts (`scripts/operator_account.py`, scrypt
+  hashes, 12-hour sessions stored as SHA-256), a sign-in throttle shared with the tenant login
+  (`app/throttle.py`, moved unchanged out of `app/main.py`), and an audit row for every change.
+  Pages: Overview, Companies (create, disable, enable, delete), Corpus (browse, upload files or
+  whole folders, new folder, download, re-ingest, move to trash, ingest now, jobs) and a
+  Retrieval tester that calls the same function as `POST /api/v1/retrieve`. Three locks: not
+  mounted in `PUBLIC_MODE`; TCP peer must be in `ADMIN_ALLOWED_NETWORKS` (Docker's
+  `172.16.0.0/12` excluded); session cookie scoped to `/admin`, `SameSite=Strict`, plus an
+  `X-Syslab-Admin` header on every write. Vanilla HTML/CSS/JS, no external requests, light
+  and dark themes from the Syslab logo. Plan: `docs/plans/step-11-operator-dashboard.md`;
+  everything v1 planned beyond this is kept there as Step 11b.
+- **`scripts/seed_test_corpus.py`.** The test corpus as its own company,
+  `syslab-test-corpus`, with `contracts/` and `formats/` kept as folders. 57 documents,
+  56 ready, `formats/format_corrupt.pdf` failed on purpose.
+- **`TRASH_DIR`** (default `./trash`): where the dashboard moves removed documents. New
+  on-disk root, outside `DATA_DIR`, ignored by git.
+
+### Changed
+- **A document's name is now its path inside the tenant's folder (Step 11.1).** Subfolders
+  are ingested, indexed and cited as `contracts/lease.pdf`; before, every module keyed on the
+  bare filename and two `lease.pdf` in different folders were one document. **On-disk layout:**
+  a nested document's derived folder is `derived/<tenant>/<producer>/contracts%2Flease.pdf`.
+  A file at the top level keeps its bare name, so no existing manifest row, index row or
+  derived folder changes and nothing needs migrating. `/api/files/{name}`, `/api/ingest/{name}`,
+  `/api/v1/documents/{name}` and `/api/v1/ingest/{name}` accept a path; the frozen OpenAPI is
+  unchanged (`check_api_compat` passes). database-agent's `sources` filter must send the path
+  for a nested document.
+- **Tenant deletion's file handling moved to `app/corpus.py:retire_company()`,** shared by
+  `scripts/tenant.py delete` and the dashboard. Same behaviour: documents moved to
+  `data/_removed/`, index and derived deleted.
+- **`ingest.status()` takes an optional manifest connection**, so listing a folder opens the
+  manifest once instead of once per document (57 documents: ~1.3 s to 0.07 s).
+
+### Added
 - **Step 5 embeddings and vector retrieval, deployed and verified 19 September 2026.**
   `vllm-embed` (`Qwen/Qwen3-Embedding-0.6B`, pinned revision, port 8001) is live on the box;
   `app/main.py` registers `vectors.EMBEDDINGS`/`vectors.VECTOR` at startup, gated on

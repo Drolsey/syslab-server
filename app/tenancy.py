@@ -120,6 +120,41 @@ CREATE TABLE IF NOT EXISTS tenant_alias (
 );
 
 CREATE INDEX IF NOT EXISTS tenant_alias_by_tenant ON tenant_alias (tenant_id);
+
+-- Step 11.3, the operator dashboard. Syslab's own staff, not any tenant's
+-- users: an operator belongs to no tenant and acts on all of them, which is
+-- why this is not the `users` table above. Additive, so SCHEMA_VERSION stays 1
+-- by the rule written beside it. See app/operators.py.
+CREATE TABLE IF NOT EXISTS operators (
+    id            TEXT PRIMARY KEY,
+    display_name  TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    disabled_at   TEXT,
+    last_login_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS operator_sessions (
+    session_sha256 TEXT PRIMARY KEY,
+    operator_id    TEXT NOT NULL REFERENCES operators(id),
+    created_at     TEXT NOT NULL,
+    expires_at     TEXT NOT NULL,
+    client         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS operator_sessions_by_operator ON operator_sessions (operator_id);
+
+-- Who changed what through the dashboard. Never holds a secret: a token or a
+-- password is recorded as having been issued or changed, never by value.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    at          TEXT NOT NULL,
+    operator_id TEXT,
+    action      TEXT NOT NULL,
+    target      TEXT,
+    detail      TEXT,
+    client      TEXT
+);
 """
 
 # Generated ids avoid i, l, o, 0 and 1. Nothing reads an id aloud, but you will
