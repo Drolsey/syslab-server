@@ -1,7 +1,9 @@
 # Step 11: The Operator Dashboard (LAN-only pre-production beta)
 
-Status: **v2.1 — 11.0-11.6 BUILT AND TESTED LOCALLY, 28 September 2026.** 11.7: documentation
-done; security and code reviews and deployment to the box still to do. Suite 741 passed, 1 skipped.
+Status: **v2.2 — 11.0-11.6 BUILT, TESTED AND SECURITY REVIEWED, 28 September 2026;
+committed and pushed as `442c75c`.** 11.7: documentation and security review done
+(`docs/reviews/step-11-security-review.md`, no findings at the bar); code review and
+deployment to the box still to do. Suite 741 passed, 1 skipped.
 
 ## Version history
 
@@ -9,7 +11,8 @@ done; security and code reviews and deployment to the box still to do. Suite 741
 |---|---|---|
 | v1 | 28 Sep 2026 | Full dashboard planned: companies, corpus, ingestion/jobs, access tokens, settings (three tiers) with restart, retrieval tester, chat playground, GPU/system monitor, operators and audit pages. |
 | v2 | 28 Sep 2026 | **Scope cut to the minimal slice.** Retrieval tuning and LLM changes are blocked until the real client corpus arrives, and much of v1 would sit on internals that are still moving (document identity, new producers in Steps 6-10, `.env`/`models.toml` keys). v2 builds only what gets a client corpus into the pipeline and lets an operator see what the pipeline does with it. Everything else in v1 is kept, unchanged in intent, as **Step 11b (deferred)** at the end of this file, with the reason each item waits. |
-| **v2.1** | 28 Sep 2026 | **What the build changed, recorded rather than silently absorbed.** The operator CLI is `scripts/operator_account.py`: `operator.py` would shadow the standard library's `operator` module whenever the script runs. "Ingest outstanding" and "Rebuild company" are one button, **Ingest now**: both were the same folder-ingest job. The retrieval tester shows `found_by` per passage, not a rank per retriever: `/api/v1/retrieve` does not expose those ranks and the tester must equal it. `ingest.status()` gained an optional shared connection after listing 57 documents took 1.3 s (now 0.07 s). The test corpus is 57 documents, not 55. Trash is emptied by hand (no page). |
+| v2.1 | 28 Sep 2026 | **What the build changed, recorded rather than silently absorbed.** The operator CLI is `scripts/operator_account.py`: `operator.py` would shadow the standard library's `operator` module whenever the script runs. "Ingest outstanding" and "Rebuild company" are one button, **Ingest now**: both were the same folder-ingest job. The retrieval tester shows `found_by` per passage, not a rank per retriever: `/api/v1/retrieve` does not expose those ranks and the tester must equal it. `ingest.status()` gained an optional shared connection after listing 57 documents took 1.3 s (now 0.07 s). The test corpus is 57 documents, not 55. Trash is emptied by hand (no page). |
+| **v2.2** | 28 Sep 2026 | **Security review recorded.** `/security-review` over the whole change found nothing at HIGH or MEDIUM with confidence 8 or above; the record is `docs/reviews/step-11-security-review.md`. It turned up one inaccurate claim in this plan's own reasoning: decision 3 excludes `172.16.0.0/12` as "Docker's range", but Docker's default pools also use `192.168.x.0/20`, which the default allow-list includes. Added to the risks below; not exploitable as shipped. |
 
 ## 1. Why this step exists
 
@@ -140,7 +143,7 @@ Company, query, `k`, optional `sources` filter; calls the same function `plane.p
 `/retrieve` does, inside `use_tenant`. Shows passage text, source, chunk id, fused score,
 per-retriever rank, `what_this_means`. **Gate:** equals `/api/v1/retrieve` for the same input.
 
-### 11.7 — Reviews, documentation, deployment. Documentation DONE; reviews and deployment OPEN.
+### 11.7 — Reviews, documentation, deployment. Documentation and security review DONE (no findings at the bar); code review and deployment OPEN.
 Security review (auth, sessions, throttle, CSRF, network guard, upload paths, trash, cookie
 scope), code review, accessibility pass. Docs: `usage.md`, `runbook.md`, `architecture.md`,
 `README.md`, `HANDOVER.md`, `CHANGELOG.md`, `graphify update .`. Deploy on the box, create the
@@ -150,6 +153,10 @@ first operator, accept from a second LAN machine.
 - **Plain HTTP on the LAN.** Passwords and cookies can be sniffed. Before anything beyond the
   beta: TLS via reverse proxy, or LAN access over Tailscale.
 - **Nested names reach database-agent** (see 11.1 review).
+- **Docker can also use 192.168.x.** Decision 3 leaves out `172.16.0.0/12` as Docker's
+  range, but Docker's default pools also hand out `192.168.x.0/20` once 172.17-31 are used,
+  inside the default allow-list. Narrow `ADMIN_ALLOWED_NETWORKS` to the office subnet on the
+  box (found by the security review, below the bar).
 - **`tree()` walks the whole company folder per call.** Fine for thousands of files; cache or
   paginate when a real corpus needs it.
 

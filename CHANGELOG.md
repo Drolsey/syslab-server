@@ -52,6 +52,14 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
 - **`ingest.status()` takes an optional manifest connection**, so listing a folder opens the
   manifest once instead of once per document (57 documents: ~1.3 s to 0.07 s).
 
+### Security
+- **Step 11 security review, 28 September 2026: no findings at the bar** (HIGH or MEDIUM,
+  confidence 8 or above) across nested document paths, the operator dashboard and its
+  sessions. Record: `docs/reviews/step-11-security-review.md`. One follow-up is open: Docker's
+  default address pools can use `192.168.x.0/20`, inside the default `ADMIN_ALLOWED_NETWORKS`,
+  so the comments saying Docker lives only in `172.16.0.0/12` are wrong and the box should
+  narrow the setting to its office subnet. Not exploitable as shipped.
+
 ### Added
 - **Step 5 embeddings and vector retrieval, deployed and verified 19 September 2026.**
   `vllm-embed` (`Qwen/Qwen3-Embedding-0.6B`, pinned revision, port 8001) is live on the box;

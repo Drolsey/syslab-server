@@ -1266,8 +1266,8 @@ the short version:
      keep a held-out part the tuning never sees. `retrieve.search()` already
      accepts per-retriever weights, so a change would be small.
 
-6. **Step 11, the operator dashboard (v2), 28 September. Built and tested locally; not yet
-   deployed to the box.** Decided the same day: the real client corpus will take a while and
+6. **Step 11, the operator dashboard (v2), 28 September. Built, tested locally and security
+   reviewed; committed and pushed as `442c75c`; not yet deployed to the box.** Decided the same day: the real client corpus will take a while and
    retrieval tuning and LLM changes wait for it, so the dashboard was cut to the slice that
    gets a corpus in and shows what the pipeline does with it. `docs/plans/step-11-operator-dashboard.md`
    is versioned: v1 (the full dashboard) is kept there as Step 11b, deferred, with why each
@@ -1286,10 +1286,25 @@ the short version:
      Edge: a folder upload kept its structure, skipped `.DS_Store` and an `.exe`, ingested on
      its own, and the retrieval tester cited `client-docs/contracts/...`. Suite **741 passed,
      1 skipped** (was 684).
-   - **Still to do (11.7):** the security and code reviews, then deploy: pull on the box,
-     restart `syslab-server@syslab`, `python scripts/operator_account.py new <you>`,
-     optionally `python scripts/seed_test_corpus.py` (about 7 minutes of parsing), and accept
-     from a second LAN machine. Plain HTTP on the LAN is a named risk for the beta.
+   - **Security review, 28 September: no findings at the bar** (HIGH or MEDIUM, confidence 8 or
+     above). Full record, including what was checked and why it holds:
+     `docs/reviews/step-11-security-review.md`. Two notes below the bar:
+     - **Open:** Docker's default address pools also hand out `192.168.x.0/20` once
+       172.17-31 are used, and that sits inside the default `ADMIN_ALLOWED_NETWORKS`. The
+       comments in `app/config.py`, `.env.example` and `docs/runbook.md` claiming Docker lives
+       only in `172.16.0.0/12` need correcting, and on the box the setting should be narrowed
+       to the office subnet (`127.0.0.0/8,::1/128,192.168.1.0/24` if every office machine is
+       on it). Not exploitable as shipped.
+     - **Accepted:** off-LAN clients can tell `/admin/api/*` exists from a 405 or 422, because
+       FastAPI checks the method and body before the network guard runs.
+   - **Still to do (11.7):** `/code-review`, then deploy. On the box as `syslab`:
+     `cd ~/syslab-server`, `git status` then `git pull`, confirm `PUBLIC_MODE` is false in
+     `.env`, `sudo systemctl restart syslab-server@syslab`, expect `200` from
+     `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/admin`, then
+     `.venv/bin/python scripts/operator_account.py new <you>` and sign in from a second LAN
+     machine. Load the test corpus through the dashboard's **Upload folder**, which also makes
+     embeddings; `seed_test_corpus.py` runs outside the app and leaves embeddings for
+     **Ingest now**. Plain HTTP on the LAN is a named risk for the beta.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
