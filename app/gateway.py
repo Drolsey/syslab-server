@@ -206,6 +206,7 @@ def chat_completions(body: ChatCompletionRequest):
     # caller that wants thinking on can still set chat_template_kwargs
     # itself; this only supplies the default when they did not.
     payload.setdefault("chat_template_kwargs", {"enable_thinking": False})
+    llm.apply_sampling_defaults(payload)
     _clamp_output_budget(payload, real_model)
     if payload.get("stream"):
         payload.setdefault("stream_options", {"include_usage": True})

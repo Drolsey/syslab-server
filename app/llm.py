@@ -31,25 +31,47 @@ class LlmError(Exception):
     """The model server could not be reached, or refused the request."""
 
 
+# Qwen3 model-card sampling, per thinking mode. The card warns against greedy
+# decoding (temperature 0.0), which is what this sent before. presence_penalty
+# (card: 1.5 for quantized weights) is left out until it is measured on SQL,
+# which legitimately repeats identifiers. shortcut: Qwen3-family values,
+# revisit when [roles.chat] names a different family.
+SAMPLING = {
+    True: {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0},
+    False: {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0},
+}
+
+
+def apply_sampling_defaults(payload: dict[str, Any]) -> None:
+    """Fill in only the sampling fields the caller did not send."""
+    kwargs = payload.get("chat_template_kwargs") or {}
+    # Qwen3's template thinks unless told otherwise.
+    thinking = bool(kwargs.get("enable_thinking", True))
+    for key, value in SAMPLING[thinking].items():
+        payload.setdefault(key, value)
+
+
 def _build_payload(
     messages: list[dict[str, Any]],
     tools: list[dict] | None,
     model: str | None,
     think: bool | None,
-    temperature: float,
+    temperature: float | None,
     stream: bool,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model or LLM_MODEL,
         "messages": messages,
         "stream": stream,
-        "temperature": temperature,
         # Not a standard OpenAI field. vLLM forwards extra top-level fields
         # into the model's chat template, and Qwen3's template reads this one
         # to turn its <think> block off. Confirmed against this build in
         # Step 3.0 -- see docs/plans/step-03-model-gateway.md, Finding 2.
         "chat_template_kwargs": {"enable_thinking": LLM_THINK if think is None else think},
     }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    apply_sampling_defaults(payload)
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
@@ -225,7 +247,7 @@ def chat(
     tools: list[dict] | None = None,
     model: str | None = None,
     think: bool | None = None,
-    temperature: float = 0.0,
+    temperature: float | None = None,
     timeout: int | None = None,
 ) -> dict:
     """One round trip to the model. Returns {"message": ..., "usage": ...}.
@@ -256,7 +278,7 @@ def chat_stream(
     tools: list[dict] | None = None,
     model: str | None = None,
     think: bool | None = None,
-    temperature: float = 0.0,
+    temperature: float | None = None,
     timeout: int | None = None,
 ) -> Iterator[dict]:
     """Stream one round trip. Yields each parsed SSE data chunk as a dict.
