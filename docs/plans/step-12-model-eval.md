@@ -83,6 +83,23 @@ the client database (decision 1). Graders are the suite's property checks, not a
 Each also needs the ideal and wrong scripted runs in `tests/evals-cases.test.ts`, which the
 suite already requires before a case may spend model time.
 
+**Done, 9 November.** `database-agent/evals/cases/traps.eval.ts`, run with `--suite=traps`.
+The harness gained one hook, `EvalCase.reportGenerator`, so the ESG case can offer
+`generate_esg_report` and record its arguments. Scripted ideal and wrong runs pass and fail as
+intended, and database-agent's full test run shows 1,040 passed, 0 failed, 5 skipped. **The 14B
+on today's database-agent: 10/10 on all five**, with no backstop retry firing in any run. The
+fence case uses six prose turns, the condition HANDOVER measured at 0/4.
+
+So the traps were the prompt's doing, and the prompt fixes already on `main` closed them. That
+makes these five **regression guards, not a way to tell models apart**: both the 14B and Claude
+pass them now. Two grader fixes were made after looking at real answers, not to raise the score.
+The monitoring case first required the answer to name the `Report` table, which failed a
+correct "medical waste removal records" answer (4/10, then 10/10 once it checked the
+description instead). The fence case went from four prose turns to six to match the measured
+condition. The fixture is also gentler than production: 7 columns against 35. A candidate
+model still has to keep all five at 9/10 or better; the comparison itself rests on 12.3 and on
+the seven media cases that fail every time.
+
 ### 12.3 SQL that is checked by its result
 
 30-50 natural-language questions against a **real, seeded Postgres database**, each with a
