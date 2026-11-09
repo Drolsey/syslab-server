@@ -1340,9 +1340,9 @@ the short version:
    - **Memory is tight.** Only one full-size 32K request fits at a time, and about 30.5 of
      32.6 GB are in use with the embedder. There is no room for a speech model beside it.
    - **Sampling.** The gateway now defaults to Gemma's values: temperature 1.0, top_p 0.95,
-     top_k 64. database-agent sets its own temperature and top_p. Its `.env` on the box has
-     `AGENT_TEMPERATURE=1.0` and `AGENT_TOP_P=0.95`, so the site runs as the trial measured.
-     Without them it sends Qwen's 0.7 / 0.8.
+     top_k 64. database-agent sends its own temperature and top_p, and its code defaults
+     became the same 1.0 / 0.95 on the same day, so the site runs as the trial measured.
+     For a Qwen model again, set `AGENT_TEMPERATURE` and `AGENT_TOP_P` in its `.env`.
    - **Gemma's known gaps:**
      - it sometimes leaves out the Sources block after a document search;
      - it does not search the library on "show me the contracts"-style requests;
