@@ -34,109 +34,43 @@ services:
     volumes:
       - huggingface-cache:/root/.cache/huggingface
     command:
-      # 14B, down from Qwen3-32B-AWQ on 2026-09-09. Not a cost cut: the 32B's
-      # weights left 5.16 GiB of KV cache, which is 21,135 tokens, which is why
-      # the window below had to stay at 8192 -- and an 8192 window could not
-      # hold one maximum-size tool result (4,506 tokens) on top of the 4,213
-      # tokens the system prompt and tool schemas occupy before anything is
-      # asked. Measured on this box's own tokenizer; HANDOVER.md has the table.
-      # A smaller model was the only option that bought back BOTH the window
-      # and the concurrency instead of trading one for the other.
-      #
-      # Same family, so the tokenizer and therefore that 4,213-token floor are
-      # unchanged; 40 layers instead of 64, so KV costs 160 KiB per token
-      # instead of 256; 9.29 GiB of weights instead of 18.00.
-      - --model
-      - Qwen/Qwen3-14B-AWQ
-      # A model repo is a moving target the same way an image tag is -- see the
-      # digest pin on the image above, and the lesson it came from. This is the
-      # commit that repo pointed at on 2026-09-09.
+      # Gemma 4 31B, Google's own 4-bit QAT build, from 9 November 2026. It replaced
+      # Qwen3-14B-AWQ after the Step 12 trial (docs/plans/step-12-model-eval.md) of the
+      # 14B, Qwen3.8-27B and this model, on the same vLLM and the same eval suites: it
+      # scored best on result-checked SQL (280/280), traps (50/50) and document routing
+      # (188/240), at close to the 14B's speed. The 14B's settings, and the history of
+      # the window and memory choices below, are in git (682292a and earlier).
+      - google/gemma-4-31B-it-qat-w4a16-ct
       - --revision
-      - 31c69efc29464b6bb0aee1398b5a7b50a99340c3
-      # 16384, raised from 8192 now that the weights leave room for it. Chosen
-      # over 32768 because concurrency and context still spend the same cache,
-      # and this is the point where BOTH beat what the 32B gave: ~12,171 tokens
-      # of conversation after the 4,213 floor (was 3,979, and one tool result
-      # did not fit in it) at a projected ~5.5x concurrency, against 8192 and
-      # 2.58x measured on 2026-09-08. 32768 would buy more context than
-      # anything here asks for and hand back the concurrency to get it.
-      #
-      # Projected, but not the way 0.85 was projected and missed. That estimate
-      # assumed vLLM's overhead was fixed while the budget grew, and it is not.
-      # Here the budget does not move: the 8.71 GiB the smaller weights hand
-      # back becomes cache against the SAME measured overhead in
-      # docs/models.md (weights-and-non-torch 20.04, activation 1.46, CUDA
-      # graphs 0.81). Still read the startup log and record the real numbers --
-      # "GPU KV cache size" and "Maximum concurrency" -- the way 2026-09-08
-      # did. If it disagrees, 8192 still works and this comes down.
-      #
-      # 2026-09-14, 16384 -> 32768: "anything here asks for" was wrong, not
-      # projected-and-missed wrong but assumption wrong. The database-agent app
-      # -- a real consumer, not a projection -- hit both edges of 16384 in one
-      # conversation: max_tokens=32000 rejected outright against
-      # max_model_len=16384, and separately a schema-plus-history prompt
-      # measured at 16,334 input tokens, 50 short of the entire budget with
-      # nothing left for an answer. 32768 is still native to this model --
-      # Qwen3-14B is trained to 32,768 tokens, so this spends headroom the
-      # model already has rather than extending past it (that would be YaRN,
-      # a different and lossier lever, not needed here).
-      #
-      # Costs concurrency the same way 16384 bought it off 32768 the first
-      # time: the ~76,700-token cache measured 2026-09-09 divides into ~4.68x
-      # at 16384 or a projected ~2.34x at 32768. Projected, not measured --
-      # read the startup log and record "GPU KV cache size" and "Maximum
-      # concurrency" the way every number above this line was, before trusting
-      # this one.
+      - 52f3f65bc7a02d555763bc923bd1d9094898219d
+      # Same window as before. n8n's VICC script generator sizes its prompts to 32768.
       - --max-model-len
       - "32768"
-      # 0.70. This was 0.85 for one day and is back down, and the sequence is
-      # the point rather than a wobble -- read it as one decision made twice
-      # with different weights on the card.
-      #
-      # 2026-09-08, 0.70 -> 0.85: at 0.70 vLLM reported 3.0 GiB of KV cache,
-      # 12,272 tokens, and a maximum concurrency of 1.50x at 8192 tokens per
-      # request. One conversation at a time on a machine bought for
-      # concurrency, which is the whole reason the plan chose vLLM over Ollama.
-      # The 32B's weights were 18.62 GiB of the 21.95 GiB that 0.70 allowed, so
-      # the only place concurrency could come from was the budget. It bought
-      # 2.58x, and it cost the headroom: docs/models.md measured 3.4 GiB left
-      # against the ~3.5 GiB Section 13 budgets for embeddings and speech, and
-      # concluded speech would have to go on the CPU.
-      #
-      # 2026-09-09, 0.85 -> 0.70: the 14B above weighs 9.29 GiB instead of
-      # 18.00, so concurrency no longer has to be bought out of the budget at
-      # all. At 0.70 the projection is ~11.7 GiB of cache, ~76,700 tokens and
-      # ~4.68x at the 16384 window -- against 2.58x at 8192 today. Every axis
-      # improves at once, so the 4.7 GiB that 0.85 was spending has no case
-      # left: it goes back to Step 5 and Step 6, which now fit with ~8.6 GiB
-      # rather than not fitting at all.
-      #
-      # It also re-widens a margin. One boot has already failed with "Available
-      # KV cache memory: 0.45 GiB" -- a compose recreate racing the previous
-      # container's VRAM release -- and the higher this number goes the
-      # narrower that race gets. restart:unless-stopped is what makes it heal;
-      # docs/runbook.md names the symptom.
-      #
-      # Do not move this again without re-reading the startup log. Both figures
-      # above came from one, and the 0.85 estimate that did not was wrong.
+      # Text only: the vision tower is not loaded, which leaves room for vllm-embed.
+      - --language-model-only
+      # Measured 9 November: 18.7 GiB of weights (Marlin W4A16; this build has no native
+      # FP4 path). vLLM wants 6.42 GiB of KV for one full 32K request, and refused to start
+      # at 4.5 GB. 6.9 GB gives 32,805 tokens: one full-size request at a time, more when
+      # requests are shorter, which agent turns usually are.
+      - --kv-cache-memory-bytes
+      - "6900000000"
+      # vLLM 0.33 refuses to start unless this fraction of the card is free, and defaults to
+      # 0.92. With vllm-embed holding ~3.7 GiB, 27.04 GiB is free; 0.86 is 26.97 GiB.
+      # Raising it makes startup fail; nothing else is gained by it, since the KV cap above
+      # is what sizes the cache.
       - --gpu-memory-utilization
-      - "0.70"
+      - "0.86"
+      - --max-num-seqs
+      - "8"
+      - --max-cudagraph-capture-size
+      - "8"
+      # Gemma 4's own parsers in vLLM 0.33. Thinking is switched off per request by the
+      # gateway's chat_template_kwargs default, which Gemma's template honours.
+      - --reasoning-parser
+      - gemma4
       - --enable-auto-tool-choice
       - --tool-call-parser
-      - hermes
-      # 2026-09-15: Qwen3 thinks by default, and without this flag its
-      # <think>...</think> reasoning was inlined straight into `content` with
-      # no separate field -- confirmed live, and it's what made a
-      # database-agent bug transcript look like the model narrating its own
-      # recovery mid-answer. database-agent already has a stopgap for this
-      # (`ThinkFilter` in lib/agent/index.ts, commit bb18516) that strips the
-      # tags out of the stream app-side; this is the real fix, so reasoning
-      # comes back as its own field instead of text to pattern-match out.
-      # "qwen3" is the name this vLLM v0.28.0 image registers for it --
-      # confirmed against vllm.reasoning._REASONING_PARSERS_TO_REGISTER inside
-      # the running container, not guessed from the model name.
-      - --reasoning-parser
-      - qwen3
+      - gemma4
     deploy:
       resources:
         reservations:
@@ -329,11 +263,11 @@ services:
       - /home/syslab/.secrets/syslab-database-key.json:/secrets/key.json:ro
 
   # Chandra OCR 2 (datalab-to, 5B), added 4 November 2026 to read scanned
-  # inspection reports. NOT a second always-on model: the 14B above holds
+  # inspection reports. NOT a second always-on model: the chat model above holds
   # ~25 GB of the 32 GB card, so the two cannot run together. The "ocr"
   # profile keeps this out of a plain "docker compose up -d" (and out of a
-  # reboot), and scripts/ocr_mode.sh on|off swaps it with the 14B. No restart
-  # policy for the same reason: after a reboot only the 14B should come back.
+  # reboot), and scripts/ocr_mode.sh on|off swaps it with the chat model. No restart
+  # policy for the same reason: after a reboot only the chat model should come back.
   # Port 8002, LAN only like 8000/8001. Revision pinned like the services
   # above; the weights are OpenRAIL -- read the model card before using
   # output commercially.
@@ -359,7 +293,7 @@ services:
       - --limit-mm-per-prompt
       - '{"image":1}'
       # Measured 2026-11-04: weights 8.6 GiB, 0.55 of the card (~17.9 GiB)
-      # started clean with the 14B stopped and the embedder running.
+      # started clean with the chat model (then the 14B) stopped and the embedder running.
       - --gpu-memory-utilization
       - "0.55"
     deploy:

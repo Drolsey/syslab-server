@@ -33,9 +33,9 @@ def _env(key: str, default: str) -> str:
 # production (Step 3 of the architecture plan), Ollama's own /v1 shim on a
 # dev laptop -- either way this is the only backend the running app uses.
 LLM_BASE_URL = _env("LLM_BASE_URL", "http://127.0.0.1:8000/v1")
-LLM_MODEL = _env("LLM_MODEL", "Qwen/Qwen3-14B-AWQ")
+LLM_MODEL = _env("LLM_MODEL", "google/gemma-4-31B-it-qat-w4a16-ct")
 LLM_TIMEOUT = int(_env("LLM_TIMEOUT", "300"))
-# Qwen3 can "think" before answering. Off by default: it roughly triples the
+# The model can "think" before answering. Off by default: it roughly triples the
 # wait for a marginal gain on these tools, and keeps the transcript readable.
 LLM_THINK = _env("LLM_THINK", "false").lower() in {"1", "true", "yes", "on"}
 # How many tool calls the model may make before we stop it, per question.

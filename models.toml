@@ -7,7 +7,7 @@
 # The day a producer needs to ask "is embed available", this is what it asks.
 
 [roles.chat]
-model = "Qwen/Qwen3-14B-AWQ"
+model = "google/gemma-4-31B-it-qat-w4a16-ct"
 provider = "vllm"
 context_tokens = 32768
 

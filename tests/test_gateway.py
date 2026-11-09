@@ -174,19 +174,19 @@ def test_a_caller_can_turn_thinking_back_on(client, monkeypatch):
     assert seen["chat_template_kwargs"] == {"enable_thinking": True}
 
 
-def test_sampling_defaults_follow_the_thinking_mode(client, monkeypatch):
+def test_sampling_defaults_are_gemmas_in_either_mode(client, monkeypatch):
     seen = capture_payload(monkeypatch, FakeResponse(completion()))
     client.post("/v1/chat/completions", json=ASK)
-    assert (seen["temperature"], seen["top_p"], seen["top_k"]) == (0.7, 0.8, 20)
+    assert (seen["temperature"], seen["top_p"], seen["top_k"]) == (1.0, 0.95, 64)
 
     client.post("/v1/chat/completions", json={**ASK, "chat_template_kwargs": {"enable_thinking": True}})
-    assert (seen["temperature"], seen["top_p"], seen["top_k"]) == (0.6, 0.95, 20)
+    assert (seen["temperature"], seen["top_p"], seen["top_k"]) == (1.0, 0.95, 64)
 
 
 def test_caller_sampling_wins_over_the_defaults(client, monkeypatch):
     seen = capture_payload(monkeypatch, FakeResponse(completion()))
     client.post("/v1/chat/completions", json={**ASK, "temperature": 0.2, "top_k": 5})
-    assert (seen["temperature"], seen["top_k"], seen["top_p"]) == (0.2, 5, 0.8)
+    assert (seen["temperature"], seen["top_k"], seen["top_p"]) == (0.2, 5, 0.95)
     assert "presence_penalty" not in seen
 
 

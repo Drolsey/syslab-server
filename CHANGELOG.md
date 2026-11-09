@@ -37,6 +37,19 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   on-disk root, outside `DATA_DIR`, ignored by git.
 
 ### Changed
+- **Model: Qwen/Qwen3-14B-AWQ → google/gemma-4-31B-it-qat-w4a16-ct, 9 November 2026.**
+  - **What changed:** revision `52f3f65b`, Apache-2.0, text only. The window stays at 32768.
+    Memory: `--kv-cache-memory-bytes 6900000000` and `--gpu-memory-utilization 0.86` (was
+    0.70). Tool and reasoning parsers: `gemma4` (were `hermes` and `qwen3`). `LLM_MODEL` and
+    `[roles.chat]` follow it. Measured: 18.7 GiB of weights, 32,805 KV tokens, one full 32K
+    request at a time (the 14B managed 2.12).
+  - **Why:** the Step 12 trial against the 14B and Qwen3.8-27B on the same eval suites:
+    result-checked SQL 280/280 (14B 262), traps 50/50, document routing 188/240 (14B 149).
+    `docs/plans/step-12-model-eval.md` has the comparison.
+  - **Sampling:** the gateway's defaults are now Gemma's, temperature 1.0, top_p 0.95 and
+    top_k 64 in either mode, replacing Qwen3's per-mode values.
+- **vLLM 0.28.0 → 0.33.0** for chat and embeddings, pinned by digest, 9 November 2026. 0.32+
+  needs a CUDA 13 driver (the box has 580). The OCR service stays on 0.28.0.
 - **Gateway sampling defaults, 7 November 2026.** Requests that omit them now get Qwen3's
   model-card values for their thinking mode: 0.7 / 0.8 / 20 / 0 (temperature / top_p / top_k
   / min_p) with thinking off, 0.6 / 0.95 / 20 / 0 with it on. Previously the gateway sent

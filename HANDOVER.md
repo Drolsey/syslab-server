@@ -865,7 +865,7 @@ section all passing, `check_agent` 6 of 8 against the live 32B model.
 | | |
 |---|---|
 | Box | Ubuntu, RTX 5090 32 GB, Ryzen 9950X, 60 GB RAM, `192.168.1.185` on the LAN |
-| Model | `Qwen/Qwen3-14B-AWQ` under vLLM `v0.28.0`; image pinned by digest, model by revision, both in `docker-compose.yml`. Was the 32B until 9 September — see the context-window entry below for why it changed |
+| Model | `google/gemma-4-31B-it-qat-w4a16-ct` under vLLM `v0.33.0` since 9 November 2026 (item 8 of "Next, in order"); image pinned by digest, model by revision, both in `docker-compose.yml`. Was `Qwen/Qwen3-14B-AWQ` on v0.28.0 from 9 September, and the 32B before that |
 | vLLM | container, port 8000, `restart: unless-stopped`, survives reboot |
 | The app | port 8080, from `.venv` on the host, under systemd as `syslab-server@syslab` |
 | Alias | callers ask for `syslab-default`; the real model name never leaves the box |
@@ -1330,6 +1330,29 @@ the short version:
    - **n8n:** only "Dynamic Presentation Generator" calls Qwen; its reply is parsed leniently
      by the `pptx` service (`vicc-ppt-agent`, `_model_object()`), and as of 9 November the
      "Qwen Choose Slides" request sets `response_format: json_object`.
+
+8. **9 November: the chat model is now Gemma 4 31B, on vLLM 0.33.0.** Step 12 built an eval
+   and ran three models through it on the same vLLM: the 14B, Qwen3.8-27B and Gemma 4 31B
+   (`docs/plans/step-12-model-eval.md`). The eval suites are database-agent's own plus the
+   new `traps` and `sql` suites; the `sql` suite runs against `eval_company` on this box.
+   Gemma won on every suite but the original SQL cases, where all three are within 3/110.
+   Things to know:
+   - **Memory is tight.** Only one full-size 32K request fits at a time, and about 30.5 of
+     32.6 GB are in use with the embedder. There is no room for a speech model beside it.
+   - **Sampling.** The gateway now defaults to Gemma's values: temperature 1.0, top_p 0.95,
+     top_k 64. database-agent sets its own temperature and top_p. Its `.env` on the box has
+     `AGENT_TEMPERATURE=1.0` and `AGENT_TOP_P=0.95`, so the site runs as the trial measured.
+     Without them it sends Qwen's 0.7 / 0.8.
+   - **Gemma's known gaps:**
+     - it sometimes leaves out the Sources block after a document search;
+     - it does not search the library on "show me the contracts"-style requests;
+     - it sometimes answers "all details are in the table" instead of describing the row.
+   - **The trap cases use a stub database.** A model that checks its results (the 27B did)
+     gets nonsense back from the stub and keeps querying. Move them to a real database
+     before comparing the next model on them.
+   - **Rollback.** `git revert` the commit that made this change, `docker compose up -d vllm`,
+     set `LLM_MODEL=Qwen/Qwen3-14B-AWQ` in `.env`, and restart the gateway. The 14B's weights
+     are still in the model cache.
 
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 

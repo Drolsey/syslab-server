@@ -31,23 +31,17 @@ class LlmError(Exception):
     """The model server could not be reached, or refused the request."""
 
 
-# Qwen3 model-card sampling, per thinking mode. The card warns against greedy
-# decoding (temperature 0.0), which is what this sent before. presence_penalty
-# (card: 1.5 for quantized weights) is left out until it is measured on SQL,
-# which legitimately repeats identifiers. shortcut: Qwen3-family values,
-# revisit when [roles.chat] names a different family.
-SAMPLING = {
-    True: {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0},
-    False: {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0},
-}
+# Gemma 4's model-card sampling, the same in either thinking mode, and what the
+# Step 12 trial measured it at. Before 9 November this held Qwen3's per-mode
+# values, and before 7 November nothing (temperature 0.0, which Qwen's card
+# warned against). shortcut: Gemma 4 values, revisit when [roles.chat] names a
+# different family.
+SAMPLING = {"temperature": 1.0, "top_p": 0.95, "top_k": 64}
 
 
 def apply_sampling_defaults(payload: dict[str, Any]) -> None:
     """Fill in only the sampling fields the caller did not send."""
-    kwargs = payload.get("chat_template_kwargs") or {}
-    # Qwen3's template thinks unless told otherwise.
-    thinking = bool(kwargs.get("enable_thinking", True))
-    for key, value in SAMPLING[thinking].items():
+    for key, value in SAMPLING.items():
         payload.setdefault(key, value)
 
 
