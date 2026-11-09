@@ -37,6 +37,11 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   on-disk root, outside `DATA_DIR`, ignored by git.
 
 ### Changed
+- **Gateway sampling defaults, 7 November 2026.** Requests that omit them now get Qwen3's
+  model-card values for their thinking mode: 0.7 / 0.8 / 20 / 0 (temperature / top_p / top_k
+  / min_p) with thinking off, 0.6 / 0.95 / 20 / 0 with it on. Previously the gateway sent
+  nothing and the internal agent sent temperature 0.0, which the card warns against. A
+  caller's own values still win. `presence_penalty` is not defaulted.
 - **A document's name is now its path inside the tenant's folder (Step 11.1).** Subfolders
   are ingested, indexed and cited as `contracts/lease.pdf`; before, every module keyed on the
   bare filename and two `lease.pdf` in different folders were one document. **On-disk layout:**

@@ -1306,6 +1306,31 @@ the short version:
      embeddings; `seed_test_corpus.py` runs outside the app and leaves embeddings for
      **Ingest now**. Plain HTTP on the LAN is a named risk for the beta.
 
+   **Update, 7 November: 11.7's deploy had already happened.** `/admin` returns 200 on the box,
+   which runs `442c75c`; the service was last restarted 2 November.
+
+7. **Model quality audit, 7-9 November.** `reports/Open weight model upgrade audit.md`, with its
+   notes in `research_notes/Open weight model upgrade audit/`. Short version: most recorded
+   failures were harness and settings, not the model, but the 14B has a real gap on tool use
+   and on telling an agreed decision from a proposal (minutes-of-meeting-ai's AMI runs). The
+   proposed next step is a regression eval, then a Qwen3.8-27B NVFP4 trial. Checked live on the box:
+   - **Who calls what.** database-agent (`https://ai.systemslab.app/v1`) and the n8n
+     workflows (`http://192.168.1.185:8080/v1`) both go through the gateway as
+     `syslab-default`. Only processes on the host itself, such as the minutes benchmark,
+     call vLLM directly on 8000.
+   - **Qwen's sampling is now the gateway default** (`7026a42`, deployed and restarted 7
+     November): `app/llm.py` `apply_sampling_defaults()` fills temperature, top_p, top_k and
+     min_p for the request's thinking mode, only where the caller sent none.
+     `presence_penalty` is left out until it is measured on SQL.
+   - **database-agent already had the harness fixes** (no ```` ```sql ```` template, rules
+     instead of example values, forced tool calls on retry). One leftover example value was
+     removed in `dec59e5`. **Pushing to its `main` deploys to the box by itself**
+     (`.github/workflows/deploy.yml`), so do not rebuild it by hand as well: a manual rebuild
+     racing the workflow is what made the 7 November run fail on a container-name conflict.
+   - **n8n:** only "Dynamic Presentation Generator" calls Qwen; its reply is parsed leniently
+     by the `pptx` service (`vicc-ppt-agent`, `_model_object()`), and as of 9 November the
+     "Qwen Choose Slides" request sets `response_format: json_object`.
+
 ## Step 4 is planned, and the plan found a prerequisite nobody had built
 
 10 September. `docs/plans/step-04-retrieval-plane.md`, to the standard of 0-3:
