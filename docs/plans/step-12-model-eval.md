@@ -160,6 +160,69 @@ Either a small set of field-extraction questions on the CUAD contracts already i
 `tests/fixtures/corpus/` (lawyer-annotated ground truth, `response_format: json_schema`, scored
 field by field), or nothing until a dozen real failing review transcripts are captured.
 
+## First trial: Qwen3.8-27B against the 14B, 9 November
+
+Both ran on **vLLM 0.33.0**, which went live the same day (`682292a`; it had been 0.28.0). On the
+new vLLM the 14B scored the same as on the old one, so the comparison below measures the model
+alone. The candidate was `nvidia/Qwen3.8-27B-NVFP4`, revision `482ca0f3`, set up by
+`docker-compose.trial-27b.yml` on the box (not committed): text only, 32768 window,
+`--kv-cache-memory-bytes 6500000000`, `--gpu-memory-utilization 0.84`, `qwen3_coder` tool
+parser, thinking off through the gateway's default.
+
+- **Memory.** 18.96 GiB of weights on the native NVFP4 kernel. KV cache 79,579 tokens, 2.43
+  full-size requests at once, against the 14B's 69,408 tokens and 2.12. 26.8 GB beside the
+  embedder's 3.8 GB, so about 30.6 of 32.6 GB in use and **no room left for speech**.
+- **Outage.** The first start looped for about 10 minutes, around 13:21-13:31. With the
+  override replacing the whole command, vLLM 0.33 used its default `--gpu-memory-utilization`
+  of 0.92, which does not fit beside the embedder.
+
+10 repeats per case:
+
+| Suite | 14B | 27B | Seconds per run, 14B / 27B |
+|---|---|---|---|
+| Original SQL cases | 110/110 | 107/110 | 3.5 / 3.5 |
+| Document routing | 149/240 | **183/240** | 3.0 / 7.2 |
+| Result-checked SQL | 262/280 | **270/280** | 3.1 / 3.9 |
+| Traps | 50/50 | 34-37/50 | 2.8 / 8.5 |
+
+What the numbers mean, after reading the 27B's actual answers:
+
+- **Document routing.** It fixes five of the seven cases the 14B fails every time:
+  - `no-database` 0 → 9;
+  - `cross-register-and-terms` 1 → 8;
+  - `lowrisk-expiry-date` 0 → 10;
+  - `leave-policy` 2 → 10;
+  - `paraphrase` 6 → 10.
+
+  It newly fails `vague-show-contracts` (10 → 0): it answers "show me the contracts" from the
+  `supplier_contracts` table instead of the library. That is a defensible reading.
+- **Result-checked SQL.** It fixes `sql-follow-up-top-customer` (0 → 9), the follow-up the
+  14B answered with a wrong number from a query that ran, and the gloves question (6 → 10).
+  Its only remaining failure is `sql-distinct-products-juniper` (0/10), the same "since July"
+  misreading as the 14B.
+- **Original SQL cases.** It sometimes queries the archive database it should leave alone
+  (8/10), and once answered a date question without a query.
+- **Graders corrected for this trial**, each tested to still reject a wrong answer:
+  - stated sums and gaps of returned figures now count as backed;
+  - a one-number answer may come from a wider breakdown, provided the reply states the number;
+  - wording like "there's no delivery rating" now counts as saying the data is missing.
+
+  The first 27B SQL run, before these, scored 258/280. Every change only accepts more answers,
+  and none of the 14B's failures was of a kind they accept, so the 14B's scores stand without
+  a re-run.
+- **Traps, two real problems and one fixture problem:**
+  - The 27B checks its results. The trap stub answers only a few query shapes, so on "what
+    data is in this database" it noticed results that made no sense, kept checking, and hit
+    the 12-round limit (`AGENT_MAX_ITERATIONS`). That is a limit of the stub. These cases
+    need a real database before they can compare models.
+  - On "create a graph" it repeated the identical, correct query up to 11 times. That is a
+    real repetition loop. Qwen's card recommends `presence_penalty` 1.5 in non-thinking mode,
+    and the gateway does not set it yet.
+  - It is about 2.5× slower on agent-style turns, because it runs more queries and writes
+    longer answers. Plain SQL is close: 3.9 s against 3.1 s.
+
+Reports: `database-agent/evals/results/v033-{14b,27b}-*.json`, on Amro's laptop only.
+
 ## The bar a candidate model must clear
 
 Against the 14B's 12.1-12.5 numbers, on the same suites and repeat counts:
