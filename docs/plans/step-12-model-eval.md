@@ -110,6 +110,43 @@ joins, aggregation, dates and ranges, `NULL` handling, quoted identifiers, a que
 answer in the data, and five asked after unrelated turns. Needs a small executor in the harness
 that runs read-only against that database instead of the per-case stub (decision 2).
 
+**Done, 9 November: 28 questions, and the 14B gets 127 of 140 runs (91%).**
+
+- **The database.** `eval_company` lives in the compose `postgres` on the box. It is seeded
+  from `database-agent/evals/sql/eval_company.sql`, which builds every row from a formula, so a
+  rebuild gives identical answers: 60 customers, 1,240 orders, 2,479 order lines, 12 products,
+  8 sales reps in a `"Sales Reps"` table with quoted column names, and 14 supplier contracts.
+- **Access.** The login role `eval_reader` can only read: `default_transaction_read_only` is
+  on, and a `DELETE` was tried and refused by the database itself. Remote connections must use
+  SSL, which `pg_hba` already requires. The connection string sits in `~/.eval_company_dsn` on
+  the box (mode 600) and is passed to an eval run through `EVAL_COMPANY_DSN`.
+- **Running it.** `npm run eval -- --suite=sql`. The model's SQL runs through the app's own
+  `PostgresConnector`. A run passes when any query it ran returns what the reference returns
+  (`evals/sql-match.ts`): extra columns, column names and unrounded numbers are allowed, and
+  row order matters only where the question asks for one. "Top" questions accept a longer
+  ranked list whose first rows match.
+- **Checks.** `tests/evals-sql-match.test.ts` covers the matcher. database-agent's full test
+  run shows 1,051 passed, 0 failed, 5 skipped.
+- **Cases removed or changed while building:**
+  - "Which region has the most Enterprise customers" was dropped: all five regions tie at 4.
+  - The first seed gave every customer the same products on every order, so "how many
+    different products" answered 1. The seed was fixed and two questions moved with it.
+  - Two grader mistakes were fixed after reading real answers. A full ranked list was being
+    failed for not being one row, and "the rating for 2025" was read as a rating of 2025.
+
+Every remaining failure was checked by reading the SQL the model wrote:
+
+| Case | 14B | What it gets wrong |
+|---|---|---|
+| `sql-follow-up-top-customer` | 0/5 | ignores the customer named in the previous turn and writes `ORDER BY total` on `customers`, which has no total column, so Postgres silently uses the orders' total and the query means nothing |
+| `sql-distinct-products-juniper` | 0/5 (3/5 in an earlier run) | reads "since the start of July" as "in July" |
+| `sql-gloves-units-2025` | 2/5 | guesses the product name, gets nothing, looks the name up, then answers without re-running the query |
+| the other 25 | 5/5 each | |
+
+These three are the SQL cases a candidate model has to improve on. That an earlier run scored
+3/5 on the Juniper question and this one 0/5 is a reminder that 5 repeats is a small sample:
+run 10 when comparing models.
+
 ### 12.4 Minutes on an unseen meeting
 
 In minutes-of-meeting-ai: pick one AMI meeting nobody has read, write its reference decision
