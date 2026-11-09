@@ -223,6 +223,47 @@ What the numbers mean, after reading the 27B's actual answers:
 
 Reports: `database-agent/evals/results/v033-{14b,27b}-*.json`, on Amro's laptop only.
 
+## Second trial: Gemma 4 31B, 9 November
+
+The model was `google/gemma-4-31B-it-qat-w4a16-ct`, revision `52f3f65b`: Google's own 4-bit
+build, Apache-2.0. It was set up by `docker-compose.trial-gemma.yml` on the box (not committed):
+text only, 32768 window, `--kv-cache-memory-bytes 6900000000`,
+`--gpu-memory-utilization 0.86`, `gemma4` tool and reasoning parsers, thinking off. The eval
+ran at Google's recommended temperature 1.0 and top_p 0.95, through database-agent's
+`AGENT_TEMPERATURE` and `AGENT_TOP_P` overrides. top_k stayed at the gateway's 20 instead of
+Google's 64. The graders were the corrected ones, and the 27B column uses its re-run under them.
+
+- **Memory.** 18.7 GiB of weights on the Marlin W4A16 kernel; there is no native FP4 path for
+  this build. KV cache 32,805 tokens, so only **one full-size 32K request at a time** (the 27B
+  manages 2.43, the 14B 2.12), though shorter agent requests still share it. It needs
+  6.42 GiB of KV for one 32K request, more than its sliding-window layers suggested. The
+  first start failed at 4.5 GB, so the outage was about 2-3 minutes.
+- **Results**, with mean seconds per run in brackets:
+
+| Suite | 14B | 27B | Gemma 4 31B |
+|---|---|---|---|
+| Original SQL cases | 110/110 (3.5) | 107/110 (3.5) | 107/110 (3.1) |
+| Traps | 50/50 (2.8) | 34/50 (9.4) | **50/50** (3.5) |
+| Result-checked SQL | 262/280 (3.1) | 270/280 (3.9) | **280/280** (3.3) |
+| Document routing | 149/240 (3.0) | 183/240 (7.2) | **188/240** (4.7) |
+
+- **Where Gemma is better:**
+  - It is the only model to get `sql-distinct-products-juniper` ("since July") right, 10/10.
+  - It also fixes the follow-up (0 → 10) and the gloves question (6 → 10).
+  - It did not loop in any run (at most 7 requests in one), against the 27B's 12-round
+    failures.
+  - It fixes six of the 14B's seven always-failing document cases, against the 27B's five.
+- **Where Gemma is weaker:**
+  - `media-insufficient-uncovered-customer` 0/10: it searches correctly but leaves out the
+    Sources block every time.
+  - `media-vague-library-only` 0/10: it answers without searching, like the 14B.
+  - `media-vague-show-contracts` 0/10: it treats the question as SQL, like the 27B.
+  - `follow-up-row-on-screen` 7/10: it always ran the right query, but three answers only
+    said "all details are in the table".
+- **Contrary to its benchmarks.** τ² put Gemma 4 31B at about 60% against Qwen3.6-27B's 94%,
+  but on this harness and these questions it is the strongest of the three. On this evidence,
+  public agent benchmarks did not predict performance on this workload.
+
 ## The bar a candidate model must clear
 
 Against the 14B's 12.1-12.5 numbers, on the same suites and repeat counts:
