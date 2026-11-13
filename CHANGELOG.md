@@ -37,6 +37,18 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   on-disk root, outside `DATA_DIR`, ignored by git.
 
 ### Changed
+- **Chat window 32768 → 65536, KV cache BF16 → FP8, 13 November 2026.**
+  - **What changed:** `--max-model-len 65536` and `--kv-cache-dtype fp8`; the 6.9 GB KV cap,
+    0.86 utilization and model are unchanged. `models.toml` follows. No code change: the
+    gateway reads the window from `/v1/models`.
+  - **Why:** memory, not positions, was the limit. The model's config allows 262144 positions,
+    so YaRN would add nothing. The BF16 measurement (32,805 tokens in 6.9 GB) fits ~1.4 GiB
+    fixed for the sliding-window layers plus ~160 KiB per token; FP8 halves both.
+  - **Projected, not yet measured:** ~75K KV tokens, one full 64K request at a time. Record
+    the startup log's "GPU KV cache size" here. If startup fails on the attention backend,
+    try `--attention-backend TRITON_ATTN`; if it fails on memory, go back to 32768.
+  - **Quality:** FP8 KV is untested on this workload. The Step 12 suites (SQL, traps, routing)
+    are the check before relying on it; the risk is exact strings in SQL and tool arguments.
 - **Model: Qwen/Qwen3-14B-AWQ → google/gemma-4-31B-it-qat-w4a16-ct, 9 November 2026.**
   - **What changed:** revision `52f3f65b`, Apache-2.0, text only. The window stays at 32768.
     Memory: `--kv-cache-memory-bytes 6900000000` and `--gpu-memory-utilization 0.86` (was

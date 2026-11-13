@@ -9,7 +9,7 @@
 [roles.chat]
 model = "google/gemma-4-31B-it-qat-w4a16-ct"
 provider = "vllm"
-context_tokens = 32768
+context_tokens = 65536
 
 # Step 5.4, 18 September 2026. app/vectors.py's EMBEDDINGS producer version
 # is DERIVED from this whole table (a hash of it, sorted -- app/vectors.py's

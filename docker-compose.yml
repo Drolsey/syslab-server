@@ -43,15 +43,19 @@ services:
       - google/gemma-4-31B-it-qat-w4a16-ct
       - --revision
       - 52f3f65bc7a02d555763bc923bd1d9094898219d
-      # Same window as before. n8n's VICC script generator sizes its prompts to 32768.
+      # 65536 from 13 November (was 32768), paid for by the FP8 KV cache below. The model's
+      # own limit is 262144 positions, so no YaRN/rope scaling is needed; memory is the cap.
       - --max-model-len
-      - "32768"
+      - "65536"
       # Text only: the vision tower is not loaded, which leaves room for vllm-embed.
       - --language-model-only
-      # Measured 9 November: 18.7 GiB of weights (Marlin W4A16; this build has no native
-      # FP4 path). vLLM wants 6.42 GiB of KV for one full 32K request, and refused to start
-      # at 4.5 GB. 6.9 GB gives 32,805 tokens: one full-size request at a time, more when
-      # requests are shorter, which agent turns usually are.
+      # Measured 9 November at BF16 KV: 18.7 GiB of weights (Marlin W4A16; this build has
+      # no native FP4 path), 6.42 GiB of KV for one full 32K request, 32,805 tokens in 6.9 GB.
+      # That fits ~1.4 GiB fixed (50 sliding layers x 1024-token window) + ~160 KiB/token.
+      # FP8 halves both: projected ~75K tokens in the same 6.9 GB, one full 64K request.
+      # Projected, not measured: read "GPU KV cache size" in the startup log and record it.
+      - --kv-cache-dtype
+      - fp8
       - --kv-cache-memory-bytes
       - "6900000000"
       # vLLM 0.33 refuses to start unless this fraction of the card is free, and defaults to
