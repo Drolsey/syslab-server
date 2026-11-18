@@ -198,6 +198,21 @@ services:
     depends_on:
       - postgres
 
+  # Dynamic Maintenance (Next.js): the machine maintenance site built from client
+  # companies' AppSheet data. Its own database and user in "postgres", its own bucket
+  # and user in "minio", settings in its own .env. No ports published: cloudflared
+  # reaches it over this network (maintenance.systemslab.app -->
+  # http://dynamic-maintenance:3000). Applies its own database migrations on start.
+  # Deploying: see README.md in /home/syslab/dynamic-maintenance.
+  dynamic-maintenance:
+    build: /home/syslab/dynamic-maintenance
+    restart: unless-stopped
+    env_file:
+      - /home/syslab/dynamic-maintenance/.env
+    depends_on:
+      - postgres
+      - minio
+
   # Object storage for the Database Agent app's attachments and generated
   # report files -- currently in-memory there (BLOB_DRIVER unset), so every
   # upload is lost on restart. S3-compatible, so the app's existing S3 blob
