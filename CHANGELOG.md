@@ -37,6 +37,24 @@ alters an on-disk layout**, because that is what a restore from backup has to ma
   on-disk root, outside `DATA_DIR`, ignored by git.
 
 ### Changed
+- **Chat model reads images, 21 November 2026. Window stays 65536.**
+  - **What changed:** `--language-model-only` removed, `--limit-mm-per-prompt '{"image":1}'`
+    added, KV cap 6.9 → 5.5 GB. No code change. Image requests go to vLLM on :8000
+    directly (n8n on this box); the gateway does not pass image parts.
+  - **Why:** vehicle-ocr-reader's test set (47 Daily Log rows, 140 photos, labelled by eye):
+    Gemma with vision read 45/45 plates, 32/40 odometers, 29/42 pump meters; AppSheet's AI
+    34/45, 33/40, 20/42; Chandra 32/45, 18/40, 34/42. Chandra cannot share the card with
+    this model; the vision tower can (+1.08 GiB of weights, 19.78 GiB measured).
+  - **Cost:** KV pool 94,437 → 69,918 tokens (measured 21 November, side container, these
+    exact flags), so concurrency at a full 64K request drops 1.44x → 1.07x. Requests use
+    what they hold, not the window, so typical ~5K-token requests still run side by side.
+  - **Measured under load, 21 November:** a 54,487-token and a 62,719-token prompt (both
+    recalled a code from their first line) alongside 60 image and 26 short requests, no
+    failures; card peak 31.2 of 31.8 GiB. The 63K prompt queued behind the 54K one, and
+    other requests waited up to 48 s while it held the pool: that is the 1.07x. Startup logs
+    one allocator OOM retry reserving the 5.5 GB cap; it recovers, but do not raise the cap.
+    vLLM forces `--disable_chunked_mm_input` for this model. Rollback: restore
+    `--language-model-only` and 6.9 GB.
 - **Chat window 32768 → 65536, KV cache BF16 → FP8, 13 November 2026.**
   - **What changed:** `--max-model-len 65536` and `--kv-cache-dtype fp8`; the 6.9 GB KV cap,
     0.86 utilization and model are unchanged. `models.toml` follows. No code change: the

@@ -47,8 +47,12 @@ services:
       # own limit is 262144 positions, so no YaRN/rope scaling is needed; memory is the cap.
       - --max-model-len
       - "65536"
-      # Text only: the vision tower is not loaded, which leaves room for vllm-embed.
-      - --language-model-only
+      # Vision ON from 21 November 2026 (was --language-model-only), for vehicle-ocr-reader's plate,
+      # odometer and fuel-meter photos: 45/45 plates on its 47-row test set vs 34/45 for
+      # AppSheet's AI. The vision tower adds 1.08 GiB of weights (19.78 vs 18.7 GiB); the
+      # KV cap below drops 6.9 -> 5.5 GB to pay for it, and the 65536 window stays.
+      - --limit-mm-per-prompt
+      - '{"image":1}'
       # Measured 9 November at BF16 KV: 18.7 GiB of weights (Marlin W4A16; this build has
       # no native FP4 path), 6.42 GiB of KV for one full 32K request, 32,805 tokens in 6.9 GB.
       # That fits ~1.4 GiB fixed (50 sliding layers x 1024-token window) + ~160 KiB/token.
@@ -56,8 +60,13 @@ services:
       # Projected, not measured: read "GPU KV cache size" in the startup log and record it.
       - --kv-cache-dtype
       - fp8
+      # 5.5 GB from 21 November 2026 (was 6.9, 94,437 tokens / 1.44x) to make room for the vision tower.
+      # Measured 21 November with vision on and these exact flags: 69,918 tokens, 1.07x of
+      # 65536, card at 30.4 of 31.8 GiB; 31.2 GiB peak under load (54K + 63K prompts with
+      # 60 image requests). Startup logs one allocator OOM retry at 5.5 GB: it recovers, but
+      # this is the ceiling -- do not raise it.
       - --kv-cache-memory-bytes
-      - "6900000000"
+      - "5500000000"
       # vLLM 0.33 refuses to start unless this fraction of the card is free, and defaults to
       # 0.92. With vllm-embed holding ~3.7 GiB, 27.04 GiB is free; 0.86 is 26.97 GiB.
       # Raising it makes startup fail; nothing else is gained by it, since the KV cap above
